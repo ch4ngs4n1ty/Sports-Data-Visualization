@@ -1,0 +1,175 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>PlayIQ — Deep Game Analysis</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=IBM+Plex+Mono:wght@300;400;500;600&family=IBM+Plex+Sans:wght@300;400;500;600&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="styles.css"/>
+</head>
+<body>
+
+  <div class="grain"></div>
+
+  <!-- ── HEADER ─────────────────────────────────────── -->
+  <header class="topbar">
+    <div class="topbar-left">
+      <div class="logo">PLAY<span>IQ</span></div>
+      <span class="tagline">Deep Game Analysis</span>
+    </div>
+    <div class="topbar-right">
+      <div class="api-row">
+        <input type="password" id="apiKey" placeholder="Claude API key (sk-ant-...)" />
+        <button onclick="saveKey()">SAVE</button>
+        <span id="keySaved"></span>
+      </div>
+    </div>
+  </header>
+
+  <!-- ── SEARCH ─────────────────────────────────────── -->
+  <section class="search-section" id="searchSection">
+    <div class="search-hero">
+      <h1>Enter a game.</h1>
+      <p>Type two team names and get full intel — rosters, injuries, last 5 games, H2H history, and AI plays.</p>
+    </div>
+    <div class="search-wrap">
+      <div class="search-box-outer">
+        <input
+          type="text"
+          id="gameInput"
+          class="game-input"
+          placeholder="e.g. Lakers vs Warriors  ·  Chiefs vs Ravens  ·  Yankees vs Red Sox"
+          autocomplete="off"
+        />
+        <button class="search-btn" onclick="startAnalysis()">ANALYZE →</button>
+      </div>
+      <div class="search-hint">Supports NBA · NFL · MLB · NHL · any matchup</div>
+    </div>
+
+    <div class="recent-searches" id="recentSearches"></div>
+
+    <!-- ERROR BANNER -->
+    <div class="error-banner hidden" id="errorBanner">
+      <div class="error-banner-inner">
+        <span class="error-icon">⚠</span>
+        <div class="error-text">
+          <strong id="errorMessage">Game not found</strong>
+          <span id="errorHint">Try full team names like "Los Angeles Lakers vs Golden State Warriors" or abbreviations like "LAL vs GSW"</span>
+        </div>
+        <button class="error-dismiss" onclick="document.getElementById('errorBanner').classList.add('hidden')">✕</button>
+      </div>
+    </div>
+  </section>
+
+  <!-- ── ANALYSIS PANEL ─────────────────────────────── -->
+  <section class="analysis-panel hidden" id="analysisPanel">
+
+    <!-- GAME HEADER -->
+    <div class="game-header" id="gameHeader">
+      <button class="back-btn" onclick="resetToSearch()">← New Game</button>
+      <div class="game-title-block">
+        <div class="game-badge" id="gameSport">—</div>
+        <h2 class="game-title" id="gameTitle">Team A vs Team B</h2>
+        <div class="game-meta" id="gameMeta">—</div>
+      </div>
+      <div class="game-odds-strip" id="gameOddsStrip"></div>
+    </div>
+
+    <!-- LOADING STATE -->
+    <div class="full-loader hidden" id="fullLoader">
+      <div class="loader-inner">
+        <div class="loader-spinner"></div>
+        <div class="loader-steps" id="loaderSteps">
+          <span class="step active">Identifying teams</span>
+          <span class="step">Fetching rosters</span>
+          <span class="step">Loading injuries</span>
+          <span class="step">Last 5 games</span>
+          <span class="step">Head-to-head history</span>
+          <span class="step">Generating AI plays</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- TABS -->
+    <div class="tab-bar" id="tabBar">
+      <button class="tab active" data-tab="overview" onclick="switchTab('overview')">Overview</button>
+      <button class="tab" data-tab="roster" onclick="switchTab('roster')">Rosters</button>
+      <button class="tab" data-tab="form" onclick="switchTab('form')">Last 5 Games</button>
+      <button class="tab" data-tab="h2h" onclick="switchTab('h2h')">Head-to-Head</button>
+      <button class="tab" data-tab="injuries" onclick="switchTab('injuries')">Injuries</button>
+      <button class="tab tab-ai" data-tab="plays" onclick="switchTab('plays')">◆ AI Plays</button>
+    </div>
+
+    <!-- TAB CONTENT -->
+    <div class="tab-content">
+
+      <!-- OVERVIEW -->
+      <div class="tab-pane active" id="tab-overview">
+        <div class="two-col">
+          <div class="team-col" id="teamColAway"></div>
+          <div class="vs-divider">
+            <span>VS</span>
+            <div class="matchup-stats" id="matchupStats"></div>
+          </div>
+          <div class="team-col" id="teamColHome"></div>
+        </div>
+        <div class="overview-charts" id="overviewCharts"></div>
+      </div>
+
+      <!-- ROSTER -->
+      <div class="tab-pane hidden" id="tab-roster">
+        <div class="roster-grid" id="rosterGrid"></div>
+      </div>
+
+      <!-- FORM (last 5) -->
+      <div class="tab-pane hidden" id="tab-form">
+        <div class="form-grid" id="formGrid"></div>
+      </div>
+
+      <!-- H2H -->
+      <div class="tab-pane hidden" id="tab-h2h">
+        <div id="h2hContent"></div>
+      </div>
+
+      <!-- INJURIES -->
+      <div class="tab-pane hidden" id="tab-injuries">
+        <div id="injuriesContent"></div>
+      </div>
+
+      <!-- AI PLAYS -->
+      <div class="tab-pane hidden" id="tab-plays">
+        <div class="plays-layout">
+
+          <!-- AI RECOMMENDED -->
+          <div class="plays-section" id="aiPlaysSection">
+            <div class="section-head">
+              <h3>◆ AI Recommended Plays</h3>
+              <span class="powered">Powered by Claude</span>
+            </div>
+            <div id="aiPlaysList"></div>
+          </div>
+
+          <!-- YOUR PLAY DISCUSSION -->
+          <div class="plays-section your-play-section">
+            <div class="section-head">
+              <h3>Your Play</h3>
+              <span class="powered">Discuss with Claude</span>
+            </div>
+            <div class="your-play-input">
+              <textarea id="userPlay" placeholder="Enter your play... e.g. 'Lakers -4.5' or 'Over 224.5' or 'LeBron over 25.5 pts' or a parlay..."></textarea>
+              <button class="discuss-btn" onclick="discussUserPlay()">DISCUSS →</button>
+            </div>
+            <div id="userPlayResult" class="user-play-result hidden"></div>
+          </div>
+
+        </div>
+      </div>
+
+    </div>
+  </section>
+
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
