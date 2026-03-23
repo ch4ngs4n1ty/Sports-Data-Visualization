@@ -27,39 +27,32 @@
     </div>
   </header>
 
-  <!-- ── SEARCH ─────────────────────────────────────── -->
-  <section class="search-section" id="searchSection">
-    <div class="search-hero">
-      <h1>Enter a game.</h1>
-      <p>Type two team names and get full intel — rosters, injuries, last 5 games, H2H history, and AI plays.</p>
-    </div>
-    <div class="search-wrap">
-      <div class="search-box-outer">
-        <input
-          type="text"
-          id="gameInput"
-          class="game-input"
-          placeholder="e.g. Lakers vs Warriors  ·  Chiefs vs Ravens  ·  Yankees vs Red Sox"
-          autocomplete="off"
-        />
-        <button class="search-btn" onclick="startAnalysis()">ANALYZE →</button>
-      </div>
-      <div class="search-hint">Supports NBA · NFL · MLB · NHL · any matchup</div>
-    </div>
+  <!-- ── DASHBOARD ──────────────────────────────────── -->
+  <section class="dashboard-section" id="dashboardSection">
 
-    <div class="recent-searches" id="recentSearches"></div>
+    <div class="dashboard-controls">
+      <div class="dashboard-title-row">
+        <h2 class="dashboard-heading">Today's Games</h2>
+        <span class="dashboard-date" id="dashboardDate"></span>
+      </div>
+      <button class="refresh-btn" onclick="loadDashboard()">↻ Refresh</button>
+    </div>
 
     <!-- ERROR BANNER -->
     <div class="error-banner hidden" id="errorBanner">
       <div class="error-banner-inner">
         <span class="error-icon">⚠</span>
         <div class="error-text">
-          <strong id="errorMessage">Game not found</strong>
-          <span id="errorHint">Try full team names like "Los Angeles Lakers vs Golden State Warriors" or abbreviations like "LAL vs GSW"</span>
+          <strong id="errorMessage">Error</strong>
+          <span id="errorHint"></span>
         </div>
         <button class="error-dismiss" onclick="document.getElementById('errorBanner').classList.add('hidden')">✕</button>
       </div>
     </div>
+
+    <!-- GAMES CONTENT -->
+    <div id="dashboardContent"></div>
+
   </section>
 
   <!-- ── ANALYSIS PANEL ─────────────────────────────── -->
@@ -67,7 +60,7 @@
 
     <!-- GAME HEADER -->
     <div class="game-header" id="gameHeader">
-      <button class="back-btn" onclick="resetToSearch()">← New Game</button>
+      <button class="back-btn" onclick="resetToDashboard()">← All Games</button>
       <div class="game-title-block">
         <div class="game-badge" id="gameSport">—</div>
         <h2 class="game-title" id="gameTitle">Team A vs Team B</h2>
@@ -81,11 +74,11 @@
       <div class="loader-inner">
         <div class="loader-spinner"></div>
         <div class="loader-steps" id="loaderSteps">
-          <span class="step active">Identifying teams</span>
-          <span class="step">Fetching rosters</span>
-          <span class="step">Loading injuries</span>
+          <span class="step active">Loading game data</span>
+          <span class="step">Fetching injuries</span>
           <span class="step">Last 5 games</span>
           <span class="step">Head-to-head history</span>
+          <span class="step">Rosters</span>
           <span class="step">Generating AI plays</span>
         </div>
       </div>

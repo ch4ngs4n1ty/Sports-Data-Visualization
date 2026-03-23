@@ -6,8 +6,8 @@
 /* ── STATE ──────────────────────────────────────────────── */
 const S = {
   apiKey: localStorage.getItem('piq_key') || '',
-  recentSearches: JSON.parse(localStorage.getItem('piq_recent') || '[]'),
   gameData: null,   // full fetched game context
+  allGames: [],     // flat list of gameInfo objects from dashboard
   charts: {},       // chart instances
 };
 
@@ -24,11 +24,7 @@ const SPORTS = [
 /* ── INIT ───────────────────────────────────────────────── */
 document.addEventListener('DOMContentLoaded', () => {
   if (S.apiKey) document.getElementById('apiKey').value = S.apiKey;
-  renderRecent();
-
-  document.getElementById('gameInput').addEventListener('keydown', e => {
-    if (e.key === 'Enter') startAnalysis();
-  });
+  loadDashboard();
 });
 
 /* ── API KEY ────────────────────────────────────────────── */
@@ -40,131 +36,224 @@ function saveKey() {
   setTimeout(() => el.textContent = '', 2000);
 }
 
-/* ── RECENT SEARCHES ────────────────────────────────────── */
-function renderRecent() {
-  const el = document.getElementById('recentSearches');
-  if (!S.recentSearches.length) { el.innerHTML = ''; return; }
-  el.innerHTML = S.recentSearches.slice(0, 6).map(q =>
-    `<button class="recent-chip" onclick="useRecent('${q}')">${q}</button>`
-  ).join('');
+/* ── DASHBOARD ──────────────────────────────────────────── */
+async function loadDashboard() {
+  const dateEl = document.getElementById('dashboardDate');
+  dateEl.textContent = new Date().toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' });
+
+  const content = document.getElementById('dashboardContent');
+  content.innerHTML = `<div class="dashboard-loading"><div class="loader-spinner"></div><span>Loading today's games...</span></div>`;
+
+  S.allGames = [];
+
+  const results = await Promise.all(
+    SPORTS.map(sp =>
+      espn(`https://site.api.espn.com/apis/site/v2/sports/${sp.sport}/${sp.league}/scoreboard`)
+        .then(data => ({ sp, events: data?.events || [] }))
+    )
+  );
+
+  renderDashboard(results);
 }
-function useRecent(q) {
-  document.getElementById('gameInput').value = q;
-  startAnalysis();
+
+function renderDashboard(results) {
+  const content = document.getElementById('dashboardContent');
+
+  const sections = results
+    .filter(r => r.events.length > 0)
+    .map(({ sp, events }) => {
+      const cards = events.map(ev => {
+        const comp = ev.competitions?.[0];
+        if (!comp) return null;
+        const home = comp.competitors?.find(c => c.homeAway === 'home');
+        const away = comp.competitors?.find(c => c.homeAway === 'away');
+        if (!home || !away) return null;
+
+        const odds = comp.odds?.[0];
+        const idx = S.allGames.length;
+
+        const gameInfo = {
+          sportKey: sp.key,
+          sportLabel: sp.label,
+          sport: sp.sport,
+          league: sp.league,
+          eventId: ev.id,
+          awayFull: away.team.displayName,
+          awayAbbr: away.team.abbreviation,
+          awayTeamId: away.team.id,
+          awayScore: away.score,
+          homeFull: home.team.displayName,
+          homeAbbr: home.team.abbreviation,
+          homeTeamId: home.team.id,
+          homeScore: home.score,
+          statusText: ev.status?.type?.description || 'Scheduled',
+          statusState: ev.status?.type?.state,
+          statusDetail: ev.status?.type?.shortDetail || '',
+          date: ev.date,
+          venue: comp.venue?.fullName,
+          spread: odds?.details,
+          overUnder: odds?.overUnder,
+          awayMoneyline: odds?.awayTeamOdds?.moneyLine,
+          homeMoneyline: odds?.homeTeamOdds?.moneyLine,
+        };
+
+        S.allGames.push(gameInfo);
+        return renderGameCard(gameInfo, idx);
+      }).filter(Boolean);
+
+      if (!cards.length) return '';
+
+      return `
+        <div class="sport-section">
+          <div class="sport-section-header">
+            <span class="sport-section-label">${sp.label}</span>
+            <span class="sport-game-count">${cards.length} game${cards.length !== 1 ? 's' : ''}</span>
+          </div>
+          <div class="games-grid">${cards.join('')}</div>
+        </div>`;
+    }).filter(Boolean);
+
+  if (!sections.length) {
+    content.innerHTML = `<div class="dashboard-empty">No games scheduled today across any sport.</div>`;
+    return;
+  }
+
+  content.innerHTML = sections.join('');
 }
-function addRecent(q) {
-  S.recentSearches = [q, ...S.recentSearches.filter(r => r !== q)].slice(0, 6);
-  localStorage.setItem('piq_recent', JSON.stringify(S.recentSearches));
-  renderRecent();
+
+function renderGameCard(g, idx) {
+  const isLive  = g.statusState === 'in';
+  const isFinal = g.statusState === 'post';
+
+  const parseScore = (s) => {
+    const v = parseInt(s?.displayValue ?? s ?? '');
+    return isNaN(v) ? '' : v;
+  };
+  const awayScore = parseScore(g.awayScore);
+  const homeScore = parseScore(g.homeScore);
+
+  const statusBadge = isLive
+    ? `<span class="card-status live">● LIVE</span><span class="card-clock">${g.statusDetail}</span>`
+    : isFinal
+    ? `<span class="card-status final">FINAL</span>`
+    : `<span class="card-status pre">${new Date(g.date).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })}</span>`;
+
+  const showScore = isLive || isFinal;
+  const awayLeading = isLive && awayScore !== '' && homeScore !== '' && awayScore > homeScore;
+  const homeLeading = isLive && awayScore !== '' && homeScore !== '' && homeScore > awayScore;
+
+  const oddsBits = [];
+  if (g.spread) oddsBits.push(g.spread);
+  if (g.overUnder) oddsBits.push(`O/U ${g.overUnder}`);
+
+  return `
+    <div class="game-card" onclick="analyzeGame(${idx})">
+      <div class="card-top">${statusBadge}</div>
+      <div class="card-teams">
+        <div class="card-team">
+          <span class="card-abbr ${awayLeading ? 'leading' : ''}">${g.awayAbbr}</span>
+          <span class="card-name">${g.awayFull}</span>
+        </div>
+        ${showScore ? `<div class="card-scores">
+          <span class="${awayLeading ? 'score-lead' : 'score-val'}">${awayScore}</span>
+          <span class="score-dash">—</span>
+          <span class="${homeLeading ? 'score-lead' : 'score-val'}">${homeScore}</span>
+        </div>` : `<div class="card-vs">VS</div>`}
+        <div class="card-team right">
+          <span class="card-abbr ${homeLeading ? 'leading' : ''}">${g.homeAbbr}</span>
+          <span class="card-name">${g.homeFull}</span>
+        </div>
+      </div>
+      ${oddsBits.length ? `<div class="card-odds">${oddsBits.map(o => `<span class="card-odds-pill">${o}</span>`).join('')}</div>` : ''}
+      <div class="card-footer">
+        <span class="card-venue">${g.venue || ''}</span>
+        <span class="card-cta">ANALYZE →</span>
+      </div>
+    </div>`;
 }
 
 /* ── RESET ──────────────────────────────────────────────── */
-function resetToSearch() {
-  document.getElementById('searchSection').classList.remove('hidden');
+function resetToDashboard() {
+  document.getElementById('dashboardSection').classList.remove('hidden');
   document.getElementById('analysisPanel').classList.add('hidden');
   Object.values(S.charts).forEach(c => { try { c.destroy(); } catch(e){} });
   S.charts = {};
 }
 
 /* ─────────────────────────────────────────────────────────
-   MAIN ENTRY: startAnalysis
+   MAIN ENTRY: analyzeGame
 ───────────────────────────────────────────────────────── */
-async function startAnalysis() {
-  const raw = document.getElementById('gameInput').value.trim();
-  if (!raw) return;
+function analyzeGame(idx) {
+  const gameInfo = S.allGames[idx];
+  if (!gameInfo) return;
+  startAnalysis(gameInfo);
+}
 
-  addRecent(raw);
-
-  // Dismiss any previous error
-  document.getElementById('errorBanner').classList.add('hidden');
-
-  // Show analysis panel, hide search
-  document.getElementById('searchSection').classList.add('hidden');
+async function startAnalysis(gameInfo) {
+  // Hide dashboard, show analysis panel
+  document.getElementById('dashboardSection').classList.add('hidden');
   document.getElementById('analysisPanel').classList.remove('hidden');
   document.getElementById('tabBar').classList.add('hidden');
   document.querySelectorAll('.tab-pane').forEach(p => p.classList.add('hidden'));
 
-  // Show full loader
   const loader = document.getElementById('fullLoader');
   loader.classList.remove('hidden');
 
-  // Reset previous results
   document.getElementById('userPlayResult').classList.add('hidden');
   document.getElementById('aiPlaysList').innerHTML = '';
 
   try {
-    // Step 1 — Parse teams
+    // Step 1 — Game header
     setStep(0);
-    const parsed = parseGameInput(raw);
-    document.getElementById('gameTitle').textContent = `${parsed.away} vs ${parsed.home}`;
-    document.getElementById('gameBadge') && (document.getElementById('gameSport').textContent = '...');
-
-    // Step 2 — Find game in ESPN
-    setStep(1);
-    const gameInfo = await findGame(parsed);
-
-    if (!gameInfo) throw new Error(`Could not find "${raw}" in ESPN. Try full team names.`);
-
     document.getElementById('gameSport').textContent = gameInfo.sportLabel;
     document.getElementById('gameTitle').textContent = `${gameInfo.awayAbbr} vs ${gameInfo.homeAbbr}`;
     document.getElementById('gameMeta').textContent =
       `${gameInfo.awayFull} vs ${gameInfo.homeFull} · ${gameInfo.venue || ''} · ${gameInfo.statusText}`;
-
-    // Odds strip
     renderOddsStrip(gameInfo);
 
-    // Step 3 — Injuries
-    setStep(2);
+    // Step 2 — Injuries
+    setStep(1);
     const injuries = await fetchInjuries(gameInfo);
 
-    // Step 4 — Last 5 games
-    setStep(3);
+    // Step 3 — Last 5 games
+    setStep(2);
     const [awayForm, homeForm] = await Promise.all([
       fetchTeamForm(gameInfo.sportKey, gameInfo.awayTeamId),
       fetchTeamForm(gameInfo.sportKey, gameInfo.homeTeamId),
     ]);
 
-    // Step 5 — H2H
-    setStep(4);
+    // Step 4 — H2H
+    setStep(3);
     const h2h = await fetchH2H(gameInfo);
 
-    // Step 6 — Rosters
-    setStep(1);
+    // Step 5 — Rosters
+    setStep(4);
     const [awayRoster, homeRoster] = await Promise.all([
       fetchRoster(gameInfo.sportKey, gameInfo.awayTeamId),
       fetchRoster(gameInfo.sportKey, gameInfo.homeTeamId),
     ]);
 
-    // Store game data
     S.gameData = { gameInfo, injuries, awayForm, homeForm, h2h, awayRoster, homeRoster };
 
-    // Render all tabs
     renderOverview(S.gameData);
     renderRoster(S.gameData);
     renderForm(S.gameData);
     renderH2H(S.gameData);
     renderInjuries(S.gameData);
 
-    // Step 6 — AI plays
     setStep(5);
     loader.classList.add('hidden');
     document.getElementById('tabBar').classList.remove('hidden');
     switchTab('overview');
 
-    // Generate AI plays async (don't block UI)
     generateAIPlays(S.gameData);
 
   } catch (err) {
     loader.classList.add('hidden');
-    document.getElementById('searchSection').classList.remove('hidden');
-    document.getElementById('analysisPanel').classList.add('hidden');
-    const banner = document.getElementById('errorBanner');
+    resetToDashboard();
     document.getElementById('errorMessage').textContent = err.message;
-    const isNotFound = err.message.includes('not find') || err.message.includes('Could not');
-    document.getElementById('errorHint').textContent = isNotFound
-      ? 'Try full team names like "Los Angeles Lakers vs Golden State Warriors" or abbreviations like "LAL vs GSW". The game must be on today\'s ESPN scoreboard.'
-      : 'An unexpected error occurred. Check your API key and try again.';
-    banner.classList.remove('hidden');
+    document.getElementById('errorHint').textContent = 'An unexpected error occurred. Please try again.';
+    document.getElementById('errorBanner').classList.remove('hidden');
   }
 }
 
