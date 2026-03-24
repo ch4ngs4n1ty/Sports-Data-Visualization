@@ -541,7 +541,7 @@ async function fetchH2H(gameInfo) {
         const cat = teamLeaders.leaders?.find(c => c.name === catName);
         const top = cat?.leaders?.[0];
         return top
-          ? { name: top.athlete?.shortName || top.athlete?.displayName || '?', value: parseInt(top.displayValue) || 0, athleteId: top.athlete?.id }
+          ? { name: top.athlete?.shortName || top.athlete?.displayName || '?', value: parseInt(top.displayValue) || 0, athleteId: top.athlete?.id, headshot: top.athlete?.headshot?.href }
           : null;
       };
       return {
@@ -638,6 +638,9 @@ async function openPlayerModal(el) {
 
   S.playerModal = { athleteId, teamId, name, games: null };
   document.getElementById('playerModalName').textContent = name;
+  const hsEl = document.getElementById('playerModalHeadshot');
+  hsEl.src = el.dataset.headshot || '';
+  hsEl.style.display = el.dataset.headshot ? 'block' : 'none';
   document.getElementById('playerModalLoading').classList.remove('hidden');
   document.getElementById('playerModalChart').classList.add('hidden');
   document.getElementById('playerModal').classList.remove('hidden');
@@ -1001,16 +1004,26 @@ function renderH2H({ gameInfo, h2h }) {
 
   const leaderBlock = (leader, teamId) => {
     if (!leader) return '';
-    const link = (cat) => cat?.athleteId
-      ? `<strong class="player-link" data-athlete-id="${cat.athleteId}" data-team-id="${teamId}" data-name="${(cat.name).replace(/"/g,'&quot;')}" onclick="openPlayerModal(this)">${cat.name}</strong>`
-      : `<strong>${cat?.name || '—'}</strong>`;
+    const playerCard = (cat, statLabel) => {
+      if (!cat) return '';
+      const img = cat.headshot
+        ? `<img class="h2h-player-headshot" src="${cat.headshot}" alt="${cat.name}" onerror="this.style.display='none'">`
+        : `<div class="h2h-player-headshot h2h-player-headshot-empty"></div>`;
+      const name = cat.athleteId
+        ? `<strong class="player-link" data-athlete-id="${cat.athleteId}" data-team-id="${teamId}" data-name="${cat.name.replace(/"/g,'&quot;')}" data-headshot="${cat.headshot||''}" onclick="openPlayerModal(this)">${cat.name}</strong>`
+        : `<strong class="h2h-player-name">${cat.name}</strong>`;
+      return `
+        <div class="h2h-player-card">
+          ${img}
+          ${name}
+          <span class="h2h-player-stat">${cat.value} <span class="h2h-player-stat-label">${statLabel}</span></span>
+        </div>`;
+    };
     return `
-      <div class="h2h-leader">
-        <span class="h2h-leader-stats">
-          PTS: ${link(leader.pts)} ${leader.pts?.value ?? '—'} &nbsp;·&nbsp;
-          REB: ${link(leader.reb)} ${leader.reb?.value ?? '—'} &nbsp;·&nbsp;
-          AST: ${link(leader.ast)} ${leader.ast?.value ?? '—'}
-        </span>
+      <div class="h2h-player-row">
+        ${playerCard(leader.pts, 'PTS')}
+        ${playerCard(leader.reb, 'REB')}
+        ${playerCard(leader.ast, 'AST')}
       </div>`;
   };
 
@@ -1066,12 +1079,12 @@ function renderH2H({ gameInfo, h2h }) {
             <span class="h2h-date">${g.date}</span>
           </div>
           ${(g.awayLeader || g.homeLeader) ? `
-          <div class="h2h-leaders-row">
-            <div class="h2h-leader-col">
+          <div class="h2h-leaders-grid">
+            <div class="h2h-leader-team">
               <span class="h2h-leader-tag" style="color:var(--blue)">${g.awayTeam}</span>
               ${leaderBlock(g.awayLeader, gameInfo.awayTeamId)}
             </div>
-            <div class="h2h-leader-col">
+            <div class="h2h-leader-team">
               <span class="h2h-leader-tag" style="color:var(--orange)">${g.homeTeam}</span>
               ${leaderBlock(g.homeLeader, gameInfo.homeTeamId)}
             </div>
