@@ -90,7 +90,6 @@
       <button class="tab" data-tab="roster" onclick="switchTab('roster')">Rosters</button>
       <button class="tab" data-tab="form" onclick="switchTab('form')">Last 5 Games</button>
       <button class="tab" data-tab="h2h" onclick="switchTab('h2h')">Head-to-Head</button>
-      <button class="tab" data-tab="injuries" onclick="switchTab('injuries')">Injuries</button>
       <button class="tab tab-ai" data-tab="plays" onclick="switchTab('plays')">◆ AI Plays</button>
     </div>
 
@@ -125,12 +124,7 @@
         <div id="h2hContent"></div>
       </div>
 
-      <!-- INJURIES -->
-      <div class="tab-pane hidden" id="tab-injuries">
-        <div id="injuriesContent"></div>
-      </div>
-
-      <!-- AI PLAYS -->
+<!-- AI PLAYS -->
       <div class="tab-pane hidden" id="tab-plays">
         <div class="plays-layout">
 
@@ -161,6 +155,23 @@
 
     </div>
   </section>
+
+  <!-- PLAYER STATS MODAL -->
+  <div class="player-modal hidden" id="playerModal" onclick="closePlayerModal(event)">
+    <div class="player-modal-inner">
+      <div class="player-modal-header">
+        <span class="player-modal-name" id="playerModalName"></span>
+        <div class="stat-toggle">
+          <button class="stat-btn active" onclick="switchPlayerModalStat('pts', this)">PTS</button>
+          <button class="stat-btn" onclick="switchPlayerModalStat('reb', this)">REB</button>
+          <button class="stat-btn" onclick="switchPlayerModalStat('ast', this)">AST</button>
+        </div>
+        <button class="player-modal-close" onclick="document.getElementById('playerModal').classList.add('hidden')">✕</button>
+      </div>
+      <div id="playerModalLoading" class="inline-loader hidden"><div class="mini-spin"></div> Loading stats...</div>
+      <canvas id="playerModalChart" height="200"></canvas>
+    </div>
+  </div>
 
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
   <script src="app.js"></script>

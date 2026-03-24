@@ -966,6 +966,49 @@ body {
 }
 .empty-msg { color: var(--text2); font-size: 12px; padding: 20px 0; }
 
+/* ── PLAYER MODAL ────────────────────────────── */
+.player-modal {
+  position: fixed; inset: 0; z-index: 200;
+  background: rgba(0,0,0,0.72);
+  display: flex; align-items: center; justify-content: center;
+  backdrop-filter: blur(6px);
+  animation: fadeIn 0.2s ease;
+}
+.player-modal-inner {
+  background: var(--bg2);
+  border: 1px solid var(--border2);
+  border-radius: 12px;
+  padding: 24px 28px;
+  width: 560px; max-width: 92vw;
+  box-shadow: 0 24px 80px rgba(0,0,0,0.7), 0 0 0 1px rgba(255,255,255,0.04);
+}
+.player-modal-header {
+  display: flex; align-items: center; gap: 16px;
+  margin-bottom: 20px; padding-bottom: 16px;
+  border-bottom: 1px solid var(--border);
+}
+.player-modal-name {
+  font-family: var(--font-d);
+  font-size: 26px; letter-spacing: 0.04em;
+  color: var(--text); flex: 1;
+}
+.player-modal-close {
+  background: none; border: none;
+  color: var(--text3); font-size: 16px; cursor: pointer;
+  padding: 4px 8px; border-radius: 4px; transition: color 0.15s;
+  flex-shrink: 0;
+}
+.player-modal-close:hover { color: var(--text); }
+
+.player-link {
+  color: var(--blue);
+  cursor: pointer;
+  text-decoration: underline dotted;
+  text-underline-offset: 3px;
+  transition: color 0.15s;
+}
+.player-link:hover { color: var(--lime); }
+
 /* ── TEAM LOGOS ──────────────────────────────── */
 .card-logo {
   width: 44px; height: 44px;

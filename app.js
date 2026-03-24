@@ -262,7 +262,6 @@ async function startAnalysis(gameInfo) {
     renderRoster(S.gameData);
     renderForm(S.gameData);
     renderH2H(S.gameData);
-    renderInjuries(S.gameData);
 
     setStep(5);
     loader.classList.add('hidden');
@@ -544,7 +543,7 @@ async function fetchH2H(gameInfo) {
         const cat = teamLeaders.leaders?.find(c => c.name === catName);
         const top = cat?.leaders?.[0];
         return top
-          ? { name: top.athlete?.shortName || top.athlete?.displayName || '?', value: parseInt(top.displayValue) || 0 }
+          ? { name: top.athlete?.shortName || top.athlete?.displayName || '?', value: parseInt(top.displayValue) || 0, athleteId: top.athlete?.id }
           : null;
       };
       return {
@@ -571,6 +570,150 @@ async function fetchH2H(gameInfo) {
       homeLeader: getTeamLeaders(gameInfo.homeAbbr),
     };
   });
+}
+
+/* ── PLAYER MODAL ───────────────────────────────────────── */
+async function fetchPlayerLastGames(sportKey, teamId, athleteId) {
+  const sp = SPORTS.find(s => s.key === sportKey);
+  if (!sp) return [];
+  const season = getSeasonYear(sportKey);
+  const schedData = await espn(`https://site.api.espn.com/apis/site/v2/sports/${sp.sport}/${sp.league}/teams/${teamId}/schedule?season=${season}`);
+  if (!schedData?.events) return [];
+
+  const completed = schedData.events
+    .filter(e => e.competitions?.[0]?.status?.type?.completed)
+    .slice(-5);
+
+  const summaries = await Promise.all(
+    completed.map(e => espn(`https://site.api.espn.com/apis/site/v2/sports/${sp.sport}/${sp.league}/summary?event=${e.id}`))
+  );
+
+  return completed.map((ev, i) => {
+    const comp = ev.competitions[0];
+    const teamC = comp.competitors.find(c => c.team?.id === teamId);
+    const oppC  = comp.competitors.find(c => c.team?.id !== teamId);
+    const parseScore = s => parseInt(s?.displayValue ?? s ?? 0) || 0;
+    const myScore  = parseScore(teamC?.score);
+    const oppScore = parseScore(oppC?.score);
+    const result   = teamC?.winner ? 'W' : oppC?.winner ? 'L' : myScore > oppScore ? 'W' : 'L';
+
+    let pts = 0, reb = 0, ast = 0, didNotPlay = false, dnpReason = '';
+    const summary = summaries[i];
+    if (summary?.boxscore?.players) {
+      let playerFound = false;
+      outer: for (const td of summary.boxscore.players) {
+        for (const grp of td.statistics || []) {
+          const lbls = grp.labels || [];
+          const pi = lbls.indexOf('PTS'), ri = lbls.indexOf('REB'), ai = lbls.indexOf('AST');
+          const ath = grp.athletes?.find(a => a.athlete?.id === athleteId);
+          if (ath) {
+            playerFound = true;
+            const isDnp = ath.didNotPlay || !ath.stats?.length || ath.stats?.[0] === 'DNP' || ath.stats?.[0] === '0:00';
+            if (isDnp) {
+              didNotPlay = true;
+              dnpReason = ath.reason || 'DNP';
+            } else {
+              pts = parseInt(ath.stats?.[pi] || 0) || 0;
+              reb = ri > -1 ? parseInt(ath.stats?.[ri] || 0) || 0 : 0;
+              ast = ai > -1 ? parseInt(ath.stats?.[ai] || 0) || 0 : 0;
+            }
+            break outer;
+          }
+        }
+      }
+      if (!playerFound) { didNotPlay = true; dnpReason = 'INACTIVE'; }
+    }
+
+    return {
+      opponent: oppC?.team?.abbreviation || '?',
+      isHome: teamC?.homeAway === 'home',
+      result, myScore, oppScore, pts, reb, ast, didNotPlay, dnpReason,
+      date: new Date(ev.date).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }),
+    };
+  });
+}
+
+async function openPlayerModal(el) {
+  const athleteId = el.dataset.athleteId;
+  const teamId    = el.dataset.teamId;
+  const name      = el.dataset.name;
+
+  S.playerModal = { athleteId, teamId, name, games: null };
+  document.getElementById('playerModalName').textContent = name;
+  document.getElementById('playerModalLoading').classList.remove('hidden');
+  document.getElementById('playerModalChart').classList.add('hidden');
+  document.getElementById('playerModal').classList.remove('hidden');
+  document.querySelectorAll('#playerModal .stat-btn').forEach((b, i) => {
+    b.classList.toggle('active', i === 0);
+  });
+
+  const games = await fetchPlayerLastGames(S.gameData.gameInfo.sportKey, teamId, athleteId);
+  S.playerModal.games = games;
+  document.getElementById('playerModalLoading').classList.add('hidden');
+  document.getElementById('playerModalChart').classList.remove('hidden');
+  renderPlayerModalChart('pts');
+}
+
+function renderPlayerModalChart(stat) {
+  const { games } = S.playerModal;
+  if (!games?.length) return;
+  const ctx = document.getElementById('playerModalChart');
+  if (S.charts.playerModal) S.charts.playerModal.destroy();
+
+  const labels = games.map(g => {
+    const label = `${g.isHome ? 'vs' : '@'}${g.opponent}`;
+    return g.didNotPlay ? `${label}\nDNP` : label;
+  });
+  const values = games.map(g => g.didNotPlay ? 0 : (g[stat] || 0));
+  const colors = games.map(g =>
+    g.didNotPlay ? 'rgba(120,120,160,0.28)' :
+    g.result === 'W' ? 'rgba(35,209,139,0.82)' : 'rgba(255,61,90,0.82)'
+  );
+  const playedValues = games.filter(g => !g.didNotPlay).map(g => g[stat] || 0);
+  const avg = playedValues.length ? playedValues.reduce((s, v) => s + v, 0) / playedValues.length : 0;
+
+  S.charts.playerModal = new Chart(ctx, {
+    type: 'bar',
+    data: {
+      labels,
+      datasets: [
+        { data: values, backgroundColor: colors, borderRadius: 5, borderSkipped: false, minBarLength: 6 },
+        { type: 'line', data: new Array(values.length).fill(parseFloat(avg.toFixed(1))),
+          borderColor: 'rgba(255,255,255,0.22)', borderWidth: 1.5, borderDash: [5,4],
+          pointRadius: 0, fill: false, tension: 0 },
+      ],
+    },
+    options: {
+      responsive: true,
+      plugins: {
+        legend: { display: false },
+        tooltip: {
+          callbacks: {
+            title: items => { const g = games[items[0].dataIndex]; return `${g.isHome?'vs':'@'}${g.opponent}  ${g.date}`; },
+            label: item => { const g = games[item.dataIndex]; return g.didNotPlay ? `DNP — ${g.dnpReason}` : `${item.raw} ${stat.toUpperCase()}  (${g.result}  ${g.myScore}-${g.oppScore})`; },
+          },
+          backgroundColor: 'rgba(13,13,18,0.95)', borderColor: 'rgba(255,255,255,0.1)',
+          borderWidth: 1, titleColor: '#f0f0fa', bodyColor: '#b8bce8', padding: 10,
+        },
+      },
+      scales: {
+        x: { grid: { color: 'rgba(255,255,255,0.04)' }, ticks: { color: '#b8bce8', font: { family: "'IBM Plex Mono'", size: 11 } } },
+        y: { grid: { color: 'rgba(255,255,255,0.06)' }, ticks: { color: '#b8bce8', font: { family: "'IBM Plex Mono'", size: 11 } }, beginAtZero: true },
+      },
+    },
+  });
+}
+
+function switchPlayerModalStat(stat, btn) {
+  document.querySelectorAll('#playerModal .stat-btn').forEach(b => b.classList.remove('active'));
+  btn.classList.add('active');
+  renderPlayerModalChart(stat);
+}
+
+function closePlayerModal(e) {
+  if (e && e.target !== document.getElementById('playerModal')) return;
+  document.getElementById('playerModal').classList.add('hidden');
+  if (S.charts.playerModal) { S.charts.playerModal.destroy(); delete S.charts.playerModal; }
 }
 
 /* ── ROSTER ─────────────────────────────────────────────── */
@@ -741,7 +884,7 @@ function renderForm({ gameInfo, awayForm, homeForm }) {
       </div>` : ''}
       <div class="form-games-list">
         ${form.length === 0 ? '<p class="empty-msg">No recent games found</p>' :
-          form.map(g => `
+          [...form].reverse().map(g => `
             <div class="form-game">
               <div class="form-result ${g.result}">${g.result}</div>
               <div class="form-details">
@@ -858,14 +1001,17 @@ function renderH2H({ gameInfo, h2h }) {
   const homeWins = h2h.length - awayWins;
   const hasLeaders = h2h.some(g => g.awayLeader || g.homeLeader);
 
-  const leaderBlock = (leader) => {
+  const leaderBlock = (leader, teamId) => {
     if (!leader) return '';
+    const link = (cat) => cat?.athleteId
+      ? `<strong class="player-link" data-athlete-id="${cat.athleteId}" data-team-id="${teamId}" data-name="${(cat.name).replace(/"/g,'&quot;')}" onclick="openPlayerModal(this)">${cat.name}</strong>`
+      : `<strong>${cat?.name || '—'}</strong>`;
     return `
       <div class="h2h-leader">
         <span class="h2h-leader-stats">
-          PTS: <strong>${leader.pts?.name || '—'}</strong> ${leader.pts?.value ?? '—'} &nbsp;·&nbsp;
-          REB: <strong>${leader.reb?.name || '—'}</strong> ${leader.reb?.value ?? '—'} &nbsp;·&nbsp;
-          AST: <strong>${leader.ast?.name || '—'}</strong> ${leader.ast?.value ?? '—'}
+          PTS: ${link(leader.pts)} ${leader.pts?.value ?? '—'} &nbsp;·&nbsp;
+          REB: ${link(leader.reb)} ${leader.reb?.value ?? '—'} &nbsp;·&nbsp;
+          AST: ${link(leader.ast)} ${leader.ast?.value ?? '—'}
         </span>
       </div>`;
   };
@@ -925,11 +1071,11 @@ function renderH2H({ gameInfo, h2h }) {
           <div class="h2h-leaders-row">
             <div class="h2h-leader-col">
               <span class="h2h-leader-tag" style="color:var(--blue)">${g.awayTeam}</span>
-              ${leaderBlock(g.awayLeader)}
+              ${leaderBlock(g.awayLeader, gameInfo.awayTeamId)}
             </div>
             <div class="h2h-leader-col">
               <span class="h2h-leader-tag" style="color:var(--orange)">${g.homeTeam}</span>
-              ${leaderBlock(g.homeLeader)}
+              ${leaderBlock(g.homeLeader, gameInfo.homeTeamId)}
             </div>
           </div>` : ''}
         </div>`).join('')}
@@ -1033,31 +1179,6 @@ function switchH2HStat(chartId, stat, btn) {
   renderH2HChart(chartId, S.gameData.h2h, side, stat);
 }
 
-/* ── INJURIES ───────────────────────────────────────────── */
-function renderInjuries({ gameInfo, injuries }) {
-  const statusClass = (s) => ({
-    'out': 'inj-out', 'doubtful': 'inj-doubtful',
-    'questionable': 'inj-questionable', 'probable': 'inj-probable',
-  })[s.toLowerCase()] || 'inj-questionable';
-
-  const block = (teamName, list) => `
-    <div class="injury-team-block">
-      <h3>${teamName}</h3>
-      ${list.length === 0 ? '<p class="empty-msg">No injuries reported</p>' :
-        list.map(i => `
-          <div class="injury-row">
-            <span class="inj-status ${statusClass(i.status)}">${i.status}</span>
-            <span class="inj-name">${i.name}</span>
-            <span class="inj-desc">${i.desc}</span>
-          </div>`).join('')}
-    </div>`;
-
-  document.getElementById('injuriesContent').innerHTML = `
-    <div class="injuries-grid">
-      ${block(gameInfo.awayFull, injuries.away)}
-      ${block(gameInfo.homeFull, injuries.home)}
-    </div>`;
-}
 
 /* ═══════════════════════════════════════════════════════════
    AI PLAYS — Claude Analysis
