@@ -29,7 +29,7 @@ const SPORTS = [
   { key: 'ncaamb', sport: 'basketball', league: 'mens-college-basketball',  label: 'NCAAB' },
 ];
 
-/* ── SERVICE WORKER (PWA) ───────────────────────────────── */
+/* ── SERVICE WORKER (PWA) ─────────���─────────────────────── */
 if ('serviceWorker' in navigator) {
   window.addEventListener('load', () => {
     navigator.serviceWorker.register('./sw.js').catch(() => {});
@@ -67,6 +67,13 @@ async function loadDashboard() {
         .then(data => ({ sp, events: data?.events || [] }))
     )
   );
+
+  // Use the actual date from ESPN's events instead of local clock
+  const firstEvent = results.flatMap(r => r.events)[0];
+  if (firstEvent?.date) {
+    const espnDate = new Date(firstEvent.date);
+    dateEl.textContent = espnDate.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', timeZone: 'America/New_York' });
+  }
 
   renderDashboard(results);
 }
