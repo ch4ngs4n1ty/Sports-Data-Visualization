@@ -1266,38 +1266,29 @@ async function renderProps(data) {
   const awayB2B = (awayForm||[]).length && awayForm[awayForm.length - 1]?.date === yStr;
   const homeB2B = (homeForm||[]).length && homeForm[homeForm.length - 1]?.date === yStr;
 
+  const cfg = window.SportConfig?.[gameInfo.sportKey]?.propsStats;
+
   const statBlock = (stats, label, color) => {
     if (!stats) return `<div class="pc-team-col"><div class="pc-team-label" style="color:${color}">${label}</div><div style="color:var(--text3);font-size:12px;padding:12px 0">Stats unavailable</div></div>`;
     const r = (key) => stats[key]?.rank ? `<span class="pc-rank">#${stats[key].rank}</span>` : '';
-    const v = (key) => stats[key]?.value != null ? (Math.round(stats[key].value * 10) / 10) : '—';
+    const v = (key, pct) => {
+      if (stats[key]?.value == null) return '—';
+      const val = Math.round(stats[key].value * 100) / 100;
+      return pct ? val + '%' : val;
+    };
+    const rows = (group) => (cfg?.[group] || []).map(s =>
+      `<div class="pc-row"><span class="pc-key">${s.label}</span><span class="pc-val">${v(s.key, s.pct)} ${r(s.key)}</span></div>`
+    ).join('');
+
     return `
       <div class="pc-team-col">
         <div class="pc-team-label" style="color:${color}">${label}</div>
-
         <div class="pc-section-title">Pace &amp; Scoring</div>
-        <div class="pc-rows">
-          <div class="pc-row"><span class="pc-key">Ast/TO Ratio</span><span class="pc-val">${v('assistTurnoverRatio')} ${r('assistTurnoverRatio')}</span></div>
-          <div class="pc-row"><span class="pc-key">Pts / Game</span><span class="pc-val">${v('avgPoints')} ${r('avgPoints')}</span></div>
-          <div class="pc-row"><span class="pc-key">Field Goal %</span><span class="pc-val">${v('fieldGoalPct')}% ${r('fieldGoalPct')}</span></div>
-          <div class="pc-row"><span class="pc-key">FGA / Game</span><span class="pc-val">${v('avgFieldGoalsAttempted')} ${r('avgFieldGoalsAttempted')}</span></div>
-        </div>
-
+        <div class="pc-rows">${rows('paceAndScoring')}</div>
         <div class="pc-section-title">Scoring Methods</div>
-        <div class="pc-rows">
-          <div class="pc-row"><span class="pc-key">2PT Made / Game</span><span class="pc-val">${v('avgTwoPointFieldGoalsMade')} ${r('avgTwoPointFieldGoalsMade')}</span></div>
-          <div class="pc-row"><span class="pc-key">2PT %</span><span class="pc-val">${v('twoPointFieldGoalPct')}% ${r('twoPointFieldGoalPct')}</span></div>
-          <div class="pc-row"><span class="pc-key">3PT Made / Game</span><span class="pc-val">${v('avgThreePointFieldGoalsMade')} ${r('avgThreePointFieldGoalsMade')}</span></div>
-          <div class="pc-row"><span class="pc-key">3PT %</span><span class="pc-val">${v('threePointFieldGoalPct')}% ${r('threePointFieldGoalPct')}</span></div>
-          <div class="pc-row"><span class="pc-key">FT Attempted / Game</span><span class="pc-val">${v('avgFreeThrowsAttempted')} ${r('avgFreeThrowsAttempted')}</span></div>
-          <div class="pc-row"><span class="pc-key">FT %</span><span class="pc-val">${v('freeThrowPct')}% ${r('freeThrowPct')}</span></div>
-        </div>
-
+        <div class="pc-rows">${rows('scoringMethods')}</div>
         <div class="pc-section-title">Defense</div>
-        <div class="pc-rows">
-          <div class="pc-row"><span class="pc-key">Blocks / Game</span><span class="pc-val">${v('avgBlocks')} ${r('avgBlocks')}</span></div>
-          <div class="pc-row"><span class="pc-key">Steals / Game</span><span class="pc-val">${v('avgSteals')} ${r('avgSteals')}</span></div>
-          <div class="pc-row"><span class="pc-key">Def Rebounds / Game</span><span class="pc-val">${v('avgDefensiveRebounds')} ${r('avgDefensiveRebounds')}</span></div>
-        </div>
+        <div class="pc-rows">${rows('defense')}</div>
       </div>`;
   };
 
