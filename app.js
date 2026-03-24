@@ -877,7 +877,7 @@ function renderH2H({ gameInfo, h2h }) {
         <span class="h2h-label">${gameInfo.awayAbbr} Wins</span>
       </div>
       <div class="h2h-stat-card">
-        <span class="h2h-val" style="color:var(--lime)">${homeWins}</span>
+        <span class="h2h-val" style="color:var(--orange)">${homeWins}</span>
         <span class="h2h-label">${gameInfo.homeAbbr} Wins</span>
       </div>
       <div class="h2h-stat-card">
@@ -901,7 +901,7 @@ function renderH2H({ gameInfo, h2h }) {
       </div>
       <div class="form-chart-section">
         <div class="form-chart-controls">
-          <span class="form-chart-label" style="color:var(--lime)">${gameInfo.homeAbbr} · Player of the Game</span>
+          <span class="form-chart-label" style="color:var(--orange)">${gameInfo.homeAbbr} · Player of the Game</span>
           <div class="stat-toggle">
             <button class="stat-btn active" onclick="switchH2HStat('h2hChartHome', 'pts', this)">PTS</button>
             <button class="stat-btn" onclick="switchH2HStat('h2hChartHome', 'reb', this)">REB</button>
@@ -928,7 +928,7 @@ function renderH2H({ gameInfo, h2h }) {
               ${leaderBlock(g.awayLeader)}
             </div>
             <div class="h2h-leader-col">
-              <span class="h2h-leader-tag" style="color:var(--lime)">${g.homeTeam}</span>
+              <span class="h2h-leader-tag" style="color:var(--orange)">${g.homeTeam}</span>
               ${leaderBlock(g.homeLeader)}
             </div>
           </div>` : ''}

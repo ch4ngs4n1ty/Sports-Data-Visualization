@@ -753,13 +753,12 @@ body {
   font-family: var(--font-d);
   font-size: 20px;
   letter-spacing: 0.04em;
-  color: var(--lime);
-  text-shadow: var(--glow-lime-s);
+  color: var(--text);
 }
 .h2h-date { font-size: 10px; color: var(--text2); }
 .h2h-winner { font-size: 10px; padding: 3px 9px; border-radius: 3px; }
-.h2h-winner.away { background: rgba(77,139,255,0.12); color: var(--blue); border: 1px solid rgba(77,139,255,0.2); }
-.h2h-winner.home { background: rgba(212,245,60,0.1); color: var(--lime); border: 1px solid rgba(212,245,60,0.2); }
+.h2h-winner.away { background: rgba(35,209,139,0.1); color: var(--green); border: 1px solid rgba(35,209,139,0.2); }
+.h2h-winner.home { background: rgba(35,209,139,0.1); color: var(--green); border: 1px solid rgba(35,209,139,0.2); }
 .h2h-leaders-row {
   display: grid; grid-template-columns: 1fr 1fr; gap: 12px;
   border-top: 1px solid var(--border); padding-top: 12px;
@@ -767,7 +766,7 @@ body {
 .h2h-leader-col { display: flex; flex-direction: column; gap: 4px; }
 .h2h-leader-tag { font-size: 9px; font-weight: 600; letter-spacing: 0.12em; text-transform: uppercase; }
 .h2h-leader-name { font-size: 12px; color: var(--text); font-weight: 500; }
-.h2h-leader-stats { font-size: 11px; color: var(--lime); opacity: 0.8; }
+.h2h-leader-stats { font-size: 11px; color: var(--text2); }
 
 /* ── INJURIES TAB ────────────────────────────── */
 .injuries-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; }
