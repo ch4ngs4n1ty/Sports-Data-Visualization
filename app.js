@@ -29,6 +29,13 @@ const SPORTS = [
   { key: 'ncaamb', sport: 'basketball', league: 'mens-college-basketball',  label: 'NCAAB' },
 ];
 
+/* ── SERVICE WORKER (PWA) ───────────────────────────────── */
+if ('serviceWorker' in navigator) {
+  window.addEventListener('load', () => {
+    navigator.serviceWorker.register('./sw.js').catch(() => {});
+  });
+}
+
 /* ── INIT ───────────────────────────────────────────────── */
 document.addEventListener('DOMContentLoaded', () => {
   if (S.apiKey) document.getElementById('apiKey').value = S.apiKey;

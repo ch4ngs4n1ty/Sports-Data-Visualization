@@ -1100,3 +1100,115 @@ body {
 ::-webkit-scrollbar-track { background: transparent; }
 ::-webkit-scrollbar-thumb { background: var(--bg4); border-radius: 4px; }
 ::-webkit-scrollbar-thumb:hover { background: var(--text3); }
+
+/* ═══════════════════════════════════════════
+   MOBILE — Responsive overrides
+   Breakpoints: 768px (tablet), 480px (phone)
+═══════════════════════════════════════════ */
+
+@media (max-width: 768px) {
+
+  /* ── TOPBAR ── */
+  .topbar {
+    height: auto;
+    flex-direction: column;
+    align-items: flex-start;
+    padding: 12px 16px 10px;
+    gap: 10px;
+  }
+  .topbar-left { gap: 12px; }
+  .tagline { display: none; }
+  .api-row { width: 100%; }
+  .api-row input { width: 100%; flex: 1; }
+
+  /* ── DASHBOARD ── */
+  .dashboard-section { padding: 20px 16px 60px; }
+  .dashboard-controls { margin-bottom: 20px; }
+  .dashboard-heading { font-size: 26px; }
+  .games-grid { grid-template-columns: 1fr; gap: 10px; }
+
+  /* ── ANALYSIS PANEL ── */
+  .analysis-panel { padding: 0 16px 60px; }
+
+  /* Game header */
+  .game-header { gap: 12px; padding: 16px 0 12px; }
+  .game-title { font-size: 26px; }
+  .back-btn { font-size: 10px; padding: 6px 12px; }
+
+  /* ── TABS ── */
+  .tab { padding: 12px 14px; font-size: 11px; }
+  .tab-bar { margin-bottom: 20px; }
+
+  /* ── OVERVIEW: stack team cols vertically ── */
+  .two-col {
+    grid-template-columns: 1fr;
+  }
+  .team-col:first-child {
+    border-radius: 10px 10px 0 0;
+    border-right: 1px solid var(--border);
+    border-bottom: none;
+  }
+  .vs-divider {
+    flex-direction: row;
+    padding: 12px 16px;
+    justify-content: flex-start;
+    gap: 20px;
+    border-left: 1px solid var(--border);
+    border-right: 1px solid var(--border);
+  }
+  .vs-divider > span { font-size: 16px; }
+  .team-col:last-child {
+    border-radius: 0 0 10px 10px;
+    border-left: 1px solid var(--border);
+    border-top: none;
+  }
+  .overview-charts { grid-template-columns: 1fr; }
+
+  /* ── ROSTER ── */
+  .roster-grid { grid-template-columns: 1fr; }
+
+  /* ── FORM ── */
+  .form-grid { grid-template-columns: 1fr; }
+
+  /* ── H2H ── */
+  .h2h-charts-row { grid-template-columns: 1fr; }
+
+  /* ── INJURIES ── */
+  .injuries-grid { grid-template-columns: 1fr; }
+
+  /* ── AI PLAYS: stack textarea + button ── */
+  .your-play-input { flex-direction: column; }
+  .discuss-btn { padding: 14px; align-self: stretch; }
+
+  /* ── PLAYER MODAL ── */
+  .player-modal-inner { padding: 20px 16px; }
+  .player-modal-name { font-size: 20px; }
+
+  /* ── H2H leaders: tighter on small screen ── */
+  .h2h-leaders-grid { grid-template-columns: 1fr; gap: 12px; }
+}
+
+@media (max-width: 480px) {
+
+  /* Further reduce font sizes on very small phones */
+  .game-title { font-size: 20px; }
+  .dashboard-heading { font-size: 22px; }
+
+  /* Card team abbr slightly smaller */
+  .card-abbr { font-size: 26px; }
+
+  /* Plays section padding */
+  .plays-section { padding: 18px 14px; }
+
+  /* Tab labels: shorten to fit 5 tabs */
+  .tab { padding: 10px 10px; font-size: 10px; }
+
+  /* H2H summary cards wrap tighter */
+  .h2h-summary { gap: 8px; }
+  .h2h-stat-card { padding: 14px 16px; min-width: 100px; }
+  .h2h-val { font-size: 34px; }
+
+  /* Safe area insets for notched phones */
+  body { padding-bottom: env(safe-area-inset-bottom); }
+  .topbar { padding-top: max(12px, env(safe-area-inset-top)); padding-left: max(16px, env(safe-area-inset-left)); padding-right: max(16px, env(safe-area-inset-right)); }
+}
