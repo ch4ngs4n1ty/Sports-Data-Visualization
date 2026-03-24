@@ -21,7 +21,7 @@ function teamLogoUrl(league, abbr, teamId) {
   return `https://a.espncdn.com/i/teamlogos/ncaa/500/${teamId}.png`;
 }
 
-/* ── ESPN SPORT MAP ─────────────────────────────────────── */
+/* ── ESPN SPORT MAP ─────��───────────────────────────────── */
 const SPORTS = [
   { key: 'nba',    sport: 'basketball', league: 'nba',                     label: 'NBA' },
   { key: 'mlb',    sport: 'baseball',   league: 'mlb',                     label: 'MLB' },
@@ -54,14 +54,14 @@ function saveKey() {
 /* ── DASHBOARD ──────────────────────────────────────────── */
 async function loadDashboard() {
   const dateEl = document.getElementById('dashboardDate');
-  dateEl.textContent = new Date().toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' });
+  const nowET = new Date();
+  dateEl.textContent = nowET.toLocaleDateString('en-US', { timeZone: 'America/New_York', weekday: 'long', month: 'long', day: 'numeric' });
 
   const content = document.getElementById('dashboardContent');
   content.innerHTML = `<div class="dashboard-loading"><div class="loader-spinner"></div><span>Loading today's games...</span></div>`;
 
   S.allGames = [];
 
-  // Use today's date in ET so ESPN returns the correct day's slate
   const todayET = new Date().toLocaleDateString('en-CA', { timeZone: 'America/New_York' }).replace(/-/g, '');
 
   const results = await Promise.all(
@@ -302,18 +302,6 @@ function setStep(idx) {
   });
 }
 
-/* ── PARSE INPUT ────────────────────────────────────────── */
-function parseGameInput(raw) {
-  const sep = /\s+(?:vs\.?|@|versus|-)\s+/i;
-  const parts = raw.split(sep);
-  if (parts.length >= 2) {
-    return { away: parts[0].trim(), home: parts[1].trim() };
-  }
-  const words = raw.trim().split(/\s+/);
-  const mid = Math.floor(words.length / 2);
-  return { away: words.slice(0, mid).join(' '), home: words.slice(mid).join(' ') };
-}
-
 /* ── ESPN FETCH HELPER ──────────────────────────────────── */
 async function espn(url) {
   try {
@@ -321,60 +309,6 @@ async function espn(url) {
     if (!r.ok) return null;
     return await r.json();
   } catch { return null; }
-}
-
-/* ── FIND GAME ──────────────────────────────────────────── */
-async function findGame(parsed) {
-  const awayQ = parsed.away.toLowerCase();
-  const homeQ = parsed.home.toLowerCase();
-
-  for (const sp of SPORTS) {
-    const url = `https://site.api.espn.com/apis/site/v2/sports/${sp.sport}/${sp.league}/scoreboard`;
-    const data = await espn(url);
-    if (!data?.events) continue;
-
-    for (const ev of data.events) {
-      const comp = ev.competitions?.[0];
-      if (!comp) continue;
-      const home = comp.competitors?.find(c => c.homeAway === 'home');
-      const away = comp.competitors?.find(c => c.homeAway === 'away');
-      if (!home || !away) continue;
-
-      const homeName = (home.team.displayName + ' ' + home.team.abbreviation + ' ' + home.team.shortDisplayName).toLowerCase();
-      const awayName = (away.team.displayName + ' ' + away.team.abbreviation + ' ' + away.team.shortDisplayName).toLowerCase();
-
-      const awayMatch = awayName.includes(awayQ) || awayQ.includes(away.team.abbreviation.toLowerCase()) || awayQ.split(' ').some(w => w.length > 3 && awayName.includes(w));
-      const homeMatch = homeName.includes(homeQ) || homeQ.includes(home.team.abbreviation.toLowerCase()) || homeQ.split(' ').some(w => w.length > 3 && homeName.includes(w));
-
-      if (awayMatch && homeMatch) {
-        const odds = comp.odds?.[0];
-        return {
-          sportKey: sp.key,
-          sportLabel: sp.label,
-          sport: sp.sport,
-          league: sp.league,
-          eventId: ev.id,
-          awayFull: away.team.displayName,
-          awayAbbr: away.team.abbreviation,
-          awayTeamId: away.team.id,
-          awayScore: away.score,
-          homeFull: home.team.displayName,
-          homeAbbr: home.team.abbreviation,
-          homeTeamId: home.team.id,
-          homeScore: home.score,
-          statusText: ev.status?.type?.description || 'Scheduled',
-          statusState: ev.status?.type?.state,
-          date: ev.date,
-          venue: comp.venue?.fullName,
-          spread: odds?.details,
-          overUnder: odds?.overUnder,
-          awayMoneyline: odds?.awayTeamOdds?.moneyLine,
-          homeMoneyline: odds?.homeTeamOdds?.moneyLine,
-        };
-      }
-    }
-  }
-  return null;
 }
 
 /* ── ODDS STRIP ─────────────────────────────────────────── */

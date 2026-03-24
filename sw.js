@@ -4,7 +4,7 @@
              Network-only for live API calls
 ═══════════════════════════════════════════ */
 
-const CACHE = 'playiq-v2';
+const CACHE = 'playiq-v3';
 
 const BASE = self.registration.scope;
 
@@ -46,8 +46,9 @@ self.addEventListener('fetch', e => {
     url.hostname.includes('espncdn.com');
 
   if (isLiveAPI) {
-    // Network only — live data must be fresh
-    e.respondWith(fetch(e.request).catch(() => new Response('', { status: 503 })));
+    // Network only — bypass ALL caches for live data
+    const fresh = new Request(e.request, { cache: 'no-store' });
+    e.respondWith(fetch(fresh).catch(() => new Response('', { status: 503 })));
     return;
   }
 
