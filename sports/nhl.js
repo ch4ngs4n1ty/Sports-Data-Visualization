@@ -2,7 +2,11 @@
 window.SportConfig = window.SportConfig || {};
 
 SportConfig.nhl = {
-  h2hCategories: ['goals', 'assists', 'pts'],
+  statCategories: [
+    { key: 'goals',   label: 'G',   espnBoxLabel: 'G',   espnLeaderCat: 'goals'   },
+    { key: 'assists', label: 'A',   espnBoxLabel: 'A',   espnLeaderCat: 'assists' },
+    { key: 'pts',     label: 'PTS', espnBoxLabel: 'PTS', espnLeaderCat: 'points'  },
+  ],
 
   propsStats: {
     paceAndScoring: [

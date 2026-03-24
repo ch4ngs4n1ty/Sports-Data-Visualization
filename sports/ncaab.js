@@ -3,7 +3,11 @@ window.SportConfig = window.SportConfig || {};
 
 // NCAAB uses same ESPN stat keys as NBA
 SportConfig.ncaamb = {
-  h2hCategories: ['pts', 'reb', 'ast'],
+  statCategories: [
+    { key: 'pts', label: 'PTS', espnBoxLabel: 'PTS', espnLeaderCat: 'points'   },
+    { key: 'reb', label: 'REB', espnBoxLabel: 'REB', espnLeaderCat: 'rebounds' },
+    { key: 'ast', label: 'AST', espnBoxLabel: 'AST', espnLeaderCat: 'assists'  },
+  ],
 
   propsStats: {
     paceAndScoring: [

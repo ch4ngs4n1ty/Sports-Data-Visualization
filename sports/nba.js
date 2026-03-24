@@ -5,7 +5,15 @@
 window.SportConfig = window.SportConfig || {};
 
 SportConfig.nba = {
-  h2hCategories: ['pts', 'reb', 'ast'],
+  // key: internal key used in data objects
+  // label: button label shown in UI
+  // espnBoxLabel: column header in ESPN boxscore statistics array
+  // espnLeaderCat: category name in ESPN summary leaders array
+  statCategories: [
+    { key: 'pts', label: 'PTS', espnBoxLabel: 'PTS', espnLeaderCat: 'points'   },
+    { key: 'reb', label: 'REB', espnBoxLabel: 'REB', espnLeaderCat: 'rebounds' },
+    { key: 'ast', label: 'AST', espnBoxLabel: 'AST', espnLeaderCat: 'assists'  },
+  ],
 
   propsStats: {
     paceAndScoring: [

@@ -2,7 +2,11 @@
 window.SportConfig = window.SportConfig || {};
 
 SportConfig.mlb = {
-  h2hCategories: ['hits', 'runs', 'hrs'],
+  statCategories: [
+    { key: 'hits', label: 'H',   espnBoxLabel: 'H',  espnLeaderCat: 'hits'         },
+    { key: 'runs', label: 'R',   espnBoxLabel: 'R',  espnLeaderCat: 'runs'         },
+    { key: 'rbi',  label: 'RBI', espnBoxLabel: 'RBI',espnLeaderCat: 'RBI'          },
+  ],
 
   propsStats: {
     paceAndScoring: [

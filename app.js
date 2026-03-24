@@ -399,10 +399,9 @@ async function enrichFormWithPlayerStats(sportKey, teamId, formGames) {
     if (!statsGroup) return { ...g, player: null };
 
     const labels = statsGroup.labels || [];
-    const ptsIdx = labels.indexOf('PTS');
-    const rebIdx = labels.indexOf('REB');
-    const astIdx = labels.indexOf('AST');
-    if (ptsIdx === -1) return { ...g, player: null };
+    const cats = window.SportConfig?.[sportKey]?.statCategories || [];
+    const indices = cats.map(c => labels.indexOf(c.espnBoxLabel));
+    if (!cats.length || indices[0] === -1) return { ...g, player: null };
 
     const athletes = statsGroup.athletes || [];
     const findLeader = (idx) => {
@@ -418,7 +417,9 @@ async function enrichFormWithPlayerStats(sportKey, teamId, formGames) {
       return best;
     };
 
-    return { ...g, player: { pts: findLeader(ptsIdx), reb: findLeader(rebIdx), ast: findLeader(astIdx) } };
+    const player = {};
+    cats.forEach((c, i) => { player[c.key] = findLeader(indices[i]); });
+    return { ...g, player };
   });
 }
 
@@ -591,11 +592,10 @@ async function fetchH2H(gameInfo) {
           ? { name: top.athlete?.shortName || top.athlete?.displayName || '?', value: parseInt(top.displayValue) || 0, athleteId: top.athlete?.id, headshot: top.athlete?.headshot?.href }
           : null;
       };
-      return {
-        pts: getCatLeader('points'),
-        reb: getCatLeader('rebounds'),
-        ast: getCatLeader('assists'),
-      };
+      const cats = window.SportConfig?.[gameInfo.sportKey]?.statCategories || [];
+      const result = {};
+      cats.forEach(c => { result[c.key] = getCatLeader(c.espnLeaderCat); });
+      return result;
     };
 
     // Always look up by the current game's away/home abbreviation — fixes historical home/away flip
@@ -642,14 +642,17 @@ async function fetchPlayerLastGames(sportKey, teamId, athleteId) {
     const oppScore = parseScore(oppC?.score);
     const result   = teamC?.winner ? 'W' : oppC?.winner ? 'L' : myScore > oppScore ? 'W' : 'L';
 
-    let pts = 0, reb = 0, ast = 0, didNotPlay = false, dnpReason = '';
+    const cats = window.SportConfig?.[sportKey]?.statCategories || [];
+    const statVals = {};
+    cats.forEach(c => { statVals[c.key] = 0; });
+    let didNotPlay = false, dnpReason = '';
+
     const summary = summaries[i];
     if (summary?.boxscore?.players) {
       let playerFound = false;
       outer: for (const td of summary.boxscore.players) {
         for (const grp of td.statistics || []) {
           const lbls = grp.labels || [];
-          const pi = lbls.indexOf('PTS'), ri = lbls.indexOf('REB'), ai = lbls.indexOf('AST');
           const ath = grp.athletes?.find(a => a.athlete?.id === athleteId);
           if (ath) {
             playerFound = true;
@@ -658,9 +661,10 @@ async function fetchPlayerLastGames(sportKey, teamId, athleteId) {
               didNotPlay = true;
               dnpReason = ath.reason || 'DNP';
             } else {
-              pts = parseInt(ath.stats?.[pi] || 0) || 0;
-              reb = ri > -1 ? parseInt(ath.stats?.[ri] || 0) || 0 : 0;
-              ast = ai > -1 ? parseInt(ath.stats?.[ai] || 0) || 0 : 0;
+              cats.forEach(c => {
+                const idx = lbls.indexOf(c.espnBoxLabel);
+                statVals[c.key] = idx > -1 ? (parseInt(ath.stats?.[idx] || 0) || 0) : 0;
+              });
             }
             break outer;
           }
@@ -672,7 +676,7 @@ async function fetchPlayerLastGames(sportKey, teamId, athleteId) {
     return {
       opponent: oppC?.team?.abbreviation || '?',
       isHome: teamC?.homeAway === 'home',
-      result, myScore, oppScore, pts, reb, ast, didNotPlay, dnpReason,
+      result, myScore, oppScore, ...statVals, didNotPlay, dnpReason,
       date: new Date(ev.date).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }),
     };
   });
@@ -691,15 +695,17 @@ async function openPlayerModal(el) {
   document.getElementById('playerModalLoading').classList.remove('hidden');
   document.getElementById('playerModalChart').classList.add('hidden');
   document.getElementById('playerModal').classList.remove('hidden');
-  document.querySelectorAll('#playerModal .stat-btn').forEach((b, i) => {
-    b.classList.toggle('active', i === 0);
-  });
+  const modalCats = window.SportConfig?.[S.gameData.gameInfo.sportKey]?.statCategories || [];
+  document.getElementById('playerModalStatBtns').innerHTML = modalCats.map((c, i) =>
+    `<button class="stat-btn${i === 0 ? ' active' : ''}" onclick="switchPlayerModalStat('${c.key}', this)">${c.label}</button>`
+  ).join('');
 
   const games = await fetchPlayerLastGames(S.gameData.gameInfo.sportKey, teamId, athleteId);
   S.playerModal.games = games;
   document.getElementById('playerModalLoading').classList.add('hidden');
   document.getElementById('playerModalChart').classList.remove('hidden');
-  renderPlayerModalChart('pts');
+  const defaultModalStat = window.SportConfig?.[S.gameData.gameInfo.sportKey]?.statCategories?.[0]?.key || 'pts';
+  renderPlayerModalChart(defaultModalStat);
 }
 
 function renderPlayerModalChart(stat) {
@@ -918,34 +924,40 @@ function renderRoster({ gameInfo, awayRoster, homeRoster }) {
 
 /* ── FORM ───────────────────────────────────────────────── */
 function renderForm({ gameInfo, awayForm, homeForm }) {
+  const cats = window.SportConfig?.[gameInfo.sportKey]?.statCategories || [];
+  const firstCat = cats[0];
   const hasPlayerData = (form) => form.some(g => g.player);
+
+  const statBtns = (chartId) => cats.map((c, i) =>
+    `<button class="stat-btn${i === 0 ? ' active' : ''}" onclick="switchFormStat('${chartId}', '${c.key}', this)">${c.label}</button>`
+  ).join('');
 
   const formBlock = (teamName, form, chartId) => `
     <div class="form-team-block">
       <h3>${teamName}</h3>
-      ${hasPlayerData(form) ? `
+      ${hasPlayerData(form) && cats.length ? `
       <div class="form-chart-section">
         <div class="form-chart-controls">
           <span class="form-chart-label">Player of the Game</span>
-          <div class="stat-toggle">
-            <button class="stat-btn active" onclick="switchFormStat('${chartId}', 'pts', this)">PTS</button>
-            <button class="stat-btn" onclick="switchFormStat('${chartId}', 'reb', this)">REB</button>
-            <button class="stat-btn" onclick="switchFormStat('${chartId}', 'ast', this)">AST</button>
-          </div>
+          <div class="stat-toggle">${statBtns(chartId)}</div>
         </div>
         <canvas id="${chartId}" height="150"></canvas>
       </div>` : ''}
       <div class="form-games-list">
         ${form.length === 0 ? '<p class="empty-msg">No recent games found</p>' :
-          [...form].reverse().map(g => `
+          [...form].reverse().map(g => {
+            const leader = firstCat && g.player?.[firstCat.key];
+            const leaderStr = leader ? ` · <span style="color:var(--lime);opacity:0.8">${leader.name} ${leader.value}${firstCat.label.toLowerCase()}</span>` : '';
+            return `
             <div class="form-game">
               <div class="form-result ${g.result}">${g.result}</div>
               <div class="form-details">
                 <div class="form-matchup">${g.home ? 'vs' : '@'} ${g.opponent}</div>
-                <div class="form-score">${g.myScore} – ${g.oppScore}${g.player?.pts ? ` · <span style="color:var(--lime);opacity:0.8">${g.player.pts.name} ${g.player.pts.value}pts</span>` : ''}</div>
+                <div class="form-score">${g.myScore} – ${g.oppScore}${leaderStr}</div>
               </div>
               <span class="form-date">${g.date}</span>
-            </div>`).join('')}
+            </div>`;
+          }).join('')}
       </div>
     </div>`;
 
@@ -953,9 +965,10 @@ function renderForm({ gameInfo, awayForm, homeForm }) {
     formBlock(gameInfo.awayFull, awayForm, 'formChartAway') +
     formBlock(gameInfo.homeFull, homeForm, 'formChartHome');
 
+  const defaultStat = firstCat?.key || 'pts';
   setTimeout(() => {
-    if (hasPlayerData(awayForm)) renderFormChart('formChartAway', awayForm, 'pts');
-    if (hasPlayerData(homeForm)) renderFormChart('formChartHome', homeForm, 'pts');
+    if (hasPlayerData(awayForm)) renderFormChart('formChartAway', awayForm, defaultStat);
+    if (hasPlayerData(homeForm)) renderFormChart('formChartHome', homeForm, defaultStat);
   }, 50);
 }
 
@@ -1071,11 +1084,10 @@ function renderH2H({ gameInfo, h2h }) {
           <span class="h2h-player-stat">${cat.value} <span class="h2h-player-stat-label">${statLabel}</span></span>
         </div>`;
     };
+    const cats = window.SportConfig?.[gameInfo.sportKey]?.statCategories || [];
     return `
       <div class="h2h-player-row">
-        ${playerCard(leader.pts, 'PTS')}
-        ${playerCard(leader.reb, 'REB')}
-        ${playerCard(leader.ast, 'AST')}
+        ${cats.map(c => playerCard(leader[c.key], c.label)).join('')}
       </div>`;
   };
 
@@ -1095,31 +1107,29 @@ function renderH2H({ gameInfo, h2h }) {
       </div>
     </div>
 
-    ${hasLeaders ? `
+    ${hasLeaders ? (() => {
+      const cats = window.SportConfig?.[gameInfo.sportKey]?.statCategories || [];
+      const h2hBtns = (chartId) => cats.map((c, i) =>
+        `<button class="stat-btn${i === 0 ? ' active' : ''}" onclick="switchH2HStat('${chartId}', '${c.key}', this)">${c.label}</button>`
+      ).join('');
+      return `
     <div class="h2h-charts-row">
       <div class="form-chart-section">
         <div class="form-chart-controls">
           <span class="form-chart-label" style="color:var(--blue)">${gameInfo.awayAbbr} · Player of the Game</span>
-          <div class="stat-toggle">
-            <button class="stat-btn active" onclick="switchH2HStat('h2hChartAway', 'pts', this)">PTS</button>
-            <button class="stat-btn" onclick="switchH2HStat('h2hChartAway', 'reb', this)">REB</button>
-            <button class="stat-btn" onclick="switchH2HStat('h2hChartAway', 'ast', this)">AST</button>
-          </div>
+          <div class="stat-toggle">${h2hBtns('h2hChartAway')}</div>
         </div>
         <canvas id="h2hChartAway" height="150"></canvas>
       </div>
       <div class="form-chart-section">
         <div class="form-chart-controls">
           <span class="form-chart-label" style="color:var(--orange)">${gameInfo.homeAbbr} · Player of the Game</span>
-          <div class="stat-toggle">
-            <button class="stat-btn active" onclick="switchH2HStat('h2hChartHome', 'pts', this)">PTS</button>
-            <button class="stat-btn" onclick="switchH2HStat('h2hChartHome', 'reb', this)">REB</button>
-            <button class="stat-btn" onclick="switchH2HStat('h2hChartHome', 'ast', this)">AST</button>
-          </div>
+          <div class="stat-toggle">${h2hBtns('h2hChartHome')}</div>
         </div>
         <canvas id="h2hChartHome" height="150"></canvas>
       </div>
-    </div>` : ''}
+    </div>`;
+    })() : ''}
 
     <div class="h2h-game-list">
       ${h2h.map(g => `
@@ -1145,9 +1155,10 @@ function renderH2H({ gameInfo, h2h }) {
     </div>`;
 
   if (hasLeaders) {
+    const defaultStat = window.SportConfig?.[gameInfo.sportKey]?.statCategories?.[0]?.key || 'pts';
     setTimeout(() => {
-      renderH2HChart('h2hChartAway', h2h, 'away', 'pts');
-      renderH2HChart('h2hChartHome', h2h, 'home', 'pts');
+      renderH2HChart('h2hChartAway', h2h, 'away', defaultStat);
+      renderH2HChart('h2hChartHome', h2h, 'home', defaultStat);
     }, 50);
   }
 }
