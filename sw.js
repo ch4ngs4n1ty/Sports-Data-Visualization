@@ -4,7 +4,7 @@
              Network-only for live API calls
 ═══════════════════════════════════════════ */
 
-const CACHE = 'playiq-v3';
+const CACHE = 'playiq-v4';
 
 const BASE = self.registration.scope;
 
@@ -52,12 +52,30 @@ self.addEventListener('fetch', e => {
     return;
   }
 
-  // Cache-first for everything else (app shell, fonts, CDN assets)
+  const isAppShell =
+    url.hostname === self.location.hostname &&
+    (url.pathname.endsWith('.html') ||
+     url.pathname.endsWith('.css') ||
+     url.pathname.endsWith('.js') ||
+     url.pathname === new URL(BASE).pathname);
+
+  if (isAppShell) {
+    // Network-first for app shell — always get latest, fall back to cache
+    e.respondWith(
+      fetch(e.request).then(res => {
+        const clone = res.clone();
+        caches.open(CACHE).then(c => c.put(e.request, clone));
+        return res;
+      }).catch(() => caches.match(e.request))
+    );
+    return;
+  }
+
+  // Cache-first for CDN assets (Chart.js, Google Fonts)
   e.respondWith(
     caches.match(e.request).then(cached => {
       if (cached) return cached;
       return fetch(e.request).then(res => {
-        // Cache CDN assets (Chart.js, Google Fonts)
         if (
           url.hostname.includes('cdn.jsdelivr.net') ||
           url.hostname.includes('fonts.googleapis.com') ||

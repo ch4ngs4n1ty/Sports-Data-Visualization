@@ -277,6 +277,7 @@ async function startAnalysis(gameInfo) {
     renderRoster(S.gameData);
     renderForm(S.gameData);
     renderH2H(S.gameData);
+    renderProps(S.gameData);
 
     setStep(5);
     loader.classList.add('hidden');
@@ -418,6 +419,101 @@ async function enrichFormWithPlayerStats(sportKey, teamId, formGames) {
     };
 
     return { ...g, player: { pts: findLeader(ptsIdx), reb: findLeader(rebIdx), ast: findLeader(astIdx) } };
+  });
+}
+
+/* ── TEAM RANKED STATS (ESPN Core API) ─────────────────── */
+async function fetchTeamStats(sportKey, teamId) {
+  const sp = SPORTS.find(s => s.key === sportKey);
+  if (!sp) return null;
+
+  // Try site API first (CORS-safe), fall back to core API
+  const siteData = await espn(
+    `https://site.api.espn.com/apis/site/v2/sports/${sp.sport}/${sp.league}/teams/${teamId}/statistics`
+  );
+  if (siteData?.results?.stats?.categories) {
+    const result = {};
+    for (const cat of siteData.results.stats.categories) {
+      for (const stat of cat.stats || []) {
+        result[stat.name] = { value: stat.value, rank: stat.rank ?? null };
+      }
+    }
+    return Object.keys(result).length ? result : null;
+  }
+
+  // Fallback: core API for ranked stats
+  const season = getSeasonYear(sportKey);
+  const data = await espn(
+    `https://sports.core.api.espn.com/v2/sports/${sp.sport}/leagues/${sp.league}/seasons/${season}/types/2/teams/${teamId}/statistics`
+  );
+  if (!data?.splits?.categories) return null;
+
+  const result = {};
+  for (const cat of data.splits.categories) {
+    for (const stat of cat.stats || []) {
+      result[stat.name] = { value: stat.value, rank: stat.rank ?? null };
+    }
+  }
+  return Object.keys(result).length ? result : null;
+}
+
+/* ── PLAYER PROP DATA (last 10 games: MIN, PTS, FGA, REB, AST) ── */
+async function fetchPlayerPropData(sportKey, teamId, athleteId) {
+  const sp = SPORTS.find(s => s.key === sportKey);
+  if (!sp) return [];
+  const season = getSeasonYear(sportKey);
+  const schedData = await espn(
+    `https://site.api.espn.com/apis/site/v2/sports/${sp.sport}/${sp.league}/teams/${teamId}/schedule?season=${season}`
+  );
+  if (!schedData?.events) return [];
+
+  const completed = schedData.events
+    .filter(e => e.competitions?.[0]?.status?.type?.completed)
+    .slice(-10);
+
+  const summaries = await Promise.all(
+    completed.map(e =>
+      espn(`https://site.api.espn.com/apis/site/v2/sports/${sp.sport}/${sp.league}/summary?event=${e.id}`)
+    )
+  );
+
+  return completed.map((ev, i) => {
+    const comp = ev.competitions[0];
+    const teamC = comp.competitors.find(c => c.team?.id === teamId);
+    const oppC  = comp.competitors.find(c => c.team?.id !== teamId);
+    const parseScore = s => parseInt(s?.displayValue ?? s ?? 0) || 0;
+    const myScore  = parseScore(teamC?.score);
+    const oppScore = parseScore(oppC?.score);
+    const result   = teamC?.winner ? 'W' : oppC?.winner ? 'L' : myScore > oppScore ? 'W' : 'L';
+    const isHome   = teamC?.homeAway === 'home';
+    const opponent = oppC?.team?.abbreviation || '?';
+    const date     = new Date(ev.date).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+
+    let pts = null, reb = null, ast = null, min = null, fga = null, didNotPlay = false, dnpReason = '';
+
+    const summary = summaries[i];
+    if (summary?.boxscore?.players) {
+      outer: for (const teamData of summary.boxscore.players) {
+        for (const grp of teamData.statistics || []) {
+          const labels = grp.labels || [];
+          const ath = grp.athletes?.find(a => a.athlete?.id === athleteId);
+          if (!ath) continue;
+          if (ath.didNotPlay || !ath.stats?.length || ath.stats?.[0] === 'DNP') {
+            didNotPlay = true;
+            dnpReason  = ath.reason || 'DNP';
+          } else {
+            const idx = (name) => labels.indexOf(name);
+            const val = (name) => { const i = idx(name); return i > -1 ? parseInt(ath.stats[i]) || 0 : 0; };
+            pts = val('PTS'); reb = val('REB'); ast = val('AST');
+            fga = val('FGA') || (() => { const fg = ath.stats[idx('FG')] || ''; return parseInt(fg.split('-')[1]) || 0; })();
+            min = ath.stats[idx('MIN')] || '0';
+          }
+          break outer;
+        }
+      }
+    }
+
+    return { date, opponent, isHome, result, myScore, oppScore, pts, reb, ast, min, fga, didNotPlay, dnpReason };
   });
 }
 
@@ -681,10 +777,15 @@ async function fetchRoster(sportKey, teamId) {
     (group.items || [group]).forEach(p => {
       if (p.fullName) {
         players.push({
+          id: p.id,
           name: p.displayName || p.fullName,
+          fullName: p.fullName,
+          displayName: p.displayName || p.fullName,
           pos: p.position?.abbreviation || '—',
+          position: p.position?.abbreviation || '',
           jersey: p.jersey || '—',
           status: p.injuries?.[0]?.status || null,
+          headshotUrl: p.headshot?.href || null,
         });
       }
     });
@@ -1139,6 +1240,114 @@ function switchH2HStat(chartId, stat, btn) {
   btn.classList.add('active');
   const side = chartId === 'h2hChartAway' ? 'away' : 'home';
   renderH2HChart(chartId, S.gameData.h2h, side, stat);
+}
+
+/* ── PROP CONTEXT TAB ───────────────────────────────────── */
+async function renderProps(data) {
+  const { gameInfo, injuries, awayForm, homeForm } = data;
+  const el = document.getElementById('propsContent');
+  if (!el) return;
+
+  el.innerHTML = `<div class="inline-loader"><div class="mini-spin"></div> Loading team data…</div>`;
+
+  let awayStats = null, homeStats = null;
+  try {
+    [awayStats, homeStats] = await Promise.all([
+      fetchTeamStats(gameInfo.sportKey, gameInfo.awayTeamId),
+      fetchTeamStats(gameInfo.sportKey, gameInfo.homeTeamId),
+    ]);
+  } catch (e) {
+    console.error('fetchTeamStats failed:', e);
+  }
+
+  // Back-to-back check — did either team play yesterday?
+  const yest = new Date(); yest.setDate(yest.getDate() - 1);
+  const yStr = yest.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+  const awayB2B = (awayForm||[]).length && awayForm[awayForm.length - 1]?.date === yStr;
+  const homeB2B = (homeForm||[]).length && homeForm[homeForm.length - 1]?.date === yStr;
+
+  const statBlock = (stats, label, color) => {
+    if (!stats) return `<div class="pc-team-col"><div class="pc-team-label" style="color:${color}">${label}</div><div style="color:var(--text3);font-size:12px;padding:12px 0">Stats unavailable</div></div>`;
+    const r = (key) => stats[key]?.rank ? `<span class="pc-rank">#${stats[key].rank}</span>` : '';
+    const v = (key) => stats[key]?.value != null ? (Math.round(stats[key].value * 10) / 10) : '—';
+    return `
+      <div class="pc-team-col">
+        <div class="pc-team-label" style="color:${color}">${label}</div>
+
+        <div class="pc-section-title">Pace &amp; Scoring</div>
+        <div class="pc-rows">
+          <div class="pc-row"><span class="pc-key">Ast/TO Ratio</span><span class="pc-val">${v('assistTurnoverRatio')} ${r('assistTurnoverRatio')}</span></div>
+          <div class="pc-row"><span class="pc-key">Pts / Game</span><span class="pc-val">${v('avgPoints')} ${r('avgPoints')}</span></div>
+          <div class="pc-row"><span class="pc-key">Field Goal %</span><span class="pc-val">${v('fieldGoalPct')}% ${r('fieldGoalPct')}</span></div>
+          <div class="pc-row"><span class="pc-key">FGA / Game</span><span class="pc-val">${v('avgFieldGoalsAttempted')} ${r('avgFieldGoalsAttempted')}</span></div>
+        </div>
+
+        <div class="pc-section-title">Scoring Methods</div>
+        <div class="pc-rows">
+          <div class="pc-row"><span class="pc-key">2PT Made / Game</span><span class="pc-val">${v('avgTwoPointFieldGoalsMade')} ${r('avgTwoPointFieldGoalsMade')}</span></div>
+          <div class="pc-row"><span class="pc-key">2PT %</span><span class="pc-val">${v('twoPointFieldGoalPct')}% ${r('twoPointFieldGoalPct')}</span></div>
+          <div class="pc-row"><span class="pc-key">3PT Made / Game</span><span class="pc-val">${v('avgThreePointFieldGoalsMade')} ${r('avgThreePointFieldGoalsMade')}</span></div>
+          <div class="pc-row"><span class="pc-key">3PT %</span><span class="pc-val">${v('threePointFieldGoalPct')}% ${r('threePointFieldGoalPct')}</span></div>
+          <div class="pc-row"><span class="pc-key">FT Attempted / Game</span><span class="pc-val">${v('avgFreeThrowsAttempted')} ${r('avgFreeThrowsAttempted')}</span></div>
+          <div class="pc-row"><span class="pc-key">FT %</span><span class="pc-val">${v('freeThrowPct')}% ${r('freeThrowPct')}</span></div>
+        </div>
+
+        <div class="pc-section-title">Defense</div>
+        <div class="pc-rows">
+          <div class="pc-row"><span class="pc-key">Blocks / Game</span><span class="pc-val">${v('avgBlocks')} ${r('avgBlocks')}</span></div>
+          <div class="pc-row"><span class="pc-key">Steals / Game</span><span class="pc-val">${v('avgSteals')} ${r('avgSteals')}</span></div>
+          <div class="pc-row"><span class="pc-key">Def Rebounds / Game</span><span class="pc-val">${v('avgDefensiveRebounds')} ${r('avgDefensiveRebounds')}</span></div>
+        </div>
+      </div>`;
+  };
+
+  const injBlock = (injs, label, color) => {
+    const out = (injs||[]).filter(i => /out|doubtful/i.test(i.status));
+    if (!out.length) return `<div class="pc-inj-none" style="color:${color}"><span style="opacity:.5">${label}</span> — No injuries reported</div>`;
+    return `<div class="pc-inj-team">
+      <span class="pc-inj-label" style="color:${color}">${label}</span>
+      ${out.map(i => `
+        <div class="pc-inj-row">
+          <span class="inj-dot" style="background:${/out/i.test(i.status)?'var(--red)':'var(--orange)'}"></span>
+          <span class="pc-inj-name">${i.name}</span>
+          <span class="pc-inj-status">${i.status}</span>
+          <span class="pc-inj-desc">${i.desc}</span>
+        </div>`).join('')}
+    </div>`;
+  };
+
+  try {
+    el.innerHTML = `
+      <!-- GAME CONTEXT STRIP -->
+      <div class="pc-context-strip">
+        ${gameInfo.overUnder ? `<div class="pc-ctx-pill"><span class="pc-ctx-label">Over/Under</span><span class="pc-ctx-val">${gameInfo.overUnder}</span></div>` : ''}
+        ${gameInfo.spread    ? `<div class="pc-ctx-pill"><span class="pc-ctx-label">Spread</span><span class="pc-ctx-val">${gameInfo.spread}</span></div>` : ''}
+        <div class="pc-ctx-pill"><span class="pc-ctx-label">Venue</span><span class="pc-ctx-val">${gameInfo.venue || '—'}</span></div>
+        ${awayB2B ? `<div class="pc-ctx-pill pc-b2b"><span class="pc-ctx-label">Back-to-Back</span><span class="pc-ctx-val">${gameInfo.awayAbbr}</span></div>` : ''}
+        ${homeB2B ? `<div class="pc-ctx-pill pc-b2b"><span class="pc-ctx-label">Back-to-Back</span><span class="pc-ctx-val">${gameInfo.homeAbbr}</span></div>` : ''}
+      </div>
+
+      <!-- INJURY REPORT IMPACT -->
+      <div class="pc-card">
+        <div class="pc-card-title">Injury Report Impact</div>
+        <div class="pc-inj-grid">
+          ${injBlock(injuries?.away, gameInfo.awayAbbr, 'var(--blue)')}
+          ${injBlock(injuries?.home, gameInfo.homeAbbr, 'var(--orange)')}
+        </div>
+      </div>
+
+      <!-- TEAM STATS COMPARISON -->
+      <div class="pc-card">
+        <div class="pc-card-title">Team Stats &amp; Rankings — Pace · Scoring Methods · Defense</div>
+        <div class="pc-teams-grid">
+          ${statBlock(awayStats, gameInfo.awayAbbr, 'var(--blue)')}
+          ${statBlock(homeStats, gameInfo.homeAbbr, 'var(--orange)')}
+        </div>
+      </div>`;
+  } catch (e) {
+    console.error('renderProps render failed:', e);
+    el.innerHTML = `<div style="color:var(--red);padding:20px;font-family:var(--font-m);font-size:12px">Props Scout error: ${e.message}</div>`;
+  }
 }
 
 
