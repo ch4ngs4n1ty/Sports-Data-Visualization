@@ -687,7 +687,13 @@ async function openPlayerModal(el) {
   const teamId    = el.dataset.teamId;
   const name      = el.dataset.name;
 
-  S.playerModal = { athleteId, teamId, name, games: null };
+  S.playerModal = { athleteId, teamId, name, games: null, research: null, researchPromise: null };
+  // Reset to Stats tab
+  document.getElementById('pmTabStats').classList.add('active');
+  document.getElementById('pmTabResearch').classList.remove('active');
+  document.getElementById('playerModalStatsView').classList.remove('hidden');
+  document.getElementById('playerModalResearchView').classList.add('hidden');
+  document.getElementById('playerModalResearchContent').innerHTML = '';
   document.getElementById('playerModalName').textContent = name;
   const hsEl = document.getElementById('playerModalHeadshot');
   hsEl.src = el.dataset.headshot || '';
@@ -700,12 +706,19 @@ async function openPlayerModal(el) {
     `<button class="stat-btn${i === 0 ? ' active' : ''}" onclick="switchPlayerModalStat('${c.key}', this)">${c.label}</button>`
   ).join('');
 
-  const games = await fetchPlayerLastGames(S.gameData.gameInfo.sportKey, teamId, athleteId);
+  const { sportKey } = S.gameData.gameInfo;
+
+  const games = await fetchPlayerLastGames(sportKey, teamId, athleteId);
   S.playerModal.games = games;
   document.getElementById('playerModalLoading').classList.add('hidden');
   document.getElementById('playerModalChart').classList.remove('hidden');
-  const defaultModalStat = window.SportConfig?.[S.gameData.gameInfo.sportKey]?.statCategories?.[0]?.key || 'pts';
+  const defaultModalStat = window.SportConfig?.[sportKey]?.statCategories?.[0]?.key || 'pts';
   renderPlayerModalChart(defaultModalStat);
+
+  // Prefetch research in background — store promise so tab can await it without re-fetching
+  S.playerModal.researchPromise = fetchPlayerResearchData(sportKey, teamId, athleteId)
+    .then(d => { S.playerModal.research = d; return d; })
+    .catch(() => null);
 }
 
 function renderPlayerModalChart(stat) {
@@ -764,10 +777,304 @@ function switchPlayerModalStat(stat, btn) {
   renderPlayerModalChart(stat);
 }
 
+async function switchPlayerModalTab(tab, btn) {
+  document.querySelectorAll('.pm-tab').forEach(b => b.classList.remove('active'));
+  btn.classList.add('active');
+  document.getElementById('playerModalStatsView').classList.toggle('hidden', tab !== 'stats');
+  document.getElementById('playerModalResearchView').classList.toggle('hidden', tab !== 'research');
+  if (tab !== 'research') return;
+
+  if (S.playerModal.research) {
+    // Already done — instant
+    renderResearchTab(S.playerModal.research, S.gameData.gameInfo, S.gameData.injuries);
+  } else if (S.playerModal.researchPromise) {
+    // Background fetch already running — await it, no duplicate request
+    const el = document.getElementById('playerModalResearchContent');
+    el.innerHTML = `<div class="inline-loader" style="padding:24px 0"><div class="mini-spin"></div> Almost ready…</div>`;
+    const data = await S.playerModal.researchPromise;
+    renderResearchTab(data, S.gameData.gameInfo, S.gameData.injuries);
+  } else {
+    loadPlayerResearch();
+  }
+}
+
 function closePlayerModal(e) {
   if (e && e.target !== document.getElementById('playerModal')) return;
   document.getElementById('playerModal').classList.add('hidden');
   if (S.charts.playerModal) { S.charts.playerModal.destroy(); delete S.charts.playerModal; }
+}
+
+/* ── PLAYER RESEARCH TAB ────────────────────────────────── */
+async function fetchNBAStat(url) {
+  const ctrl = new AbortController();
+  const t = setTimeout(() => ctrl.abort(), 3000);
+  try {
+    const r = await fetch(url, {
+      signal: ctrl.signal,
+      headers: {
+        'x-nba-stats-origin': 'stats',
+        'x-nba-stats-token': 'true',
+        'Referer': 'https://www.nba.com/',
+        'Origin': 'https://www.nba.com',
+      },
+    });
+    clearTimeout(t);
+    if (!r.ok) return null;
+    return await r.json();
+  } catch { clearTimeout(t); return null; }
+}
+
+async function fetchPlayerResearchData(sportKey, teamId, athleteId) {
+  const sp = SPORTS.find(s => s.key === sportKey);
+  if (!sp) return null;
+  const season = getSeasonYear(sportKey);
+
+  const schedData = await espn(
+    `https://site.api.espn.com/apis/site/v2/sports/${sp.sport}/${sp.league}/teams/${teamId}/schedule?season=${season}`
+  );
+  if (!schedData?.events) return null;
+
+  const completed = schedData.events
+    .filter(e => e.competitions?.[0]?.status?.type?.completed)
+    .slice(-10);
+
+  const summaries = await Promise.all(
+    completed.map(e => espn(`https://site.api.espn.com/apis/site/v2/sports/${sp.sport}/${sp.league}/summary?event=${e.id}`))
+  );
+
+  const games = completed.map((ev, i) => {
+    const comp = ev.competitions[0];
+    const teamC = comp.competitors.find(c => c.team?.id === teamId);
+    const oppC  = comp.competitors.find(c => c.team?.id !== teamId);
+    const ps = s => parseInt(s?.displayValue ?? s ?? 0) || 0;
+    const myScore  = ps(teamC?.score);
+    const oppScore = ps(oppC?.score);
+    const result   = teamC?.winner ? 'W' : oppC?.winner ? 'L' : myScore > oppScore ? 'W' : 'L';
+    const dateObj  = new Date(ev.date);
+
+    let min = null, pts = 0, fga = 0, reb = 0, ast = 0;
+    let didNotPlay = false, dnpReason = '';
+
+    const summary = summaries[i];
+    if (summary?.boxscore?.players) {
+      outer: for (const td of summary.boxscore.players) {
+        for (const grp of td.statistics || []) {
+          const lbls = grp.labels || [];
+          const ath  = grp.athletes?.find(a => a.athlete?.id === athleteId);
+          if (!ath) continue;
+          const isDnp = ath.didNotPlay || !ath.stats?.length || ath.stats?.[0] === 'DNP' || ath.stats?.[0] === '0:00';
+          if (isDnp) {
+            didNotPlay = true; dnpReason = ath.reason || 'DNP';
+          } else {
+            const gi = k => lbls.indexOf(k);
+            const gv = k => { const i = gi(k); return i > -1 ? (parseFloat(ath.stats[i]) || 0) : null; };
+            min = gv('MIN'); pts = gv('PTS') || 0; fga = gv('FGA') || 0;
+            reb = gv('REB') || 0; ast = gv('AST') || 0;
+          }
+          break outer;
+        }
+      }
+    }
+
+    return {
+      date: dateObj.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }),
+      dateObj, opponent: oppC?.team?.abbreviation || '?',
+      oppTeamId: oppC?.team?.id,
+      isHome: teamC?.homeAway === 'home',
+      result, myScore, oppScore,
+      min, pts, fga, reb, ast, didNotPlay, dnpReason,
+    };
+  });
+
+  // B2B check: did team play yesterday?
+  const yestET  = new Date(Date.now() - 864e5).toLocaleDateString('en-CA', { timeZone: 'America/New_York' });
+  const lastGame = games.filter(g => !g.didNotPlay).at(-1);
+  const isB2B    = lastGame && lastGame.dateObj.toLocaleDateString('en-CA') === yestET;
+
+  // Try NBA.com Advanced team stats (pace, def rank) — may be CORS-blocked
+  const nbaSeasonStr = (() => {
+    const yr = getSeasonYear(sportKey);
+    return `${yr - 1}-${String(yr).slice(2)}`;
+  })();
+
+  const [nbaTeamAdv] = await Promise.all([
+    fetchNBAStat(`https://stats.nba.com/stats/leaguedashteamstats?MeasureType=Advanced&PerMode=PerGame&Season=${nbaSeasonStr}&SeasonType=Regular+Season&LeagueID=00`),
+  ]);
+
+  // Parse opponent team advanced stats
+  const oppTeamId = lastGame?.oppTeamId || S.gameData.gameInfo.awayTeamId === teamId
+    ? S.gameData.gameInfo.homeTeamId : S.gameData.gameInfo.awayTeamId;
+  let oppPace = null, oppDefRtg = null;
+  if (nbaTeamAdv?.resultSets?.[0]) {
+    const rs = nbaTeamAdv.resultSets[0];
+    const headers = rs.headers;
+    const paceIdx = headers.indexOf('PACE');
+    const defIdx  = headers.indexOf('DEF_RATING');
+    const teamRow = rs.rowSet?.find(r => String(r[1]) === String(oppTeamId));
+    if (teamRow) {
+      oppPace   = paceIdx > -1 ? teamRow[paceIdx] : null;
+      oppDefRtg = defIdx  > -1 ? teamRow[defIdx]  : null;
+    }
+  }
+
+  return { games, isB2B, oppPace, oppDefRtg };
+}
+
+async function loadPlayerResearch() {
+  const el = document.getElementById('playerModalResearchContent');
+  el.innerHTML = `<div class="inline-loader" style="padding:24px 0"><div class="mini-spin"></div> Fetching research data…</div>`;
+
+  try {
+    const { athleteId, teamId } = S.playerModal;
+    const { gameInfo, injuries } = S.gameData;
+    const data = await fetchPlayerResearchData(gameInfo.sportKey, teamId, athleteId);
+    S.playerModal.research = data;
+    renderResearchTab(data, gameInfo, injuries);
+  } catch (e) {
+    document.getElementById('playerModalResearchContent').innerHTML =
+      `<div style="color:var(--red);padding:20px;font-size:12px;font-family:var(--font-m)">Research error: ${e.message}</div>`;
+  }
+}
+
+function renderResearchTab(data, gameInfo, injuries) {
+  const el = document.getElementById('playerModalResearchContent');
+  if (!data) { el.innerHTML = `<div class="rt-unavail">Could not load data.</div>`; return; }
+
+  const { games, isB2B, oppPace, oppDefRtg } = data;
+  const played = games.filter(g => !g.didNotPlay);
+  const l5 = played.slice(-5), l10 = played.slice(-10);
+
+  const avg = (arr, key) => arr.length ? +(arr.reduce((s, g) => s + (g[key] || 0), 0) / arr.length).toFixed(1) : null;
+  const fmt = v => v != null ? v : '<span class="rt-na">N/A</span>';
+  const fmtMin = v => v != null ? Math.round(v) + ' min' : '<span class="rt-na">N/A</span>';
+
+  // 1 — MINUTES
+  const l5min  = avg(l5,  'min');
+  const l10min = avg(l10, 'min');
+  const trend  = l5min != null && l10min != null
+    ? (l5min > l10min + 1 ? '↑ Up'  : l5min < l10min - 1 ? '↓ Down' : '→ Stable')
+    : null;
+  const trendColor = trend?.includes('↑') ? 'var(--green)' : trend?.includes('↓') ? 'var(--red)' : 'var(--text2)';
+  const homeMin = avg(l10.filter(g => g.isHome),  'min');
+  const awayMin = avg(l10.filter(g => !g.isHome), 'min');
+
+  // 2 — INJURY CONTEXT
+  const isAway = gameInfo.awayTeamId === S.playerModal.teamId;
+  const myTeamInj  = (isAway ? injuries?.away : injuries?.home) || [];
+  const oppTeamInj = (isAway ? injuries?.home : injuries?.away) || [];
+  const outPlayers = (list) => list.filter(i => /out|doubtful/i.test(i.status));
+  const myOut  = outPlayers(myTeamInj);
+  const oppOut = outPlayers(oppTeamInj);
+
+  // 3 — OPPONENT DEFENSE
+  const oppAbbr = isAway ? gameInfo.homeAbbr : gameInfo.awayAbbr;
+
+  // 4 — PACE & GAME TOTAL
+  const ou = gameInfo.overUnder;
+
+  // 5 — HIT RATE (vs own L10 avg)
+  const l10pts = avg(l10, 'pts');
+  const l5pts  = avg(l5,  'pts');
+  const hitsOverL10avg = l5.filter(g => g.pts > (l10pts || 0)).length;
+  const l10fgaMin = l10.length ? Math.min(...l10.map(g => g.fga)) : null;
+  const l10fgaMax = l10.length ? Math.max(...l10.map(g => g.fga)) : null;
+  const l10fgaAvg = avg(l10, 'fga');
+
+  // 6 — VERDICT
+  let overSignals = 0, underSignals = 0;
+  if (trend?.includes('↑')) overSignals++;
+  if (trend?.includes('↓')) underSignals++;
+  if (l5pts != null && l10pts != null && l5pts > l10pts + 2) overSignals++;
+  if (l5pts != null && l10pts != null && l5pts < l10pts - 2) underSignals++;
+  if (isB2B) underSignals++;
+  if (oppOut.length >= 2) overSignals++;
+  if (myOut.length >= 1) underSignals++;
+
+  const verdictLabel = overSignals > underSignals ? 'LEAN OVER'
+    : underSignals > overSignals ? 'LEAN UNDER' : 'MIXED';
+  const verdictColor = verdictLabel === 'LEAN OVER' ? 'var(--green)'
+    : verdictLabel === 'LEAN UNDER' ? 'var(--red)' : 'var(--yellow)';
+
+  const verdictReasons = [];
+  if (trend?.includes('↑')) verdictReasons.push('minutes trending up');
+  if (trend?.includes('↓')) verdictReasons.push('minutes trending down');
+  if (l5pts != null && l10pts != null && l5pts > l10pts + 2) verdictReasons.push('scoring above season avg L5');
+  if (l5pts != null && l10pts != null && l5pts < l10pts - 2) verdictReasons.push('scoring below season avg L5');
+  if (isB2B) verdictReasons.push('back-to-back fatigue');
+  if (oppOut.length >= 2) verdictReasons.push(`${oppOut.length} key ${oppAbbr} players out`);
+  if (myOut.length >= 1) verdictReasons.push('own team rotation impact');
+  const verdictReason = verdictReasons.length ? verdictReasons.join(', ') : 'signals are neutral';
+
+  const injRow = (list, label, color) => {
+    if (!list.length) return `<div class="rt-inj-none" style="color:${color}">${label} — none</div>`;
+    return list.map(i => `
+      <div class="rt-inj-row">
+        <span class="inj-dot" style="background:${/out/i.test(i.status)?'var(--red)':'var(--orange)'}"></span>
+        <span class="rt-inj-name" style="color:${color}">${i.name}</span>
+        <span class="rt-inj-status">${i.status}</span>
+      </div>`).join('');
+  };
+
+  el.innerHTML = `
+    <div class="rt-wrap">
+
+      <div class="rt-section">
+        <div class="rt-section-title">Minutes</div>
+        <div class="rt-rows">
+          <div class="rt-row"><span class="rt-key">L5 Avg</span><span class="rt-val">${fmtMin(l5min)}</span></div>
+          <div class="rt-row"><span class="rt-key">L10 Avg</span><span class="rt-val">${fmtMin(l10min)}</span></div>
+          <div class="rt-row"><span class="rt-key">Trend</span><span class="rt-val" style="color:${trendColor}">${fmt(trend)}</span></div>
+          <div class="rt-row"><span class="rt-key">Home Avg</span><span class="rt-val">${fmtMin(homeMin)}</span></div>
+          <div class="rt-row"><span class="rt-key">Away Avg</span><span class="rt-val">${fmtMin(awayMin)}</span></div>
+          <div class="rt-row"><span class="rt-key">Back-to-Back</span><span class="rt-val" style="color:${isB2B?'var(--orange)':'var(--green)'}">${isB2B ? '⚠ YES' : 'No'}</span></div>
+        </div>
+      </div>
+
+      <div class="rt-section">
+        <div class="rt-section-title">Injury Context</div>
+        <div class="rt-inj-block">
+          <div class="rt-inj-label">My Team (${isAway ? gameInfo.awayAbbr : gameInfo.homeAbbr})</div>
+          ${injRow(myOut, '', 'var(--text)')}
+        </div>
+        <div class="rt-inj-block" style="margin-top:10px">
+          <div class="rt-inj-label">Opponent (${oppAbbr})</div>
+          ${injRow(oppOut, '', 'var(--text2)')}
+        </div>
+      </div>
+
+      <div class="rt-section">
+        <div class="rt-section-title">Opponent Defense</div>
+        <div class="rt-rows">
+          <div class="rt-row"><span class="rt-key">Opp Def Rating</span><span class="rt-val">${oppDefRtg != null ? oppDefRtg : '<span class="rt-na">unavailable</span>'}</span></div>
+          <div class="rt-row"><span class="rt-key">vs ${oppAbbr} (ESPN)</span><span class="rt-val">${oppOut.length ? `${oppOut.length} key players out` : 'Full strength'}</span></div>
+        </div>
+      </div>
+
+      <div class="rt-section">
+        <div class="rt-section-title">Pace &amp; Game Total</div>
+        <div class="rt-rows">
+          <div class="rt-row"><span class="rt-key">Over/Under</span><span class="rt-val" style="color:var(--lime)">${ou || '<span class="rt-na">N/A</span>'}</span></div>
+          <div class="rt-row"><span class="rt-key">Opp Pace</span><span class="rt-val">${oppPace != null ? oppPace : '<span class="rt-na">unavailable</span>'}</span></div>
+          <div class="rt-row"><span class="rt-key">Tonight B2B</span><span class="rt-val" style="color:${isB2B?'var(--orange)':'var(--text2)'}">${isB2B ? 'Yes' : 'No'}</span></div>
+        </div>
+      </div>
+
+      <div class="rt-section">
+        <div class="rt-section-title">Hit Rate</div>
+        <div class="rt-rows">
+          <div class="rt-row"><span class="rt-key">PTS L5 Avg</span><span class="rt-val">${fmt(l5pts)}</span></div>
+          <div class="rt-row"><span class="rt-key">PTS L10 Avg</span><span class="rt-val">${fmt(l10pts)}</span></div>
+          <div class="rt-row"><span class="rt-key">Above L10 Avg (L5)</span><span class="rt-val">${hitsOverL10avg}/5 games</span></div>
+          <div class="rt-row"><span class="rt-key">FGA Range (L10)</span><span class="rt-val">${l10fgaMin != null ? `${l10fgaMin}–${l10fgaMax} (avg ${l10fgaAvg})` : '<span class="rt-na">N/A</span>'}</span></div>
+        </div>
+      </div>
+
+      <div class="rt-verdict">
+        <div class="rt-verdict-label" style="color:${verdictColor}">${verdictLabel}</div>
+        <div class="rt-verdict-reason">${verdictReason}</div>
+      </div>
+
+    </div>`;
 }
 
 /* ── ROSTER ─────────────────────────────────────────────── */

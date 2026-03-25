@@ -180,11 +180,23 @@
       <div class="player-modal-header">
         <img class="player-modal-headshot" id="playerModalHeadshot" src="" alt="" onerror="this.style.display='none'">
         <span class="player-modal-name" id="playerModalName"></span>
-        <div class="stat-toggle" id="playerModalStatBtns"></div>
         <button class="player-modal-close" onclick="document.getElementById('playerModal').classList.add('hidden')">✕</button>
       </div>
-      <div id="playerModalLoading" class="inline-loader hidden"><div class="mini-spin"></div> Loading stats...</div>
-      <canvas id="playerModalChart" height="200"></canvas>
+      <!-- Modal tabs -->
+      <div class="pm-tab-bar">
+        <button class="pm-tab active" id="pmTabStats" onclick="switchPlayerModalTab('stats', this)">Stats</button>
+        <button class="pm-tab" id="pmTabResearch" onclick="switchPlayerModalTab('research', this)">Research</button>
+      </div>
+      <!-- Stats view -->
+      <div id="playerModalStatsView">
+        <div class="stat-toggle" id="playerModalStatBtns" style="margin:12px 0 8px"></div>
+        <div id="playerModalLoading" class="inline-loader hidden"><div class="mini-spin"></div> Loading stats...</div>
+        <canvas id="playerModalChart" height="200"></canvas>
+      </div>
+      <!-- Research view -->
+      <div id="playerModalResearchView" class="hidden">
+        <div id="playerModalResearchContent"></div>
+      </div>
     </div>
   </div>
 
