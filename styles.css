@@ -614,14 +614,31 @@ body {
 }
 
 /* ── FORM TAB ────────────────────────────────── */
-.form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; }
-.form-team-block h3 {
-  font-family: var(--font-d);
-  font-size: 24px;
-  letter-spacing: 0.04em;
-  margin-bottom: 14px;
-  color: var(--text);
+.form-grid { display: flex; flex-direction: column; gap: 16px; }
+.form-team-toggle {
+  display: flex;
+  gap: 8px;
 }
+.form-team-btn {
+  flex: 1;
+  background: var(--bg3);
+  border: 1px solid var(--border);
+  color: var(--text3);
+  font-family: var(--font-d);
+  font-size: 15px;
+  letter-spacing: 0.06em;
+  padding: 10px 16px;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+.form-team-btn:hover { color: var(--text2); border-color: var(--border2); }
+.form-team-btn.active {
+  background: rgba(212,245,60,0.1);
+  border-color: rgba(212,245,60,0.45);
+  color: var(--lime);
+}
+.form-team-block h3 { display: none; }
 .form-chart-section {
   background: var(--bg3);
   border: 1px solid var(--border);
@@ -660,6 +677,66 @@ body {
   border-color: rgba(212,245,60,0.4);
   color: var(--lime);
   text-shadow: var(--glow-lime-s);
+}
+.bar-cards-wrapper {
+  position: relative;
+}
+.bar-cards-overlay {
+  position: absolute;
+  top: 0; left: 0;
+  width: 100%; height: 100%;
+  pointer-events: none;
+  overflow: visible;
+}
+.form-potg-card {
+  background: var(--bg2);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 7px 4px 6px;
+  overflow: hidden;
+  opacity: 0;
+  transition: opacity 0.15s ease;
+}
+.form-potg-card.potg-visible {
+  opacity: 1;
+}
+.form-potg-card img {
+  width: 46px;
+  height: 46px;
+  border-radius: 6px;
+  object-fit: cover;
+  object-position: top;
+  display: block;
+}
+.form-potg-card-avatar {
+  width: 46px;
+  height: 46px;
+  border-radius: 6px;
+  background: var(--bg4);
+  border: 1px solid var(--border2);
+}
+.form-potg-card-val {
+  font-family: var(--font-d);
+  font-size: 16px;
+  color: var(--lime);
+  line-height: 1;
+  margin-top: 5px;
+}
+.form-potg-card-name {
+  font-family: var(--font-m);
+  font-size: 8px;
+  color: var(--text3);
+  text-align: center;
+  margin-top: 3px;
+  letter-spacing: 0.03em;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  width: 100%;
+  padding: 0 2px;
 }
 .form-games-list { display: flex; flex-direction: column; gap: 8px; }
 .form-game {
@@ -1273,7 +1350,6 @@ body {
   .roster-grid { grid-template-columns: 1fr; }
 
   /* ── FORM ── */
-  .form-grid { grid-template-columns: 1fr; }
 
   /* ── H2H ── */
   .h2h-charts-row { grid-template-columns: 1fr; }

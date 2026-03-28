@@ -407,7 +407,7 @@ async function enrichFormWithPlayerStats(sportKey, teamId, formGames) {
     const summary = summaries[i];
     if (!summary) return { ...g, player: null };
 
-    const teamPlayers = summary.boxscore?.players?.find(p => p.team?.id === teamId);
+    const teamPlayers = summary.boxscore?.players?.find(p => String(p.team?.id) === String(teamId));
     if (!teamPlayers) return { ...g, player: null };
 
     const statsGroup = teamPlayers.statistics?.[0];
@@ -426,7 +426,15 @@ async function enrichFormWithPlayerStats(sportKey, teamId, formGames) {
         const val = parseInt(athlete.stats?.[idx] || 0);
         if (val > max) {
           max = val;
-          best = { name: athlete.athlete?.shortName || athlete.athlete?.displayName || '?', value: val };
+          const a = athlete.athlete || {};
+          const headshotFallback = a.id
+            ? `https://a.espncdn.com/i/headshots/${sp.league}/players/full/${a.id}.png`
+            : null;
+          best = {
+            name: a.shortName || a.displayName || '?',
+            value: val,
+            headshot: a.headshot?.href || headshotFallback,
+          };
         }
       }
       return best;
@@ -1257,7 +1265,9 @@ function renderForm({ gameInfo, awayForm, homeForm }) {
           <span class="form-chart-label">Player of the Game</span>
           <div class="stat-toggle">${statBtns(chartId)}</div>
         </div>
-        <canvas id="${chartId}" height="150"></canvas>
+        <div class="bar-cards-wrapper" id="${chartId}-wrapper">
+          <canvas id="${chartId}" height="150"></canvas>
+        </div>
       </div>` : ''}
       <div class="form-games-list">
         ${form.length === 0 ? '<p class="empty-msg">No recent games found</p>' :
@@ -1277,15 +1287,32 @@ function renderForm({ gameInfo, awayForm, homeForm }) {
       </div>
     </div>`;
 
-  document.getElementById('formGrid').innerHTML =
-    formBlock(gameInfo.awayFull, awayForm, 'formChartAway') +
-    formBlock(gameInfo.homeFull, homeForm, 'formChartHome');
+  document.getElementById('formGrid').innerHTML = `
+    <div class="form-team-toggle">
+      <button class="form-team-btn active" onclick="switchFormTeam('away', this)">${gameInfo.awayFull}</button>
+      <button class="form-team-btn" onclick="switchFormTeam('home', this)">${gameInfo.homeFull}</button>
+    </div>
+    <div id="formPanelAway">${formBlock(gameInfo.awayFull, awayForm, 'formChartAway')}</div>
+    <div id="formPanelHome" style="display:none">${formBlock(gameInfo.homeFull, homeForm, 'formChartHome')}</div>
+  `;
 
   const defaultStat = firstCat?.key || 'pts';
   setTimeout(() => {
     if (hasPlayerData(awayForm)) renderFormChart('formChartAway', awayForm, defaultStat);
-    if (hasPlayerData(homeForm)) renderFormChart('formChartHome', homeForm, defaultStat);
   }, 50);
+}
+
+function switchFormTeam(side, btn) {
+  btn.closest('.form-team-toggle').querySelectorAll('.form-team-btn').forEach(b => b.classList.remove('active'));
+  btn.classList.add('active');
+  document.getElementById('formPanelAway').style.display = side === 'away' ? '' : 'none';
+  document.getElementById('formPanelHome').style.display = side === 'home' ? '' : 'none';
+  if (side === 'home') {
+    const form = S.gameData.homeForm;
+    const cats = window.SportConfig?.[S.gameData.gameInfo.sportKey]?.statCategories || [];
+    const defaultStat = cats[0]?.key || 'pts';
+    if (form.some(g => g.player)) requestAnimationFrame(() => renderFormChart('formChartHome', form, defaultStat));
+  }
 }
 
 function renderFormChart(chartId, games, stat) {
@@ -1293,6 +1320,7 @@ function renderFormChart(chartId, games, stat) {
   if (!ctx) return;
   if (S.charts[chartId]) S.charts[chartId].destroy();
 
+  const CARD_H = 96; // card height reserve above bars
   const labels = games.map(g => `${g.home ? 'vs' : '@'}${g.opponent}`);
   const values = games.map(g => g.player?.[stat]?.value ?? 0);
   const colors = games.map(g =>
@@ -1325,6 +1353,8 @@ function renderFormChart(chartId, games, stat) {
     },
     options: {
       responsive: true,
+      animation: { duration: 120, onComplete: () => positionBarCards(chartId, games, stat) },
+      layout: { padding: { top: CARD_H + 8 } },
       plugins: {
         legend: { display: false },
         tooltip: {
@@ -1362,6 +1392,61 @@ function renderFormChart(chartId, games, stat) {
         },
       },
     },
+  });
+
+}
+
+function positionBarCards(chartId, games, stat) {
+  const chart = S.charts[chartId];
+  const wrapper = document.getElementById(`${chartId}-wrapper`);
+  if (!chart || !wrapper) return;
+
+  wrapper.querySelector('.bar-cards-overlay')?.remove();
+
+  const CARD_W = 62, CARD_H = 96, GAP = 6;
+  const overlay = document.createElement('div');
+  overlay.className = 'bar-cards-overlay';
+
+  const meta = chart.getDatasetMeta(0);
+  games.forEach((g, i) => {
+    const leader = g?.player?.[stat];
+    const bar = meta.data[i];
+    if (!bar || !leader || !isFinite(bar.x) || !isFinite(bar.y)) return;
+
+    const card = document.createElement('div');
+    card.className = 'form-potg-card';
+    card.style.cssText = `position:absolute;left:${Math.round(bar.x - CARD_W / 2)}px;top:${Math.round(bar.y - CARD_H - GAP)}px;width:${CARD_W}px;`;
+
+    const imgEl = leader.headshot ? (() => {
+      const img = new Image();
+      img.src = leader.headshot;
+      img.alt = leader.name;
+      img.onerror = function() { this.style.display = 'none'; this.nextElementSibling.style.display = 'flex'; };
+      return img;
+    })() : null;
+
+    const avatar = document.createElement('div');
+    avatar.className = 'form-potg-card-avatar';
+    if (imgEl) avatar.style.display = 'none';
+
+    const val = document.createElement('div');
+    val.className = 'form-potg-card-val';
+    val.textContent = leader.value;
+
+    const name = document.createElement('div');
+    name.className = 'form-potg-card-name';
+    name.textContent = leader.name;
+
+    if (imgEl) card.appendChild(imgEl);
+    card.appendChild(avatar);
+    card.appendChild(val);
+    card.appendChild(name);
+    overlay.appendChild(card);
+  });
+
+  wrapper.appendChild(overlay);
+  requestAnimationFrame(() => {
+    overlay.querySelectorAll('.form-potg-card').forEach(c => c.classList.add('potg-visible'));
   });
 }
 
