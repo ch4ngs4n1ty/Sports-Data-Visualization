@@ -351,6 +351,21 @@ async function startAnalysis(gameInfo) {
     renderH2H(S.gameData);
     renderProps(S.gameData);
 
+    // NBA-only: fetch and render starting lineups
+    const lineupsTab = document.getElementById('tabLineups');
+    if (gameInfo.sportKey === 'nba') {
+      lineupsTab.style.display = '';
+      const [awayLineup, homeLineup] = await Promise.all([
+        fetchLineups(gameInfo.sportKey, gameInfo.awayTeamId),
+        fetchLineups(gameInfo.sportKey, gameInfo.homeTeamId),
+      ]);
+      S.gameData.awayLineup = awayLineup;
+      S.gameData.homeLineup = homeLineup;
+      renderLineups(S.gameData);
+    } else {
+      lineupsTab.style.display = 'none';
+    }
+
     setStep(5);
     loader.classList.add('hidden');
     document.getElementById('tabBar').classList.remove('hidden');
@@ -635,6 +650,10 @@ async function fetchInjuries(gameInfo) {
       // Build estimated return string from longComment
       const estReturn = longComment || '';
 
+      // Format injury report date
+      const rawDate = i.date || '';
+      const reportDate = rawDate ? new Date(rawDate).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : '';
+
       return {
         name: i.athlete?.displayName || '—',
         status: i.status || 'Unknown',
@@ -642,6 +661,7 @@ async function fetchInjuries(gameInfo) {
         pos: i.athlete?.position?.abbreviation || '',
         shortComment,
         estReturn,
+        reportDate,
         athleteId,
         headshotUrl: athleteId
           ? `https://a.espncdn.com/i/headshots/${sp.league}/players/full/${athleteId}.png`
@@ -1231,6 +1251,49 @@ async function fetchRoster(sportKey, teamId) {
     });
   });
   return players;
+}
+
+/* ═══════════════════════════════════════════════════════════
+   8b. LINEUPS FETCH (NBA ONLY)
+   Uses ESPN depthcharts endpoint — first player per position
+   is the starter.
+═══════════════════════════════════════════════════════════ */
+async function fetchLineups(sportKey, teamId) {
+  const sp = SPORTS.find(s => s.key === sportKey);
+  if (!sp) return [];
+  const data = await espn(`https://site.api.espn.com/apis/site/v2/sports/${sp.sport}/${sp.league}/teams/${teamId}/depthcharts`);
+
+  // ESPN returns data.depthchart (not data.items)
+  const charts = data?.depthchart || data?.items || [];
+  if (!charts.length) return [];
+
+  // NBA positions — ESPN uses lowercase keys
+  const posOrder = ['pg', 'sg', 'sf', 'pf', 'c'];
+  const posLabels = { pg: 'PG', sg: 'SG', sf: 'SF', pf: 'PF', c: 'C' };
+  const starters = [];
+
+  for (const chart of charts) {
+    const positions = chart.positions || {};
+    for (const posKey of posOrder) {
+      const pos = positions[posKey];
+      if (!pos?.athletes?.length) continue;
+      // First athlete in the array = starter
+      const a = pos.athletes[0];
+      if (a.id && !starters.find(s => s.athleteId === a.id)) {
+        starters.push({
+          athleteId: a.id,
+          name: a.displayName || 'Unknown',
+          shortName: a.shortName || a.displayName?.split(' ').pop() || '?',
+          pos: posLabels[posKey] || posKey.toUpperCase(),
+          jersey: a.jersey || '—',
+          headshotUrl: `https://a.espncdn.com/i/headshots/${sp.league}/players/full/${a.id}.png`,
+        });
+      }
+    }
+    if (starters.length >= 5) break;
+  }
+
+  return starters;
 }
 
 /* ═══════════════════════════════════════════════════════════
@@ -1896,11 +1959,23 @@ async function renderProps(data) {
         : '<div class="pc-inj-headshot pc-inj-headshot-empty"></div>';
       const sc = injStatusColor(i.status);
       const posTag = i.pos ? '<span class="pc-inj-pos">' + i.pos + '</span>' : '';
-      const descTag = i.desc && i.desc !== '—' ? '<span class="pc-inj-desc">' + i.desc + '</span>' : '';
-      // Estimated return / timeline in yellow
-      const returnInfo = i.estReturn || '';
-      const returnTag = returnInfo ? '<span class="pc-inj-return">' + returnInfo + '</span>' : '';
-      return '<div class="pc-inj-player">' + img + '<div class="pc-inj-info"><span class="pc-inj-name">' + i.name + posTag + '</span>' + descTag + returnTag + '</div><span class="pc-inj-badge" style="color:' + sc + ';border-color:' + sc + '">' + i.status + '</span></div>';
+
+      // Expandable detail section (hidden by default)
+      const descTag = i.desc && i.desc !== '—' ? '<div class="pc-inj-detail-row"><span class="pc-inj-detail-label">Injury</span><span class="pc-inj-detail-val">' + i.desc + '</span></div>' : '';
+      const dateTag = i.reportDate ? '<div class="pc-inj-detail-row"><span class="pc-inj-detail-label">Reported</span><span class="pc-inj-detail-val">' + i.reportDate + '</span></div>' : '';
+      const shortTag = i.shortComment ? '<div class="pc-inj-detail-row"><span class="pc-inj-detail-label">Update</span><span class="pc-inj-detail-val">' + i.shortComment + '</span></div>' : '';
+      const returnTag = i.estReturn ? '<div class="pc-inj-detail-row"><span class="pc-inj-detail-label">Outlook</span><span class="pc-inj-detail-val pc-inj-return">' + i.estReturn + '</span></div>' : '';
+      const hasDetail = descTag || dateTag || shortTag || returnTag;
+
+      return '<div class="pc-inj-player' + (hasDetail ? ' pc-inj-clickable' : '') + '"' + (hasDetail ? ' onclick="this.classList.toggle(\'pc-inj-expanded\')"' : '') + '>'
+        + '<div class="pc-inj-summary">'
+        + img
+        + '<div class="pc-inj-name-wrap"><span class="pc-inj-name">' + i.name + posTag + '</span></div>'
+        + '<span class="pc-inj-badge" style="color:' + sc + ';border-color:' + sc + '">' + i.status + '</span>'
+        + (hasDetail ? '<span class="pc-inj-chevron">›</span>' : '')
+        + '</div>'
+        + (hasDetail ? '<div class="pc-inj-detail">' + descTag + dateTag + shortTag + returnTag + '</div>' : '')
+        + '</div>';
     }).join('');
     return '<div class="pc-inj-team"><span class="pc-inj-label" style="color:' + color + '">' + label + '</span>' + rows + '</div>';
   };
@@ -1940,6 +2015,91 @@ async function renderProps(data) {
 }
 
 
+
+/* ── LINEUPS (NBA ONLY) ────────────────────────────────── */
+function renderLineups({ gameInfo, awayLineup, homeLineup }) {
+  const el = document.getElementById('lineupsContent');
+  if (!el) return;
+
+  // NBA court positions: PG at top, C near basket
+  const courtPositions = {
+    PG: { x: 50, y: 18 },
+    SG: { x: 80, y: 32 },
+    SF: { x: 20, y: 32 },
+    PF: { x: 72, y: 55 },
+    C:  { x: 28, y: 55 },
+  };
+
+  const playerCard = (p, side) => {
+    const pos = courtPositions[p.pos] || { x: 50, y: 40 };
+    // Mirror x for home team (right side court)
+    const x = side === 'home' ? pos.x : pos.x;
+    const y = pos.y;
+    const color = side === 'away' ? 'var(--blue)' : 'var(--lime)';
+    return `
+      <div class="lu-player" style="left:${x}%;top:${y}%">
+        <div class="lu-headshot-wrap" style="border-color:${color}">
+          <img class="lu-headshot" src="${p.headshotUrl}" alt="${p.name}" onerror="this.parentElement.classList.add('lu-headshot-fallback')">
+          <span class="lu-jersey">${p.jersey}</span>
+        </div>
+        <div class="lu-name">${p.shortName || p.lastName}</div>
+        <div class="lu-pos" style="background:${color}">${p.pos}</div>
+      </div>`;
+  };
+
+  const courtSide = (lineup, teamName, abbr, logo, side) => {
+    const color = side === 'away' ? 'var(--blue)' : 'var(--lime)';
+    if (!lineup?.length) return `
+      <div class="lu-court-side">
+        <div class="lu-team-header">
+          ${logo ? `<img class="lu-team-logo" src="${logo}" alt="${abbr}" onerror="this.style.display='none'">` : ''}
+          <span class="lu-team-name" style="color:${color}">${abbr}</span>
+        </div>
+        <div class="lu-court">
+          <div class="lu-court-empty">Lineup not available</div>
+        </div>
+      </div>`;
+
+    return `
+      <div class="lu-court-side">
+        <div class="lu-team-header">
+          ${logo ? `<img class="lu-team-logo" src="${logo}" alt="${abbr}" onerror="this.style.display='none'">` : ''}
+          <span class="lu-team-name" style="color:${color}">${abbr}</span>
+          <span class="lu-team-full">${teamName}</span>
+        </div>
+        <div class="lu-court">
+          <div class="lu-court-surface">
+            <!-- Court markings -->
+            <div class="lu-court-line lu-half-circle"></div>
+            <div class="lu-court-line lu-three-arc"></div>
+            <div class="lu-court-line lu-paint"></div>
+            <div class="lu-court-line lu-ft-circle"></div>
+            <div class="lu-court-line lu-baseline"></div>
+            <!-- Players -->
+            ${lineup.map(p => playerCard(p, side)).join('')}
+          </div>
+        </div>
+        <div class="lu-roster-list">
+          ${lineup.map(p => `
+            <div class="lu-roster-row">
+              <span class="lu-roster-pos" style="color:${color}">${p.pos}</span>
+              <span class="lu-roster-jersey">#${p.jersey}</span>
+              <span class="lu-roster-name">${p.name}</span>
+            </div>`).join('')}
+        </div>
+      </div>`;
+  };
+
+  el.innerHTML = `
+    <div class="lu-header">
+      <div class="lu-title">Starting Lineups</div>
+      <div class="lu-subtitle">Projected starters via ESPN depth charts</div>
+    </div>
+    <div class="lu-courts-grid">
+      ${courtSide(awayLineup, gameInfo.awayFull, gameInfo.awayAbbr, gameInfo.awayLogo, 'away')}
+      ${courtSide(homeLineup, gameInfo.homeFull, gameInfo.homeAbbr, gameInfo.homeLogo, 'home')}
+    </div>`;
+}
 
 /* ═══════════════════════════════════════════════════════════
    10. AI PLAYS — Claude API (ALL SPORTS)

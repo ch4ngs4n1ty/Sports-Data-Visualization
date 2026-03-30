@@ -907,30 +907,63 @@ body {
 
 .pc-inj-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
 .pc-inj-none { display: flex; flex-direction: column; gap: 4px; }
-.pc-inj-label { font-size: 10px; font-weight: 600; letter-spacing: 0.12em; text-transform: uppercase; display: block; margin-bottom: 10px; }
+.pc-inj-label { font-size: 12px; font-weight: 600; letter-spacing: 0.12em; text-transform: uppercase; display: block; margin-bottom: 12px; }
 .pc-inj-team { display: flex; flex-direction: column; }
+
+/* ── Injury player card (compact by default, expands on click) ── */
 .pc-inj-player {
-  display: flex; align-items: center; gap: 10px;
-  padding: 8px 0; border-bottom: 1px solid var(--border);
+  border-bottom: 1px solid var(--border);
 }
 .pc-inj-player:last-child { border-bottom: none; }
+.pc-inj-clickable { cursor: pointer; }
+.pc-inj-clickable:hover .pc-inj-summary { background: var(--bg3); }
+
+/* Summary row — always visible */
+.pc-inj-summary {
+  display: flex; align-items: center; gap: 12px;
+  padding: 10px 4px; border-radius: 6px;
+  transition: background 0.15s;
+}
 .pc-inj-headshot {
-  width: 40px; height: 40px; border-radius: 50%;
+  width: 36px; height: 36px; border-radius: 50%;
   object-fit: cover; flex-shrink: 0;
   background: var(--bg4); border: 1px solid var(--border2);
 }
-.pc-inj-headshot-empty { width: 40px; height: 40px; border-radius: 50%; background: var(--bg4); border: 1px solid var(--border2); flex-shrink: 0; }
-.pc-inj-info { display: flex; flex-direction: column; gap: 2px; flex: 1; min-width: 0; }
-.pc-inj-name { font-size: 12px; color: var(--text); font-family: var(--font-m); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.pc-inj-desc { font-size: 10px; color: var(--text3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.pc-inj-pos { font-size: 9px; color: var(--text3); background: var(--bg4); border-radius: 3px; padding: 1px 5px; margin-left: 6px; font-family: var(--font-m); vertical-align: middle; }
-.pc-inj-comment { font-size: 10px; color: var(--text3); font-family: var(--font-s); line-height: 1.35; opacity: 0.75; margin-top: 1px; }
-.pc-inj-return { font-size: 10px; color: var(--yellow); font-family: var(--font-m); line-height: 1.3; opacity: 0.85; }
+.pc-inj-headshot-empty { width: 36px; height: 36px; border-radius: 50%; background: var(--bg4); border: 1px solid var(--border2); flex-shrink: 0; }
+.pc-inj-name-wrap { flex: 1; min-width: 0; }
+.pc-inj-name { font-size: 13px; color: var(--text); font-family: var(--font-m); font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.pc-inj-pos { font-size: 10px; color: var(--text3); background: var(--bg4); border-radius: 3px; padding: 2px 6px; margin-left: 6px; font-family: var(--font-m); vertical-align: middle; }
 .pc-inj-badge {
-  font-size: 9px; letter-spacing: 0.1em; text-transform: uppercase;
-  border: 1px solid; border-radius: 3px; padding: 2px 6px;
+  font-size: 10px; letter-spacing: 0.1em; text-transform: uppercase;
+  border: 1px solid; border-radius: 4px; padding: 3px 8px;
   flex-shrink: 0; font-family: var(--font-m);
+  white-space: nowrap;
 }
+.pc-inj-chevron {
+  font-size: 18px; color: var(--text3); flex-shrink: 0;
+  transition: transform 0.2s;
+  line-height: 1;
+}
+.pc-inj-expanded .pc-inj-chevron { transform: rotate(90deg); }
+
+/* Detail panel — hidden by default, shown on expand */
+.pc-inj-detail {
+  display: none;
+  padding: 8px 12px 14px 52px; /* 52px = headshot + gap indent */
+  flex-direction: column; gap: 6px;
+}
+.pc-inj-expanded .pc-inj-detail { display: flex; }
+.pc-inj-detail-row {
+  display: flex; gap: 8px; font-size: 12px; line-height: 1.45;
+  font-family: var(--font-s);
+}
+.pc-inj-detail-label {
+  color: var(--text3); font-family: var(--font-m); font-size: 10px;
+  text-transform: uppercase; letter-spacing: 0.08em;
+  min-width: 62px; flex-shrink: 0; padding-top: 1px;
+}
+.pc-inj-detail-val { color: var(--text2); flex: 1; }
+.pc-inj-return { color: var(--yellow); opacity: 0.9; }
 
 .pc-teams-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; }
 .pc-team-label { font-family: var(--font-d); font-size: 24px; letter-spacing: 0.06em; margin-bottom: 16px; }
@@ -1395,4 +1428,157 @@ body {
   /* Safe area insets for notched phones */
   body { padding-bottom: env(safe-area-inset-bottom); }
   .topbar { padding-top: max(12px, env(safe-area-inset-top)); padding-left: max(16px, env(safe-area-inset-left)); padding-right: max(16px, env(safe-area-inset-right)); }
+
+  .lu-courts-grid { grid-template-columns: 1fr; }
 }
+
+/* ═══════════════════════════════════════════
+   LINEUPS — NBA Court Visualization
+═══════════════════════════════════════════ */
+.lu-header { text-align: center; margin-bottom: 24px; }
+.lu-title {
+  font-family: var(--font-d); font-size: 28px; letter-spacing: 0.06em;
+  color: var(--text);
+}
+.lu-subtitle {
+  font-family: var(--font-m); font-size: 11px; color: var(--text3);
+  letter-spacing: 0.08em; text-transform: uppercase; margin-top: 4px;
+}
+
+.lu-courts-grid {
+  display: grid; grid-template-columns: 1fr 1fr; gap: 24px;
+}
+
+.lu-court-side {
+  background: var(--bg2); border: 1px solid var(--border); border-radius: 12px;
+  overflow: hidden;
+}
+
+/* Team header */
+.lu-team-header {
+  display: flex; align-items: center; gap: 10px;
+  padding: 16px 20px; border-bottom: 1px solid var(--border);
+}
+.lu-team-logo { width: 32px; height: 32px; object-fit: contain; }
+.lu-team-name {
+  font-family: var(--font-d); font-size: 26px; letter-spacing: 0.06em;
+}
+.lu-team-full {
+  font-family: var(--font-m); font-size: 11px; color: var(--text3);
+  margin-left: auto;
+}
+
+/* Court surface */
+.lu-court {
+  padding: 16px;
+}
+.lu-court-surface {
+  position: relative;
+  width: 100%; padding-bottom: 80%;
+  background: linear-gradient(180deg, #1a2218 0%, #1f2a1c 50%, #1a2218 100%);
+  border: 2px solid rgba(255,255,255,0.12);
+  border-radius: 8px;
+  overflow: hidden;
+}
+.lu-court-empty {
+  display: flex; align-items: center; justify-content: center;
+  height: 200px; color: var(--text3); font-family: var(--font-m); font-size: 12px;
+}
+
+/* Court markings */
+.lu-court-line { position: absolute; pointer-events: none; }
+.lu-baseline {
+  bottom: 0; left: 10%; right: 10%; height: 2px;
+  background: rgba(255,255,255,0.12);
+}
+.lu-paint {
+  bottom: 0; left: 28%; width: 44%; height: 38%;
+  border: 2px solid rgba(255,255,255,0.10);
+  border-bottom: none; border-radius: 0;
+}
+.lu-ft-circle {
+  bottom: 35%; left: 35%; width: 30%; height: 0;
+  padding-bottom: 15%;
+  border: 2px solid rgba(255,255,255,0.08);
+  border-radius: 50%;
+}
+.lu-three-arc {
+  bottom: 0; left: 12%; width: 76%; height: 68%;
+  border: 2px solid rgba(255,255,255,0.10);
+  border-bottom: none;
+  border-radius: 50% 50% 0 0;
+}
+.lu-half-circle {
+  top: -2px; left: 35%; width: 30%; height: 0;
+  padding-bottom: 10%;
+  border: 2px solid rgba(255,255,255,0.08);
+  border-top: none;
+  border-radius: 0 0 50% 50%;
+}
+
+/* Player on court */
+.lu-player {
+  position: absolute; transform: translate(-50%, -50%);
+  display: flex; flex-direction: column; align-items: center;
+  gap: 4px; z-index: 2;
+  animation: luFadeIn 0.4s ease both;
+}
+.lu-player:nth-child(7) { animation-delay: 0.05s; }
+.lu-player:nth-child(8) { animation-delay: 0.10s; }
+.lu-player:nth-child(9) { animation-delay: 0.15s; }
+.lu-player:nth-child(10) { animation-delay: 0.20s; }
+.lu-player:nth-child(11) { animation-delay: 0.25s; }
+
+@keyframes luFadeIn {
+  from { opacity: 0; transform: translate(-50%, -40%); }
+  to { opacity: 1; transform: translate(-50%, -50%); }
+}
+
+.lu-headshot-wrap {
+  width: 52px; height: 52px; border-radius: 50%;
+  border: 2.5px solid; overflow: hidden;
+  background: var(--bg3); position: relative;
+  box-shadow: 0 2px 12px rgba(0,0,0,0.5);
+}
+.lu-headshot {
+  width: 100%; height: 100%; object-fit: cover; border-radius: 50%;
+}
+.lu-headshot-fallback .lu-headshot { display: none; }
+.lu-headshot-fallback::after {
+  content: ''; position: absolute; inset: 0;
+  background: var(--bg4); border-radius: 50%;
+}
+.lu-jersey {
+  position: absolute; bottom: -2px; right: -2px;
+  background: var(--bg); color: var(--text);
+  font-family: var(--font-m); font-size: 9px; font-weight: 600;
+  padding: 1px 4px; border-radius: 4px;
+  border: 1px solid var(--border2);
+  line-height: 1.2;
+}
+.lu-name {
+  font-family: var(--font-m); font-size: 10px; font-weight: 500;
+  color: var(--text); text-align: center;
+  text-shadow: 0 1px 4px rgba(0,0,0,0.8);
+  max-width: 72px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.lu-pos {
+  font-family: var(--font-m); font-size: 8px; font-weight: 600;
+  letter-spacing: 0.1em; color: var(--bg);
+  padding: 1px 6px; border-radius: 3px;
+}
+
+/* Roster list below court */
+.lu-roster-list {
+  padding: 12px 20px 16px; border-top: 1px solid var(--border);
+  display: flex; flex-direction: column; gap: 6px;
+}
+.lu-roster-row {
+  display: flex; align-items: center; gap: 10px;
+  font-family: var(--font-m); font-size: 12px;
+}
+.lu-roster-pos {
+  font-weight: 600; min-width: 24px; font-size: 11px;
+}
+.lu-roster-jersey { color: var(--text3); min-width: 28px; }
+.lu-roster-name { color: var(--text); }

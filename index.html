@@ -103,6 +103,7 @@
       <button class="tab" data-tab="form" onclick="switchTab('form')">Last 5 Games</button>
       <button class="tab" data-tab="h2h" onclick="switchTab('h2h')">Head-to-Head</button>
       <button class="tab" data-tab="props" onclick="switchTab('props')">Props Scout</button>
+      <button class="tab" data-tab="lineups" onclick="switchTab('lineups')" id="tabLineups" style="display:none">Lineups</button>
       <button class="tab tab-ai" data-tab="plays" onclick="switchTab('plays')">◆ AI Plays</button>
     </div>
 
@@ -140,6 +141,11 @@
       <!-- PROPS SCOUT -->
       <div class="tab-pane hidden" id="tab-props">
         <div id="propsContent"></div>
+      </div>
+
+      <!-- LINEUPS (NBA only) -->
+      <div class="tab-pane hidden" id="tab-lineups">
+        <div id="lineupsContent"></div>
       </div>
 
 <!-- AI PLAYS -->
