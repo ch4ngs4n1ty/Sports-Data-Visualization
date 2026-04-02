@@ -1491,7 +1491,13 @@ function renderFormChart(chartId, games, stat) {
   if (!ctx) return;
   if (S.charts[chartId]) S.charts[chartId].destroy();
 
-  const CARD_H = 96;
+  // Scale card height based on chart width
+  const wrapperEl = document.getElementById(`${chartId}-wrapper`);
+  const chartWidth = wrapperEl?.offsetWidth || 400;
+  const barSlotW = games.length ? chartWidth / games.length : 62;
+  const dynCardW = Math.min(62, Math.max(36, barSlotW - 4));
+  const dynImgSize = Math.min(46, dynCardW - 12);
+  const CARD_H = dynImgSize + 44;
   const LOGO_SIZE = 22;
   const values = games.map(g => g.player?.[stat]?.value ?? 0);
   const colors = games.map(g =>
@@ -1608,7 +1614,13 @@ function positionBarCards(chartId, games, stat) {
 
   wrapper.querySelector('.bar-cards-overlay')?.remove();
 
-  const CARD_W = 62, CARD_H = 96, GAP = 6;
+  // Scale card size based on available width per bar
+  const chartWidth = chart.chartArea?.width || wrapper.offsetWidth;
+  const barSlotW = games.length ? chartWidth / games.length : 62;
+  const CARD_W = Math.min(62, Math.max(36, barSlotW - 4));
+  const imgSize = Math.min(46, CARD_W - 12);
+  const CARD_H = imgSize + 44; // img + val + name + padding
+  const GAP = 4;
   const overlay = document.createElement('div');
   overlay.className = 'bar-cards-overlay';
 
@@ -1626,20 +1638,24 @@ function positionBarCards(chartId, games, stat) {
       const img = new Image();
       img.src = leader.headshot;
       img.alt = leader.name;
+      img.style.cssText = `width:${imgSize}px;height:${imgSize}px`;
       img.onerror = function() { this.style.display = 'none'; this.nextElementSibling.style.display = 'flex'; };
       return img;
     })() : null;
 
     const avatar = document.createElement('div');
     avatar.className = 'form-potg-card-avatar';
+    avatar.style.cssText = `width:${imgSize}px;height:${imgSize}px`;
     if (imgEl) avatar.style.display = 'none';
 
     const val = document.createElement('div');
     val.className = 'form-potg-card-val';
+    val.style.fontSize = CARD_W < 50 ? '13px' : '16px';
     val.textContent = leader.value;
 
     const name = document.createElement('div');
     name.className = 'form-potg-card-name';
+    name.style.fontSize = CARD_W < 50 ? '7px' : '8px';
     name.textContent = leader.name;
 
     if (imgEl) card.appendChild(imgEl);
@@ -2017,87 +2033,82 @@ async function renderProps(data) {
 
 
 /* ── LINEUPS (NBA ONLY) ────────────────────────────────── */
-function renderLineups({ gameInfo, awayLineup, homeLineup }) {
+function renderLineups({ gameInfo, awayLineup, homeLineup, injuries }) {
   const el = document.getElementById('lineupsContent');
   if (!el) return;
 
-  // NBA court positions: PG at top, C near basket
-  const courtPositions = {
-    PG: { x: 50, y: 18 },
-    SG: { x: 80, y: 32 },
-    SF: { x: 20, y: 32 },
-    PF: { x: 72, y: 55 },
-    C:  { x: 28, y: 55 },
+  if (!awayLineup?.length && !homeLineup?.length) {
+    el.innerHTML = `<div class="lu-empty">Lineup data not available for this game.</div>`;
+    return;
+  }
+
+  const posOrder = ['PG', 'SG', 'SF', 'PF', 'C'];
+
+  // Check if a player is injured
+  const injStatus = (name) => {
+    const allInj = [...(injuries?.away || []), ...(injuries?.home || [])];
+    const match = allInj.find(i => i.name === name);
+    if (!match || /^active$/i.test(match.status)) return null;
+    return match.status;
+  };
+  const injColor = (s) => {
+    if (!s) return '';
+    if (/out/i.test(s)) return 'var(--red)';
+    if (/doubtful/i.test(s)) return 'var(--orange)';
+    return 'var(--yellow)';
   };
 
-  const playerCard = (p, side) => {
-    const pos = courtPositions[p.pos] || { x: 50, y: 40 };
-    // Mirror x for home team (right side court)
-    const x = side === 'home' ? pos.x : pos.x;
-    const y = pos.y;
-    const color = side === 'away' ? 'var(--blue)' : 'var(--lime)';
-    return `
-      <div class="lu-player" style="left:${x}%;top:${y}%">
-        <div class="lu-headshot-wrap" style="border-color:${color}">
-          <img class="lu-headshot" src="${p.headshotUrl}" alt="${p.name}" onerror="this.parentElement.classList.add('lu-headshot-fallback')">
-          <span class="lu-jersey">${p.jersey}</span>
-        </div>
-        <div class="lu-name">${p.shortName || p.lastName}</div>
-        <div class="lu-pos" style="background:${color}">${p.pos}</div>
-      </div>`;
-  };
+  // Build position-by-position matchup rows
+  const matchupRows = posOrder.map(pos => {
+    const away = awayLineup.find(p => p.pos === pos);
+    const home = homeLineup.find(p => p.pos === pos);
 
-  const courtSide = (lineup, teamName, abbr, logo, side) => {
-    const color = side === 'away' ? 'var(--blue)' : 'var(--lime)';
-    if (!lineup?.length) return `
-      <div class="lu-court-side">
-        <div class="lu-team-header">
-          ${logo ? `<img class="lu-team-logo" src="${logo}" alt="${abbr}" onerror="this.style.display='none'">` : ''}
-          <span class="lu-team-name" style="color:${color}">${abbr}</span>
-        </div>
-        <div class="lu-court">
-          <div class="lu-court-empty">Lineup not available</div>
-        </div>
-      </div>`;
-
-    return `
-      <div class="lu-court-side">
-        <div class="lu-team-header">
-          ${logo ? `<img class="lu-team-logo" src="${logo}" alt="${abbr}" onerror="this.style.display='none'">` : ''}
-          <span class="lu-team-name" style="color:${color}">${abbr}</span>
-          <span class="lu-team-full">${teamName}</span>
-        </div>
-        <div class="lu-court">
-          <div class="lu-court-surface">
-            <!-- Court markings -->
-            <div class="lu-court-line lu-half-circle"></div>
-            <div class="lu-court-line lu-three-arc"></div>
-            <div class="lu-court-line lu-paint"></div>
-            <div class="lu-court-line lu-ft-circle"></div>
-            <div class="lu-court-line lu-baseline"></div>
-            <!-- Players -->
-            ${lineup.map(p => playerCard(p, side)).join('')}
+    const playerSide = (p, color) => {
+      if (!p) return `<div class="lu-player-side"><div class="lu-player-empty">—</div></div>`;
+      const inj = injStatus(p.name);
+      const injBadge = inj ? `<span class="lu-inj-badge" style="color:${injColor(inj)};border-color:${injColor(inj)}">${inj}</span>` : '';
+      return `
+        <div class="lu-player-side">
+          <div class="lu-hs-wrap" style="border-color:${color}">
+            <img class="lu-hs" src="${p.headshotUrl}" alt="${p.name}" onerror="this.style.display='none'">
           </div>
-        </div>
-        <div class="lu-roster-list">
-          ${lineup.map(p => `
-            <div class="lu-roster-row">
-              <span class="lu-roster-pos" style="color:${color}">${p.pos}</span>
-              <span class="lu-roster-jersey">#${p.jersey}</span>
-              <span class="lu-roster-name">${p.name}</span>
-            </div>`).join('')}
-        </div>
+          <div class="lu-player-info">
+            <span class="lu-p-name">${p.name}</span>
+            <span class="lu-p-meta">#${p.jersey}${injBadge}</span>
+          </div>
+        </div>`;
+    };
+
+    return `
+      <div class="lu-matchup-row">
+        ${playerSide(away, 'var(--blue)')}
+        <div class="lu-pos-badge">${pos}</div>
+        ${playerSide(home, 'var(--lime)')}
       </div>`;
-  };
+  }).join('');
 
   el.innerHTML = `
     <div class="lu-header">
       <div class="lu-title">Starting Lineups</div>
       <div class="lu-subtitle">Projected starters via ESPN depth charts</div>
     </div>
-    <div class="lu-courts-grid">
-      ${courtSide(awayLineup, gameInfo.awayFull, gameInfo.awayAbbr, gameInfo.awayLogo, 'away')}
-      ${courtSide(homeLineup, gameInfo.homeFull, gameInfo.homeAbbr, gameInfo.homeLogo, 'home')}
+
+    <!-- Team headers -->
+    <div class="lu-teams-header">
+      <div class="lu-th-side">
+        ${gameInfo.awayLogo ? `<img class="lu-th-logo" src="${gameInfo.awayLogo}" alt="${gameInfo.awayAbbr}" onerror="this.style.display='none'">` : ''}
+        <span class="lu-th-name" style="color:var(--blue)">${gameInfo.awayAbbr}</span>
+      </div>
+      <div class="lu-th-vs">VS</div>
+      <div class="lu-th-side lu-th-right">
+        <span class="lu-th-name" style="color:var(--lime)">${gameInfo.homeAbbr}</span>
+        ${gameInfo.homeLogo ? `<img class="lu-th-logo" src="${gameInfo.homeLogo}" alt="${gameInfo.homeAbbr}" onerror="this.style.display='none'">` : ''}
+      </div>
+    </div>
+
+    <!-- Matchups -->
+    <div class="lu-matchups">
+      ${matchupRows}
     </div>`;
 }
 
