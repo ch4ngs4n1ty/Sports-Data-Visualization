@@ -351,13 +351,18 @@ async function startAnalysis(gameInfo) {
     renderH2H(S.gameData);
     renderProps(S.gameData);
 
-    // NBA-only: fetch and render starting lineups
+    // NBA-only: fetch and render starting lineups with stats
     const lineupsTab = document.getElementById('tabLineups');
     if (gameInfo.sportKey === 'nba') {
       lineupsTab.style.display = '';
-      const [awayLineup, homeLineup] = await Promise.all([
+      let [awayLineup, homeLineup] = await Promise.all([
         fetchLineups(gameInfo.sportKey, gameInfo.awayTeamId),
         fetchLineups(gameInfo.sportKey, gameInfo.homeTeamId),
+      ]);
+      // Enrich with per-player season stats for matchup comparison
+      [awayLineup, homeLineup] = await Promise.all([
+        enrichLineupsWithStats(awayLineup),
+        enrichLineupsWithStats(homeLineup),
       ]);
       S.gameData.awayLineup = awayLineup;
       S.gameData.homeLineup = homeLineup;
@@ -1296,6 +1301,44 @@ async function fetchLineups(sportKey, teamId) {
   return starters;
 }
 
+/* ── PLAYER SEASON STATS (NBA) ─────────────────────────── */
+async function fetchPlayerSeasonStats(athleteId) {
+  const data = await espn(
+    `https://site.web.api.espn.com/apis/common/v3/sports/basketball/nba/athletes/${athleteId}/stats?region=us&lang=en&contentorigin=espn`
+  );
+  if (!data?.categories) return null;
+
+  // Find the "averages" category
+  const avgCat = data.categories.find(c => c.name === 'averages');
+  if (!avgCat?.names?.length || !avgCat?.statistics?.length) return null;
+
+  // Find the current season entry (highest year)
+  const currentSeason = avgCat.statistics.reduce((best, entry) =>
+    (!best || (entry.season?.year || 0) > (best.season?.year || 0)) ? entry : best
+  , null);
+  if (!currentSeason?.stats?.length) return null;
+
+  // Map names[] to stats[] values
+  const stats = {};
+  avgCat.names.forEach((name, i) => {
+    const raw = currentSeason.stats[i];
+    // Some values are "4.5-10.7" (made-attempted) — parse first number as the value
+    const val = parseFloat(raw);
+    if (!isNaN(val)) stats[name] = val;
+  });
+
+  stats._gp = stats.gamesPlayed || 0;
+  return Object.keys(stats).length > 1 ? stats : null;
+}
+
+async function enrichLineupsWithStats(lineup) {
+  if (!lineup?.length) return lineup;
+  const results = await Promise.all(
+    lineup.map(p => fetchPlayerSeasonStats(p.athleteId))
+  );
+  return lineup.map((p, i) => ({ ...p, stats: results[i] }));
+}
+
 /* ═══════════════════════════════════════════════════════════
    9. RENDER FUNCTIONS (ALL SPORTS)
    All renderers are sport-agnostic — they read SportConfig
@@ -2044,6 +2087,18 @@ function renderLineups({ gameInfo, awayLineup, homeLineup, injuries }) {
 
   const posOrder = ['PG', 'SG', 'SF', 'PF', 'C'];
 
+  // Stat categories for matchup comparison
+  const matchupStats = [
+    { key: 'avgPoints',      label: 'PTS',  higher: true },
+    { key: 'avgRebounds',    label: 'REB',  higher: true },
+    { key: 'avgAssists',     label: 'AST',  higher: true },
+    { key: 'fieldGoalPct',   label: 'FG%',  higher: true, pct: true },
+    { key: 'avgSteals',      label: 'STL',  higher: true },
+    { key: 'avgBlocks',      label: 'BLK',  higher: true },
+    { key: 'avgMinutes',     label: 'MIN',  higher: true },
+    { key: 'avgTurnovers',   label: 'TO',   higher: false }, // lower is better
+  ];
+
   // Check if a player is injured
   const injStatus = (name) => {
     const allInj = [...(injuries?.away || []), ...(injuries?.home || [])];
@@ -2058,39 +2113,101 @@ function renderLineups({ gameInfo, awayLineup, homeLineup, injuries }) {
     return 'var(--yellow)';
   };
 
+  // Compute edge: returns 'away', 'home', or 'even'
+  const getEdge = (aVal, hVal, higherBetter) => {
+    if (aVal == null || hVal == null) return 'even';
+    const diff = Math.abs(aVal - hVal);
+    const threshold = Math.max(aVal, hVal) * 0.05; // 5% margin
+    if (diff < threshold) return 'even';
+    if (higherBetter) return aVal > hVal ? 'away' : 'home';
+    return aVal < hVal ? 'away' : 'home'; // lower is better (e.g. TO)
+  };
+
+  // Build stat comparison bar for a single stat
+  const statBar = (aStat, hStat, cfg) => {
+    const aVal = aStat?.stats?.[cfg.key];
+    const hVal = hStat?.stats?.[cfg.key];
+    if (aVal == null && hVal == null) return '';
+    const aStr = aVal != null ? (cfg.pct ? aVal.toFixed(1) + '%' : aVal.toFixed(1)) : '—';
+    const hStr = hVal != null ? (cfg.pct ? hVal.toFixed(1) + '%' : hVal.toFixed(1)) : '—';
+    const edge = getEdge(aVal, hVal, cfg.higher);
+    const aColor = edge === 'away' ? 'var(--green)' : edge === 'home' ? 'var(--red)' : 'var(--text2)';
+    const hColor = edge === 'home' ? 'var(--green)' : edge === 'away' ? 'var(--red)' : 'var(--text2)';
+    return `
+      <div class="lu-stat-row">
+        <span class="lu-stat-val" style="color:${aColor}">${aStr}</span>
+        <span class="lu-stat-label">${cfg.label}</span>
+        <span class="lu-stat-val" style="color:${hColor}">${hStr}</span>
+      </div>`;
+  };
+
+  // Compute overall edge score for a matchup
+  const overallEdge = (away, home) => {
+    if (!away?.stats || !home?.stats) return { label: '—', color: 'var(--text3)', awayWins: 0, homeWins: 0 };
+    let awayWins = 0, homeWins = 0;
+    matchupStats.forEach(cfg => {
+      const edge = getEdge(away.stats[cfg.key], home.stats[cfg.key], cfg.higher);
+      if (edge === 'away') awayWins++;
+      if (edge === 'home') homeWins++;
+    });
+    return { awayWins, homeWins };
+  };
+
   // Build position-by-position matchup rows
   const matchupRows = posOrder.map(pos => {
     const away = awayLineup.find(p => p.pos === pos);
     const home = homeLineup.find(p => p.pos === pos);
+    const hasStats = away?.stats || home?.stats;
+    const edge = overallEdge(away, home);
 
-    const playerSide = (p, color) => {
+    const playerSide = (p, color, align) => {
       if (!p) return `<div class="lu-player-side"><div class="lu-player-empty">—</div></div>`;
       const inj = injStatus(p.name);
       const injBadge = inj ? `<span class="lu-inj-badge" style="color:${injColor(inj)};border-color:${injColor(inj)}">${inj}</span>` : '';
+      const gp = p.stats?._gp ? `<span class="lu-gp">${p.stats._gp} GP</span>` : '';
       return `
-        <div class="lu-player-side">
+        <div class="lu-player-side ${align}">
           <div class="lu-hs-wrap" style="border-color:${color}">
             <img class="lu-hs" src="${p.headshotUrl}" alt="${p.name}" onerror="this.style.display='none'">
           </div>
           <div class="lu-player-info">
             <span class="lu-p-name">${p.name}</span>
-            <span class="lu-p-meta">#${p.jersey}${injBadge}</span>
+            <span class="lu-p-meta">#${p.jersey} ${gp}${injBadge}</span>
           </div>
         </div>`;
     };
 
+    // Edge indicator
+    const edgeIndicator = hasStats ? (() => {
+      const total = edge.awayWins + edge.homeWins;
+      if (!total) return '<div class="lu-edge-badge lu-edge-even">EVEN</div>';
+      if (edge.awayWins > edge.homeWins) return `<div class="lu-edge-badge lu-edge-away">${gameInfo.awayAbbr} +${edge.awayWins - edge.homeWins}</div>`;
+      if (edge.homeWins > edge.awayWins) return `<div class="lu-edge-badge lu-edge-home">${gameInfo.homeAbbr} +${edge.homeWins - edge.awayWins}</div>`;
+      return '<div class="lu-edge-badge lu-edge-even">EVEN</div>';
+    })() : '';
+
+    // Stat comparison bars
+    const statBars = hasStats ? matchupStats.map(cfg => statBar(away, home, cfg)).join('') : '';
+
     return `
-      <div class="lu-matchup-row">
-        ${playerSide(away, 'var(--blue)')}
-        <div class="lu-pos-badge">${pos}</div>
-        ${playerSide(home, 'var(--lime)')}
+      <div class="lu-matchup-row${hasStats ? ' lu-matchup-clickable' : ''}"${hasStats ? ' onclick="this.classList.toggle(\'lu-matchup-expanded\')"' : ''}>
+        <div class="lu-matchup-header">
+          ${playerSide(away, 'var(--blue)', 'lu-align-left')}
+          <div class="lu-pos-col">
+            <div class="lu-pos-badge">${pos}</div>
+            ${edgeIndicator}
+          </div>
+          ${playerSide(home, 'var(--lime)', 'lu-align-right')}
+          ${hasStats ? '<span class="lu-expand-chevron">›</span>' : ''}
+        </div>
+        ${hasStats ? `<div class="lu-matchup-stats">${statBars}</div>` : ''}
       </div>`;
   }).join('');
 
   el.innerHTML = `
     <div class="lu-header">
       <div class="lu-title">Starting Lineups</div>
-      <div class="lu-subtitle">Projected starters via ESPN depth charts</div>
+      <div class="lu-subtitle">Projected starters · ESPN depth charts · Season averages</div>
     </div>
 
     <!-- Team headers -->
