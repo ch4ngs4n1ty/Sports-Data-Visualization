@@ -3,17 +3,22 @@
 ## What This Project Is
 PlayIQ is a dark-mode sports betting intelligence dashboard. The user types a game (e.g. "Lakers vs Warriors"), and the app fetches live ESPN data, renders it across multiple tabs, then uses the Claude API to generate AI betting plays and discuss the user's proposed plays.
 
-It is a **100% frontend project** — no backend, no build step, no framework. Just three files that open directly in Chrome via Live Server or a local file.
+It is a **100% frontend project** — no backend, no build step, no framework. The current structure is still lightweight, but sport-specific config now lives in per-sport folders.
 
 ---
 
 ## File Structure
 ```
 playiq/
-├── index.html   — Layout, all HTML sections and tab structure
-├── styles.css   — All styling (CSS variables, dark theme, components)
-├── app.js       — All logic (ESPN fetching, rendering, Claude API calls)
-└── CLAUDE.md    — This file
+├── index.html              — Layout, all HTML sections and tab structure
+├── styles.css              — All styling (CSS variables, dark theme, components)
+├── app.js                  — Shared app logic (ESPN fetching, rendering, Claude API calls)
+├── sports/
+│   ├── nba/config.js       — NBA stat and prop config
+│   ├── mlb/config.js       — MLB stat and prop config
+│   ├── nhl/config.js       — NHL stat and prop config
+│   └── ncaab/config.js     — NCAAB stat and prop config
+└── CLAUDE.md               — This file
 ```
 
 ---

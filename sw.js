@@ -4,7 +4,7 @@
              Network-only for live API calls
 ═══════════════════════════════════════════ */
 
-const CACHE = 'playiq-v5';
+const CACHE = 'playiq-v6';
 
 const BASE = self.registration.scope;
 
@@ -13,6 +13,10 @@ const APP_SHELL = [
   BASE + 'index.html',
   BASE + 'styles.css',
   BASE + 'app.js',
+  BASE + 'sports/nba/config.js',
+  BASE + 'sports/mlb/config.js',
+  BASE + 'sports/nhl/config.js',
+  BASE + 'sports/ncaab/config.js',
   BASE + 'manifest.json',
   BASE + 'icon.svg',
 ];

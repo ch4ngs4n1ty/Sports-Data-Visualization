@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en">  
 <head>
   <meta charset="UTF-8"/>
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover"/>
@@ -105,6 +105,7 @@
       <button class="tab" data-tab="props" onclick="switchTab('props')">Props Scout</button>
       <button class="tab" data-tab="lineups" onclick="switchTab('lineups')" id="tabLineups" style="display:none">Lineups</button>
       <button class="tab" data-tab="edges" onclick="switchTab('edges')" id="tabEdges" style="display:none">Edge Finder</button>
+      <button class="tab" data-tab="pitching" onclick="switchTab('pitching')" id="tabPitching" style="display:none">Pitching Edge</button>
       <button class="tab tab-ai" data-tab="plays" onclick="switchTab('plays')">◆ AI Plays</button>
     </div>
 
@@ -152,6 +153,11 @@
       <!-- EDGE FINDER (NBA) -->
       <div class="tab-pane hidden" id="tab-edges">
         <div id="edgesContent"></div>
+      </div>
+
+      <!-- PITCHING EDGE (MLB) -->
+      <div class="tab-pane hidden" id="tab-pitching">
+        <div id="pitchingContent"></div>
       </div>
 
 <!-- AI PLAYS -->
@@ -214,10 +220,10 @@
 
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
   <!-- Sport configs — loaded before app.js -->
-  <script src="sports/nba.js"></script>
-  <script src="sports/mlb.js"></script>
-  <script src="sports/nhl.js"></script>
-  <script src="sports/ncaab.js"></script>
+  <script src="sports/nba/config.js"></script>
+  <script src="sports/mlb/config.js"></script>
+  <script src="sports/nhl/config.js"></script>
+  <script src="sports/ncaab/config.js"></script>
   <script src="app.js"></script>
 </body>
 </html>

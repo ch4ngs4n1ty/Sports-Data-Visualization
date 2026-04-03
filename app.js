@@ -54,7 +54,7 @@
 
    SPORT-SPECIFIC CODE INDEX
    ─────────────────────────
-   Sport configs live in /sports/*.js (nba.js, mlb.js, nhl.js, ncaab.js).
+   Sport configs live in /sports/<sport>/config.js.
    Those define statCategories and propsStats per sport via window.SportConfig.
 
    NBA-ONLY code in this file:
@@ -1845,6 +1845,277 @@ async function buildEdgeFinderData(gameData) {
     awayTopProp, homeTopProp,
     h2hGames: currentSummaries.length,
   };
+}
+
+/* ═══════════════════════════════════════════════════════════
+   8d. PITCHING EDGE (MLB ONLY)
+   Fetches starting pitcher stats, team batting/pitching
+   stats, and renders matchup analysis for MLB games.
+═══════════════════════════════════════════════════════════ */
+
+// Fetch starting pitchers from game summary
+async function fetchStartingPitchers(gameInfo) {
+  const sp = SPORTS.find(s => s.key === gameInfo.sportKey);
+  if (!sp) return { away: null, home: null };
+  const summary = await espn(
+    `https://site.api.espn.com/apis/site/v2/sports/${sp.sport}/${sp.league}/summary?event=${gameInfo.eventId}`
+  );
+  const result = { away: null, home: null };
+  // ESPN puts probable/starting pitchers in boxscore or header
+  const boxPlayers = summary?.boxscore?.players || [];
+  for (const teamData of boxPlayers) {
+    const side = String(teamData.team?.id) === String(gameInfo.awayTeamId) ? 'away' : 'home';
+    for (const grp of teamData.statistics || []) {
+      // Pitching stats group — look for ERA/IP labels
+      const lbls = grp.labels || [];
+      if (!lbls.includes('IP') && !lbls.includes('ERA')) continue;
+      const pitcher = grp.athletes?.[0]; // first pitcher = starter
+      if (!pitcher?.athlete) continue;
+      const a = pitcher.athlete;
+      const ipIdx = lbls.indexOf('IP');
+      const erIdx = lbls.indexOf('ER');
+      const hIdx = lbls.indexOf('H');
+      const bbIdx = lbls.indexOf('BB');
+      const kIdx = lbls.indexOf('K');
+      const pIdx = lbls.indexOf('P'); // pitch count
+      result[side] = {
+        id: a.id,
+        name: a.displayName || a.shortName || '?',
+        shortName: a.shortName || a.displayName?.split(' ').pop() || '?',
+        headshotUrl: `https://a.espncdn.com/i/headshots/mlb/players/full/${a.id}.png`,
+        ip: ipIdx > -1 ? pitcher.stats?.[ipIdx] : null,
+        er: erIdx > -1 ? parseInt(pitcher.stats?.[erIdx]) || 0 : null,
+        h: hIdx > -1 ? parseInt(pitcher.stats?.[hIdx]) || 0 : null,
+        bb: bbIdx > -1 ? parseInt(pitcher.stats?.[bbIdx]) || 0 : null,
+        k: kIdx > -1 ? parseInt(pitcher.stats?.[kIdx]) || 0 : null,
+        pitchCount: pIdx > -1 ? parseInt(pitcher.stats?.[pIdx]) || null : null,
+      };
+    }
+  }
+  // Also try to get season stats from roster/header
+  const roster = summary?.rosters || summary?.header?.competitions?.[0]?.competitors || [];
+  for (const team of roster) {
+    const side = String(team.team?.id || team.id) === String(gameInfo.awayTeamId) ? 'away' : 'home';
+    const probables = team.probables || [];
+    for (const prob of probables) {
+      if (!prob.athlete) continue;
+      if (!result[side]) result[side] = {};
+      result[side].id = result[side].id || prob.athlete.id;
+      result[side].name = result[side].name || prob.athlete.displayName;
+      result[side].shortName = result[side].shortName || prob.athlete.shortName;
+      result[side].headshotUrl = result[side].headshotUrl || `https://a.espncdn.com/i/headshots/mlb/players/full/${prob.athlete.id}.png`;
+      // Season stats from athlete reference
+      const stats = prob.statistics || [];
+      for (const s of stats) {
+        if (s.name === 'ERA') result[side].era = parseFloat(s.displayValue) || null;
+        if (s.name === 'WHIP') result[side].whip = parseFloat(s.displayValue) || null;
+        if (s.abbreviation === 'W-L' || s.name === 'record') result[side].record = s.displayValue;
+      }
+    }
+  }
+  return result;
+}
+
+// Build MLB pitching edge data
+async function buildPitchingEdgeData(gameData) {
+  const { gameInfo, h2h, injuries } = gameData;
+
+  // Fetch in parallel: starting pitchers + team stats for both teams
+  const [pitchers, awayStats, homeStats] = await Promise.all([
+    fetchStartingPitchers(gameInfo),
+    fetchTeamStats(gameInfo.sportKey, gameInfo.awayTeamId),
+    fetchTeamStats(gameInfo.sportKey, gameInfo.homeTeamId),
+  ]);
+
+  // Extract relevant team batting/pitching stats
+  const extractTeamStats = (stats) => {
+    if (!stats) return {};
+    const g = (key) => stats[key]?.value ?? null;
+    const r = (key) => stats[key]?.rank ?? null;
+    return {
+      era: g('ERA'), eraRank: r('ERA'),
+      whip: g('WHIP'), whipRank: r('WHIP'),
+      k9: g('strikeoutsPerNineInnings'), k9Rank: r('strikeoutsPerNineInnings'),
+      bb9: g('walksPerNineInnings'), bb9Rank: r('walksPerNineInnings'),
+      battingAvg: g('battingAvg') || g('AVG'), battingAvgRank: r('battingAvg') || r('AVG'),
+      ops: g('OPS'), opsRank: r('OPS'),
+      kRate: g('strikeoutsPerPlateAppearance') || g('strikeoutRate'),
+      kRateRank: r('strikeoutsPerPlateAppearance') || r('strikeoutRate'),
+      walkRate: g('walksPerPlateAppearance') || g('walkRate'),
+      walkRateRank: r('walksPerPlateAppearance') || r('walkRate'),
+      runsPerGame: g('avgRuns') || g('runs'),
+      hitsPerGame: g('avgHits'),
+      homeRuns: g('avgHomeRuns') || g('homeRuns'),
+      obp: g('onBasePct') || g('OBP'),
+    };
+  };
+
+  const away = extractTeamStats(awayStats);
+  const home = extractTeamStats(homeStats);
+
+  // Determine pitching advantage
+  let pitchingEdge = null;
+  if (pitchers.away?.era != null && pitchers.home?.era != null) {
+    const diff = Math.abs(pitchers.away.era - pitchers.home.era);
+    if (diff >= 0.75) {
+      pitchingEdge = pitchers.away.era < pitchers.home.era
+        ? { side: 'away', abbr: gameInfo.awayAbbr, diff: diff.toFixed(2) }
+        : { side: 'home', abbr: gameInfo.homeAbbr, diff: diff.toFixed(2) };
+    }
+  }
+
+  // Strikeout edge: high-K pitcher vs high-K lineup
+  const kEdges = [];
+  if (away.k9 && home.kRate) {
+    const score = (away.k9 / 9) * (home.kRate || 0.2) * 100;
+    if (score > 4) kEdges.push({ pitcher: pitchers.away?.name || gameInfo.awayAbbr + ' SP', team: gameInfo.awayAbbr, k9: away.k9, oppKRate: home.kRate, score });
+  }
+  if (home.k9 && away.kRate) {
+    const score = (home.k9 / 9) * (away.kRate || 0.2) * 100;
+    if (score > 4) kEdges.push({ pitcher: pitchers.home?.name || gameInfo.homeAbbr + ' SP', team: gameInfo.homeAbbr, k9: home.k9, oppKRate: away.kRate, score });
+  }
+  kEdges.sort((a, b) => b.score - a.score);
+
+  // Walk edge: weak pitcher vs disciplined lineup
+  const bbEdges = [];
+  if (away.bb9 && home.obp) {
+    if (away.bb9 > 3.5 && home.obp > 0.320) bbEdges.push({ pitcher: pitchers.away?.name || gameInfo.awayAbbr + ' SP', team: gameInfo.awayAbbr, bb9: away.bb9, oppObp: home.obp });
+  }
+  if (home.bb9 && away.obp) {
+    if (home.bb9 > 3.5 && away.obp > 0.320) bbEdges.push({ pitcher: pitchers.home?.name || gameInfo.homeAbbr + ' SP', team: gameInfo.homeAbbr, bb9: home.bb9, oppObp: away.obp });
+  }
+
+  return { pitchers, away, home, pitchingEdge, kEdges, bbEdges, h2hCount: h2h?.length || 0 };
+}
+
+// Render MLB Pitching Edge tab
+function renderPitchingEdge(data, gameData) {
+  const el = document.getElementById('pitchingContent');
+  if (!el) return;
+  const { gameInfo } = gameData;
+
+  if (!data) {
+    el.innerHTML = '<div class="pe-empty">Pitching data not available for this game.</div>';
+    return;
+  }
+
+  const { pitchers, away, home, pitchingEdge, kEdges, bbEdges } = data;
+  const fv = (v, dec = 2) => v != null ? Number(v).toFixed(dec) : '—';
+  const rk = (v) => v != null ? `<span class="pe-rank">#${v}</span>` : '';
+
+  // Pitcher cards
+  const pitcherCard = (p, side, teamAbbr, color) => {
+    if (!p) return `<div class="pe-pitcher-card"><div class="pe-no-pitcher">SP not announced</div></div>`;
+    return `
+      <div class="pe-pitcher-card" style="border-color:${color}">
+        <div class="pe-pitcher-head">
+          <img class="pe-pitcher-hs" src="${p.headshotUrl}" alt="${p.name}" onerror="this.style.display='none'">
+          <div class="pe-pitcher-info">
+            <span class="pe-pitcher-name">${p.name}</span>
+            <span class="pe-pitcher-meta" style="color:${color}">${teamAbbr}${p.record ? ' · ' + p.record : ''}</span>
+          </div>
+        </div>
+        <div class="pe-pitcher-stats">
+          ${p.era != null ? `<div class="pe-ps"><span class="pe-ps-val">${fv(p.era)}</span><span class="pe-ps-label">ERA</span></div>` : ''}
+          ${p.whip != null ? `<div class="pe-ps"><span class="pe-ps-val">${fv(p.whip)}</span><span class="pe-ps-label">WHIP</span></div>` : ''}
+          ${p.k != null ? `<div class="pe-ps"><span class="pe-ps-val">${p.k}</span><span class="pe-ps-label">K</span></div>` : ''}
+          ${p.bb != null ? `<div class="pe-ps"><span class="pe-ps-val">${p.bb}</span><span class="pe-ps-label">BB</span></div>` : ''}
+          ${p.ip != null ? `<div class="pe-ps"><span class="pe-ps-val">${p.ip}</span><span class="pe-ps-label">IP</span></div>` : ''}
+          ${p.pitchCount != null ? `<div class="pe-ps"><span class="pe-ps-val">${p.pitchCount}</span><span class="pe-ps-label">Pitches</span></div>` : ''}
+        </div>
+      </div>`;
+  };
+
+  // Team stats comparison row
+  const statRow = (label, awayVal, homeVal, awayRank, homeRank, lower) => {
+    const aBetter = lower ? awayVal < homeVal : awayVal > homeVal;
+    const hBetter = !aBetter;
+    const aColor = (awayVal != null && homeVal != null) ? (aBetter ? 'var(--green)' : 'var(--text2)') : 'var(--text2)';
+    const hColor = (awayVal != null && homeVal != null) ? (hBetter ? 'var(--green)' : 'var(--text2)') : 'var(--text2)';
+    return `
+      <div class="pe-stat-row">
+        <span class="pe-sr-val" style="color:${aColor}">${fv(awayVal, 3)} ${rk(awayRank)}</span>
+        <span class="pe-sr-label">${label}</span>
+        <span class="pe-sr-val" style="color:${hColor}">${fv(homeVal, 3)} ${rk(homeRank)}</span>
+      </div>`;
+  };
+
+  el.innerHTML = `
+    <div class="pe-header">
+      <div class="pe-title">Pitching Edge</div>
+      <div class="pe-subtitle">Starting pitcher matchup · Team pitching & batting stats</div>
+    </div>
+
+    ${pitchingEdge ? `
+      <div class="pe-advantage">
+        <span class="pe-adv-label">F5 Pitching Advantage</span>
+        <span class="pe-adv-team">${pitchingEdge.abbr}</span>
+        <span class="pe-adv-diff">${pitchingEdge.diff} ERA gap</span>
+      </div>` : ''}
+
+    <!-- Starting Pitchers -->
+    <div class="pe-section">
+      <div class="pe-section-title">Starting Pitchers</div>
+      <div class="pe-pitchers-grid">
+        ${pitcherCard(pitchers.away, 'away', gameInfo.awayAbbr, 'var(--blue)')}
+        ${pitcherCard(pitchers.home, 'home', gameInfo.homeAbbr, 'var(--lime)')}
+      </div>
+    </div>
+
+    <!-- Team Pitching -->
+    <div class="pe-section">
+      <div class="pe-section-title">Team Pitching</div>
+      <div class="pe-compare-header">
+        <span style="color:var(--blue)">${gameInfo.awayAbbr}</span>
+        <span></span>
+        <span style="color:var(--lime)">${gameInfo.homeAbbr}</span>
+      </div>
+      ${statRow('ERA', away.era, home.era, away.eraRank, home.eraRank, true)}
+      ${statRow('WHIP', away.whip, home.whip, away.whipRank, home.whipRank, true)}
+      ${statRow('K/9', away.k9, home.k9, away.k9Rank, home.k9Rank, false)}
+      ${statRow('BB/9', away.bb9, home.bb9, away.bb9Rank, home.bb9Rank, true)}
+    </div>
+
+    <!-- Team Batting -->
+    <div class="pe-section">
+      <div class="pe-section-title">Team Batting</div>
+      <div class="pe-compare-header">
+        <span style="color:var(--blue)">${gameInfo.awayAbbr}</span>
+        <span></span>
+        <span style="color:var(--lime)">${gameInfo.homeAbbr}</span>
+      </div>
+      ${statRow('AVG', away.battingAvg, home.battingAvg, away.battingAvgRank, home.battingAvgRank, false)}
+      ${statRow('OPS', away.ops, home.ops, away.opsRank, home.opsRank, false)}
+      ${statRow('OBP', away.obp, home.obp, null, null, false)}
+      ${statRow('K Rate', away.kRate, home.kRate, away.kRateRank, home.kRateRank, true)}
+    </div>
+
+    <!-- Strikeout Edges -->
+    ${kEdges.length ? `
+      <div class="pe-section">
+        <div class="pe-section-title">Strikeout Prop Edges</div>
+        <div class="pe-hint">High-K pitching staff vs high-strikeout lineup</div>
+        ${kEdges.map(e => `
+          <div class="pe-edge-card">
+            <span class="pe-edge-team" style="color:var(--green)">${e.team}</span>
+            <span class="pe-edge-detail">Team K/9: ${fv(e.k9, 1)} vs Opp K Rate: ${fv(e.oppKRate, 3)}</span>
+            <span class="ef-badge-notable">K EDGE</span>
+          </div>`).join('')}
+      </div>` : ''}
+
+    <!-- Walk Edges -->
+    ${bbEdges.length ? `
+      <div class="pe-section">
+        <div class="pe-section-title">Walk Prop Edges</div>
+        <div class="pe-hint">High-walk pitcher vs disciplined lineup (OBP .320+)</div>
+        ${bbEdges.map(e => `
+          <div class="pe-edge-card">
+            <span class="pe-edge-team" style="color:var(--yellow)">${e.team}</span>
+            <span class="pe-edge-detail">BB/9: ${fv(e.bb9, 1)} vs Opp OBP: ${fv(e.oppObp, 3)}</span>
+            <span class="ef-badge-notable">BB EDGE</span>
+          </div>`).join('')}
+      </div>` : ''}
+  `;
 }
 
 /* ═══════════════════════════════════════════════════════════
