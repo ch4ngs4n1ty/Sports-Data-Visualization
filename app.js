@@ -347,6 +347,7 @@ async function startAnalysis(gameInfo) {
     const h2hResult = await fetchH2H(gameInfo);
     const h2h = h2hResult.games;
     const h2hSummaries = h2hResult.summaries;
+    const h2hDates = h2hResult.gameDates;
 
     // Step 5 — Rosters
     setStep(4);
@@ -355,7 +356,7 @@ async function startAnalysis(gameInfo) {
       fetchRoster(gameInfo.sportKey, gameInfo.homeTeamId),
     ]);
 
-    S.gameData = { gameInfo, injuries, awayForm, homeForm, h2h, h2hSummaries, awayRoster, homeRoster };
+    S.gameData = { gameInfo, injuries, awayForm, homeForm, h2h, h2hSummaries, h2hDates, awayRoster, homeRoster };
 
     renderOverview(S.gameData);
     renderRoster(S.gameData);
@@ -796,8 +797,9 @@ async function fetchH2H(gameInfo) {
     };
   });
 
-  // Return both structured games and raw summaries (for boxscore extraction in lineups)
-  return { games, summaries };
+  // Return games, raw summaries, and raw dates for filtering
+  const gameDates = h2h.map(ev => new Date(ev.date));
+  return { games, summaries, gameDates };
 }
 
 /* ═══════════════════════════════════════════════════════════
@@ -1750,12 +1752,22 @@ function computePlayerEdges(players, seasonStatsMap, positionMap, starterIds) {
 
 // Main orchestrator: builds all Edge Finder data
 async function buildEdgeFinderData(gameData) {
-  const { gameInfo, h2hSummaries, awayRoster, homeRoster, awayLineup, homeLineup, injuries } = gameData;
+  const { gameInfo, h2hSummaries, h2hDates, awayRoster, homeRoster, awayLineup, homeLineup, injuries } = gameData;
   if (!h2hSummaries?.length) return null;
 
-  // 1. Extract all players from H2H boxscores
-  const awayPlayers = extractAllH2HPlayers(h2hSummaries, gameInfo.awayTeamId);
-  const homePlayers = extractAllH2HPlayers(h2hSummaries, gameInfo.homeTeamId);
+  // 0. Filter to CURRENT SEASON only — drop old H2H games from prior seasons
+  const currentSeason = getSeasonYear(gameInfo.sportKey);
+  // NBA season 2026 runs Oct 2025 – Jun 2026, so current season start = Oct of (year - 1)
+  const seasonStart = new Date(currentSeason - 1, 9, 1); // Oct 1 of prior calendar year
+  const currentSummaries = h2hSummaries.filter((_, i) => {
+    const d = h2hDates?.[i];
+    return d && d >= seasonStart;
+  });
+  if (!currentSummaries.length) return null;
+
+  // 1. Extract all players from current-season H2H boxscores only
+  const awayPlayers = extractAllH2HPlayers(currentSummaries, gameInfo.awayTeamId);
+  const homePlayers = extractAllH2HPlayers(currentSummaries, gameInfo.homeTeamId);
 
   // 2. Fetch full depth charts for accurate position mapping (all players, not just starters)
   const [awayDepth, homeDepth] = await Promise.all([
@@ -1789,9 +1801,9 @@ async function buildEdgeFinderData(gameData) {
   const awayEdges = computePlayerEdges(filteredAway, seasonStatsMap, awayPosMap, awayStarterIds);
   const homeEdges = computePlayerEdges(filteredHome, seasonStatsMap, homePosMap, homeStarterIds);
 
-  // 7. Compute positional defense (only current roster players count)
-  const awayDefense = computePositionalDefense(h2hSummaries, gameInfo.awayTeamId, homePosMap, homeRosterIds);
-  const homeDefense = computePositionalDefense(h2hSummaries, gameInfo.homeTeamId, awayPosMap, awayRosterIds);
+  // 7. Compute positional defense (current season + current roster only)
+  const awayDefense = computePositionalDefense(currentSummaries, gameInfo.awayTeamId, homePosMap, homeRosterIds);
+  const homeDefense = computePositionalDefense(currentSummaries, gameInfo.homeTeamId, awayPosMap, awayRosterIds);
 
   // 8. Find top prop per team (highest positive edge in PTS/REB/AST/STL/BLK/3PM)
   const findTopProp = (edges, teamAbbr, opponentDefense, teamInjuries) => {
@@ -1831,7 +1843,7 @@ async function buildEdgeFinderData(gameData) {
     awayEdges, homeEdges,
     awayDefense, homeDefense,
     awayTopProp, homeTopProp,
-    h2hGames: h2hSummaries.length,
+    h2hGames: currentSummaries.length,
   };
 }
 
