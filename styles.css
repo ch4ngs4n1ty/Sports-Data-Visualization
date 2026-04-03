@@ -1718,3 +1718,247 @@ body {
   .lu-stat-val { font-size: 11px; min-width: 36px; }
   .lu-expand-chevron { font-size: 14px; }
 }
+
+/* ═══════════════════════════════════════════════════════════
+   EDGE FINDER (NBA ONLY)
+═══════════════════════════════════════════════════════════ */
+.ef-header { margin-bottom: 16px; }
+.ef-title {
+  font-family: var(--font-d); font-size: 32px; letter-spacing: 0.06em;
+  color: var(--text);
+}
+.ef-subtitle {
+  font-family: var(--font-m); font-size: 11px; color: var(--text3);
+  letter-spacing: 0.05em;
+}
+.ef-empty {
+  text-align: center; padding: 40px 20px;
+  font-family: var(--font-m); font-size: 13px; color: var(--text3);
+  line-height: 1.6;
+}
+.ef-section { margin-bottom: 20px; }
+.ef-section-title {
+  font-family: var(--font-d); font-size: 20px; letter-spacing: 0.06em;
+  color: var(--text); margin-bottom: 10px;
+}
+.ef-loading {
+  text-align: center; padding: 30px;
+  font-family: var(--font-m); font-size: 12px; color: var(--lime);
+  letter-spacing: 0.08em;
+}
+
+/* ── Top Props ── */
+.ef-top-props-grid {
+  display: grid; grid-template-columns: 1fr 1fr; gap: 12px;
+}
+.ef-top-prop {
+  background: var(--bg2); border: 1px solid var(--lime);
+  border-radius: 10px; padding: 16px;
+  box-shadow: 0 0 16px rgba(212,245,60,0.06);
+}
+.ef-no-pick {
+  background: var(--bg2); border: 1px solid var(--border);
+  border-radius: 10px; padding: 24px;
+  font-family: var(--font-m); font-size: 12px; color: var(--text3);
+  text-align: center; display: flex; align-items: center; justify-content: center;
+}
+.ef-top-prop-player {
+  display: flex; align-items: center; gap: 10px; margin-bottom: 12px;
+}
+.ef-top-hs {
+  width: 44px; height: 44px; border-radius: 50%;
+  border: 2px solid var(--lime); object-fit: cover;
+  background: var(--bg3);
+}
+.ef-top-info { display: flex; flex-direction: column; gap: 2px; flex: 1; min-width: 0; }
+.ef-top-name {
+  font-family: var(--font-m); font-size: 14px; font-weight: 600; color: var(--text);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.ef-top-meta {
+  font-family: var(--font-m); font-size: 10px; color: var(--text3);
+}
+.ef-top-prop-stats {
+  display: flex; gap: 8px; flex-wrap: wrap;
+}
+.ef-top-stat-col {
+  display: flex; flex-direction: column; gap: 2px;
+  min-width: 50px; flex: 1;
+}
+.ef-top-stat-label {
+  font-family: var(--font-m); font-size: 9px; color: var(--text3);
+  text-transform: uppercase; letter-spacing: 0.08em;
+}
+.ef-top-stat-val {
+  font-family: var(--font-m); font-size: 14px; font-weight: 600; color: var(--text);
+}
+.ef-top-injury {
+  margin-top: 8px; padding: 6px 8px;
+  background: rgba(255,140,66,0.08); border: 1px solid rgba(255,140,66,0.2);
+  border-radius: 6px;
+  font-family: var(--font-m); font-size: 10px; color: var(--orange);
+}
+
+/* ── Edge Badges ── */
+.ef-badge-strong {
+  font-family: var(--font-m); font-size: 9px; font-weight: 700;
+  letter-spacing: 0.08em; text-transform: uppercase;
+  padding: 3px 8px; border-radius: 4px;
+  color: var(--green); background: rgba(35,209,139,0.12);
+  border: 1px solid rgba(35,209,139,0.25);
+  white-space: nowrap;
+}
+.ef-badge-notable {
+  font-family: var(--font-m); font-size: 9px; font-weight: 700;
+  letter-spacing: 0.08em; text-transform: uppercase;
+  padding: 3px 8px; border-radius: 4px;
+  color: var(--yellow); background: rgba(245,200,66,0.10);
+  border: 1px solid rgba(245,200,66,0.20);
+  white-space: nowrap;
+}
+
+/* ── Positional Defense ── */
+.ef-def-grid {
+  display: grid; grid-template-columns: 1fr 1fr; gap: 12px;
+}
+.ef-def-card {
+  background: var(--bg2); border: 1px solid var(--border);
+  border-radius: 10px; padding: 14px 16px;
+}
+.ef-def-title {
+  font-family: var(--font-m); font-size: 13px; font-weight: 600;
+  color: var(--text); margin-bottom: 2px;
+}
+.ef-def-subtitle {
+  font-family: var(--font-m); font-size: 10px; color: var(--text3);
+  margin-bottom: 2px;
+}
+.ef-def-hint {
+  font-family: var(--font-m); font-size: 9px; color: var(--text3);
+  opacity: 0.6; margin-bottom: 10px;
+}
+.ef-top-stat-hint {
+  font-family: var(--font-m); font-size: 8px; color: var(--text3);
+  opacity: 0.7; margin-top: 1px;
+}
+.ef-pos-row {
+  display: flex; align-items: center; gap: 8px;
+  padding: 5px 8px; border-radius: 6px;
+  transition: background 0.15s ease;
+}
+.ef-pos-row:hover { background: var(--bg3); }
+.ef-pos-weak { background: rgba(255,61,90,0.06); }
+.ef-pos-label {
+  font-family: var(--font-d); font-size: 14px; color: var(--text3);
+  min-width: 28px; letter-spacing: 0.06em;
+}
+.ef-pos-bar-wrap {
+  flex: 1; height: 6px; background: var(--bg); border-radius: 3px; overflow: hidden;
+}
+.ef-pos-bar {
+  height: 100%; border-radius: 3px;
+  transition: width 0.4s ease;
+}
+.ef-pos-val {
+  font-family: var(--font-m); font-size: 12px; font-weight: 600;
+  color: var(--text2); min-width: 32px; text-align: right;
+}
+.ef-pos-val-weak { color: var(--red); }
+.ef-weak-tag {
+  font-family: var(--font-m); font-size: 8px; font-weight: 700;
+  color: var(--red); letter-spacing: 0.08em; text-transform: uppercase;
+}
+
+/* ── Player Edges Table ── */
+.ef-table-wrap {
+  overflow-x: auto; -webkit-overflow-scrolling: touch;
+  border-radius: 10px; border: 1px solid var(--border);
+  background: var(--bg2);
+}
+.ef-table {
+  width: 100%; border-collapse: collapse;
+  font-family: var(--font-m); font-size: 12px;
+}
+.ef-table thead {
+  background: var(--bg3); position: sticky; top: 0; z-index: 1;
+}
+.ef-table th {
+  padding: 10px 8px; text-align: center;
+  font-size: 10px; font-weight: 600; color: var(--text3);
+  text-transform: uppercase; letter-spacing: 0.08em;
+  border-bottom: 1px solid var(--border);
+  white-space: nowrap;
+}
+.ef-th-player { text-align: left; min-width: 140px; }
+.ef-th-center { text-align: center; }
+.ef-th-stat { min-width: 80px; }
+.ef-th-sub {
+  font-size: 8px; font-weight: 400; color: var(--text3);
+  letter-spacing: 0.04em; opacity: 0.7; margin-top: 2px;
+}
+.ef-table tbody tr {
+  border-bottom: 1px solid var(--border);
+  transition: background 0.12s ease;
+}
+.ef-table tbody tr:hover { background: var(--bg3); }
+.ef-table td { padding: 8px; vertical-align: middle; }
+
+/* Player cell with headshot */
+.ef-player-cell {
+  display: flex; align-items: center; gap: 8px; min-width: 140px;
+}
+.ef-row-hs {
+  width: 32px; height: 32px; border-radius: 50%;
+  object-fit: cover; background: var(--bg3); flex-shrink: 0;
+}
+.ef-row-info { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
+.ef-row-name {
+  font-size: 12px; font-weight: 600; color: var(--text);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.ef-row-meta { font-size: 9px; }
+
+/* Stat cell — stacked H2H / Season / Edge */
+.ef-td-stat {
+  text-align: center; padding: 6px 4px;
+}
+.ef-td-stat .ef-h2h-val {
+  display: block; font-size: 12px; font-weight: 600; color: var(--text);
+}
+.ef-td-stat .ef-season-val {
+  display: block; font-size: 9px; color: var(--text3);
+}
+.ef-td-stat .ef-edge-val {
+  display: block; font-size: 10px; font-weight: 700; margin-top: 1px;
+}
+.ef-td-center { text-align: center; font-weight: 600; color: var(--text2); }
+
+/* Edge coloring */
+.ef-edge-pos { color: var(--green); }
+.ef-edge-neg { color: var(--red); }
+.ef-edge-mild-pos { color: rgba(35,209,139,0.65); }
+.ef-edge-mild-neg { color: rgba(255,61,90,0.65); }
+
+/* Starter row accent */
+.ef-starter { border-left: 3px solid var(--lime); }
+
+/* ── Edge Finder Mobile ── */
+@media (max-width: 768px) {
+  .ef-top-props-grid { grid-template-columns: 1fr; }
+  .ef-def-grid { grid-template-columns: 1fr; }
+  .ef-th-stat { min-width: 65px; }
+  .ef-table { font-size: 11px; }
+}
+@media (max-width: 480px) {
+  .ef-title { font-size: 26px; }
+  .ef-section-title { font-size: 17px; }
+  .ef-top-hs { width: 36px; height: 36px; }
+  .ef-top-name { font-size: 12px; }
+  .ef-top-stat-val { font-size: 12px; }
+  .ef-row-hs { width: 26px; height: 26px; }
+  .ef-row-name { font-size: 11px; }
+  .ef-th-stat { min-width: 55px; }
+  .ef-td-stat .ef-h2h-val { font-size: 11px; }
+  .ef-td-stat .ef-season-val { font-size: 8px; }
+  .ef-td-stat .ef-edge-val { font-size: 9px; }
+}

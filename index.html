@@ -104,6 +104,7 @@
       <button class="tab" data-tab="h2h" onclick="switchTab('h2h')">Head-to-Head</button>
       <button class="tab" data-tab="props" onclick="switchTab('props')">Props Scout</button>
       <button class="tab" data-tab="lineups" onclick="switchTab('lineups')" id="tabLineups" style="display:none">Lineups</button>
+      <button class="tab" data-tab="edges" onclick="switchTab('edges')" id="tabEdges" style="display:none">Edge Finder</button>
       <button class="tab tab-ai" data-tab="plays" onclick="switchTab('plays')">◆ AI Plays</button>
     </div>
 
@@ -146,6 +147,11 @@
       <!-- LINEUPS (NBA only) -->
       <div class="tab-pane hidden" id="tab-lineups">
         <div id="lineupsContent"></div>
+      </div>
+
+      <!-- EDGE FINDER (NBA) -->
+      <div class="tab-pane hidden" id="tab-edges">
+        <div id="edgesContent"></div>
       </div>
 
 <!-- AI PLAYS -->

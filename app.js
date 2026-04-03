@@ -27,13 +27,23 @@
       - fetchPlayerResearchData() ← NBA season strings, NBA.com advanced stats
       - renderResearchTab()    ← hardcoded PTS/FGA/MIN references
    8. ROSTER FETCH ............... line ~1118
-   9. RENDER FUNCTIONS ........... line ~1156
+   8b. LINEUPS FETCH (NBA) ....... line ~1283
+   8c. EDGE FINDER (NBA) ......... line ~1452
+      - extractAllH2HPlayers()
+      - buildPositionMap()
+      - computePositionalDefense()
+      - batchFetchSeasonStats()
+      - computePlayerEdges()
+      - buildEdgeFinderData()
+   9. RENDER FUNCTIONS ........... line ~1600+
       - renderOverview()
       - renderRoster()
       - renderForm() + charts
       - renderH2H() + charts
       - renderProps() (Props Scout)
-  10. AI PLAYS (Claude API) ...... line ~1861
+      - renderLineups() (NBA)
+      - renderEdgeFinder() (NBA)
+  10. AI PLAYS (Claude API) ...... line ~2700+
       - buildGameContext()
       - generateAIPlays()
       - renderAIPlays()
@@ -381,8 +391,21 @@ async function startAnalysis(gameInfo) {
       S.gameData.awayLineup = awayLineup;
       S.gameData.homeLineup = homeLineup;
       renderLineups(S.gameData);
+
+      // Edge Finder — runs async so it doesn't block other tabs
+      const edgesTab = document.getElementById('tabEdges');
+      edgesTab.style.display = '';
+      document.getElementById('edgesContent').innerHTML = '<div class="ef-loading">Analyzing player edges...</div>';
+      buildEdgeFinderData(S.gameData).then(edgeData => {
+        S.gameData.edgeData = edgeData;
+        renderEdgeFinder(edgeData, S.gameData);
+      }).catch(e => {
+        console.error('Edge Finder error:', e);
+        document.getElementById('edgesContent').innerHTML = '<div class="ef-empty">Edge analysis failed to load.</div>';
+      });
     } else {
       lineupsTab.style.display = 'none';
+      document.getElementById('tabEdges').style.display = 'none';
     }
 
     setStep(5);
@@ -1451,6 +1474,341 @@ function enrichLineupsWithH2HStats(awayLineup, homeLineup, summaries) {
 }
 
 /* ═══════════════════════════════════════════════════════════
+   8c. EDGE FINDER (NBA ONLY)
+   Compares H2H player performance vs season averages to
+   identify prop betting edges. Analyzes positional defense
+   from H2H boxscores and surfaces top picks per team.
+═══════════════════════════════════════════════════════════ */
+
+// Extended stat map for Edge Finder (adds 3PM to base H2H stats)
+const EDGE_STAT_MAP = {
+  'MIN': 'avgMinutes', 'PTS': 'avgPoints', 'REB': 'avgRebounds',
+  'AST': 'avgAssists', 'STL': 'avgSteals', 'BLK': 'avgBlocks',
+  'TO': 'avgTurnovers', 'FG%': 'fieldGoalPct',
+};
+// Stats to display in the edge table (subset of EDGE_STAT_MAP)
+const EDGE_DISPLAY_STATS = [
+  { key: 'avgPoints',    label: 'PTS', boxLabel: 'PTS', higher: true },
+  { key: 'avgRebounds',  label: 'REB', boxLabel: 'REB', higher: true },
+  { key: 'avgAssists',   label: 'AST', boxLabel: 'AST', higher: true },
+  { key: 'avgSteals',    label: 'STL', boxLabel: 'STL', higher: true },
+  { key: 'avgBlocks',    label: 'BLK', boxLabel: 'BLK', higher: true },
+  { key: 'avg3PM',       label: '3PM', boxLabel: null,  higher: true }, // parsed specially
+];
+
+// Season stat key mapping (ESPN season stats use different keys than boxscore)
+const SEASON_KEY_MAP = {
+  'avgPoints': 'avgPoints',
+  'avgRebounds': 'avgRebounds',
+  'avgAssists': 'avgAssists',
+  'avgSteals': 'avgSteals',
+  'avgBlocks': 'avgBlocks',
+  'avg3PM': 'threePointFieldGoalsMade',
+};
+
+// Extract all players from H2H boxscores for a given team
+function extractAllH2HPlayers(summaries, teamId) {
+  if (!summaries?.length) return [];
+  const playerMap = new Map();
+
+  for (const summary of summaries) {
+    if (!summary?.boxscore?.players) continue;
+    const teamData = summary.boxscore.players.find(p => String(p.team?.id) === String(teamId));
+    if (!teamData) continue;
+
+    for (const grp of teamData.statistics || []) {
+      const lbls = grp.labels || [];
+      for (const ath of grp.athletes || []) {
+        const id = ath.athlete?.id;
+        if (!id || ath.didNotPlay || !ath.stats?.length || ath.stats?.[0] === 'DNP' || ath.stats?.[0] === '0:00') continue;
+
+        if (!playerMap.has(id)) {
+          playerMap.set(id, {
+            athleteId: id,
+            name: ath.athlete?.displayName || ath.athlete?.shortName || '?',
+            shortName: ath.athlete?.shortName || ath.athlete?.displayName?.split(' ').pop() || '?',
+            headshotUrl: `https://a.espncdn.com/i/headshots/nba/players/full/${id}.png`,
+            gameStats: [],
+          });
+        }
+
+        // Extract stats from this game
+        const game = {};
+        lbls.forEach((lbl, idx) => {
+          if (EDGE_STAT_MAP[lbl] && ath.stats[idx] != null) {
+            const val = parseFloat(String(ath.stats[idx]));
+            if (!isNaN(val)) game[EDGE_STAT_MAP[lbl]] = val;
+          }
+        });
+        // Handle 3PM — ESPN may use '3PM' or '3PT' or 'FG3M'
+        const threeLbl = ['3PM', '3PT', 'FG3M'].find(l => lbls.includes(l));
+        if (threeLbl) {
+          const idx = lbls.indexOf(threeLbl);
+          const val = parseFloat(String(ath.stats[idx]));
+          if (!isNaN(val)) game['avg3PM'] = val;
+        }
+
+        if (Object.keys(game).length > 0) {
+          playerMap.get(id).gameStats.push(game);
+        }
+      }
+    }
+  }
+  return Array.from(playerMap.values());
+}
+
+// Normalize ESPN position abbreviation to standard 5 (PG, SG, SF, PF, C)
+function normalizePosition(pos) {
+  if (!pos) return null;
+  const p = pos.toUpperCase().trim();
+  // Exact matches
+  if (['PG', 'SG', 'SF', 'PF', 'C'].includes(p)) return p;
+  // Compound positions — take first part
+  if (p.includes('-')) {
+    const first = p.split('-')[0];
+    if (['PG', 'SG', 'SF', 'PF', 'C'].includes(first)) return first;
+  }
+  // Generic guard/forward mappings
+  if (p === 'G') return 'SG';
+  if (p === 'F') return 'SF';
+  if (p === 'G-F' || p === 'GF') return 'SG';
+  if (p === 'F-G' || p === 'FG') return 'SF';
+  if (p === 'F-C' || p === 'FC') return 'PF';
+  if (p === 'C-F' || p === 'CF') return 'C';
+  return null;
+}
+
+// Fetch ALL depth chart players (not just starters) for position mapping
+async function fetchFullDepthChart(sportKey, teamId) {
+  const sp = SPORTS.find(s => s.key === sportKey);
+  if (!sp) return [];
+  const data = await espn(`https://site.api.espn.com/apis/site/v2/sports/${sp.sport}/${sp.league}/teams/${teamId}/depthcharts`);
+  const charts = data?.depthchart || data?.items || [];
+  if (!charts.length) return [];
+
+  const posOrder = ['pg', 'sg', 'sf', 'pf', 'c'];
+  const posLabels = { pg: 'PG', sg: 'SG', sf: 'SF', pf: 'PF', c: 'C' };
+  const players = [];
+
+  for (const chart of charts) {
+    const positions = chart.positions || {};
+    for (const posKey of posOrder) {
+      const pos = positions[posKey];
+      if (!pos?.athletes?.length) continue;
+      for (const a of pos.athletes) {
+        if (a.id && !players.find(p => p.athleteId === a.id)) {
+          players.push({ athleteId: a.id, pos: posLabels[posKey] || posKey.toUpperCase() });
+        }
+      }
+    }
+  }
+  return players;
+}
+
+// Build athleteId -> position map using depth chart (exact PG/SG/SF/PF/C) + roster fallback
+function buildPositionMap(roster, depthChart) {
+  const map = new Map();
+  // First: roster positions (normalized) as fallback
+  for (const p of roster || []) {
+    const norm = normalizePosition(p.pos);
+    if (p.id && norm) map.set(String(p.id), norm);
+  }
+  // Then: depth chart overrides with exact positions (PG, SG, SF, PF, C)
+  for (const p of depthChart || []) {
+    if (p.athleteId && p.pos) map.set(String(p.athleteId), p.pos);
+  }
+  return map;
+}
+
+// Compute positional defense: what each position scores against this team in H2H
+function computePositionalDefense(summaries, defendingTeamId, attackingRosterPosMap, currentRosterIds) {
+  const posData = {};
+  const positions = ['PG', 'SG', 'SF', 'PF', 'C'];
+  positions.forEach(p => { posData[p] = { totalPts: 0, games: 0 }; });
+
+  for (const summary of summaries || []) {
+    if (!summary?.boxscore?.players) continue;
+    // Find the attacking team's boxscore (not the defending team)
+    const attackingData = summary.boxscore.players.find(p => String(p.team?.id) !== String(defendingTeamId));
+    if (!attackingData) continue;
+
+    const gamePosPts = {};
+    positions.forEach(p => { gamePosPts[p] = 0; });
+    let hasData = false;
+
+    for (const grp of attackingData.statistics || []) {
+      const lbls = grp.labels || [];
+      const ptsIdx = lbls.indexOf('PTS');
+      if (ptsIdx === -1) continue;
+
+      for (const ath of grp.athletes || []) {
+        if (!ath.athlete?.id || ath.didNotPlay) continue;
+        if (currentRosterIds && !currentRosterIds.has(String(ath.athlete.id))) continue;
+        const pos = attackingRosterPosMap.get(String(ath.athlete.id));
+        if (!pos || !posData[pos]) continue;
+        const pts = parseFloat(String(ath.stats?.[ptsIdx])) || 0;
+        gamePosPts[pos] += pts;
+        hasData = true;
+      }
+    }
+
+    if (hasData) {
+      positions.forEach(p => {
+        posData[p].totalPts += gamePosPts[p];
+        posData[p].games++;
+      });
+    }
+  }
+
+  // Compute averages and find weakest position
+  let weakest = null, maxAvg = -1;
+  positions.forEach(p => {
+    posData[p].avg = posData[p].games > 0 ? posData[p].totalPts / posData[p].games : 0;
+    if (posData[p].avg > maxAvg) { maxAvg = posData[p].avg; weakest = p; }
+  });
+  return { positions: posData, weakest };
+}
+
+// Batch fetch season stats for an array of player objects
+async function batchFetchSeasonStats(players, batchSize = 8) {
+  const results = new Map();
+  for (let i = 0; i < players.length; i += batchSize) {
+    const batch = players.slice(i, i + batchSize);
+    const stats = await Promise.all(
+      batch.map(p => fetchPlayerSeasonStats(p.athleteId))
+    );
+    batch.forEach((p, j) => { if (stats[j]) results.set(String(p.athleteId), stats[j]); });
+  }
+  return results;
+}
+
+// Compute edges for each player: H2H avg - season avg
+function computePlayerEdges(players, seasonStatsMap, positionMap, starterIds) {
+  return players.map(p => {
+    const h2hAvg = averageStats(p.gameStats);
+    if (!h2hAvg) return null;
+
+    const seasonStats = seasonStatsMap.get(String(p.athleteId));
+    const pos = positionMap.get(String(p.athleteId)) || '—';
+    const isStarter = starterIds.has(String(p.athleteId));
+
+    const edges = {};
+    let bestEdge = { stat: null, value: 0 };
+
+    EDGE_DISPLAY_STATS.forEach(cfg => {
+      const h2hVal = h2hAvg[cfg.key];
+      const seasonKey = SEASON_KEY_MAP[cfg.key];
+      const seasonVal = seasonStats?.[seasonKey];
+      const edge = (h2hVal != null && seasonVal != null) ? h2hVal - seasonVal : null;
+
+      edges[cfg.key] = { h2h: h2hVal, season: seasonVal, edge };
+
+      // Track best edge (positive = player does better in H2H)
+      if (edge != null && cfg.higher && edge > bestEdge.value) {
+        bestEdge = { stat: cfg.label, value: edge, key: cfg.key };
+      }
+    });
+
+    const rating = bestEdge.value >= 3 ? 'STRONG' : bestEdge.value >= 1.5 ? 'NOTABLE' : null;
+
+    return {
+      ...p,
+      pos, isStarter, h2hAvg, seasonStats,
+      gp: p.gameStats.length,
+      avgMinutes: h2hAvg.avgMinutes || 0,
+      edges, bestEdge, rating,
+    };
+  }).filter(Boolean);
+}
+
+// Main orchestrator: builds all Edge Finder data
+async function buildEdgeFinderData(gameData) {
+  const { gameInfo, h2hSummaries, awayRoster, homeRoster, awayLineup, homeLineup, injuries } = gameData;
+  if (!h2hSummaries?.length) return null;
+
+  // 1. Extract all players from H2H boxscores
+  const awayPlayers = extractAllH2HPlayers(h2hSummaries, gameInfo.awayTeamId);
+  const homePlayers = extractAllH2HPlayers(h2hSummaries, gameInfo.homeTeamId);
+
+  // 2. Fetch full depth charts for accurate position mapping (all players, not just starters)
+  const [awayDepth, homeDepth] = await Promise.all([
+    fetchFullDepthChart(gameInfo.sportKey, gameInfo.awayTeamId),
+    fetchFullDepthChart(gameInfo.sportKey, gameInfo.homeTeamId),
+  ]);
+  const awayPosMap = buildPositionMap(awayRoster, awayDepth);
+  const homePosMap = buildPositionMap(homeRoster, homeDepth);
+
+  // 3. Filter to CURRENT roster only (drop traded/released players) + 15+ avg minutes
+  const awayRosterIds = new Set((awayRoster || []).map(p => String(p.id)));
+  const homeRosterIds = new Set((homeRoster || []).map(p => String(p.id)));
+
+  const filterPlayers = (players, rosterIds) => players.filter(p => {
+    if (!rosterIds.has(String(p.athleteId))) return false; // not on current roster
+    const avg = p.gameStats.reduce((sum, g) => sum + (g.avgMinutes || 0), 0) / (p.gameStats.length || 1);
+    return avg >= 15;
+  });
+  const filteredAway = filterPlayers(awayPlayers, awayRosterIds);
+  const filteredHome = filterPlayers(homePlayers, homeRosterIds);
+  const allFiltered = [...filteredAway, ...filteredHome];
+
+  // 4. Batch-fetch season stats
+  const seasonStatsMap = await batchFetchSeasonStats(allFiltered);
+
+  // 5. Build starter ID sets
+  const awayStarterIds = new Set((awayLineup || []).map(p => String(p.athleteId)));
+  const homeStarterIds = new Set((homeLineup || []).map(p => String(p.athleteId)));
+
+  // 6. Compute edges
+  const awayEdges = computePlayerEdges(filteredAway, seasonStatsMap, awayPosMap, awayStarterIds);
+  const homeEdges = computePlayerEdges(filteredHome, seasonStatsMap, homePosMap, homeStarterIds);
+
+  // 7. Compute positional defense (only current roster players count)
+  const awayDefense = computePositionalDefense(h2hSummaries, gameInfo.awayTeamId, homePosMap, homeRosterIds);
+  const homeDefense = computePositionalDefense(h2hSummaries, gameInfo.homeTeamId, awayPosMap, awayRosterIds);
+
+  // 8. Find top prop per team (highest positive edge in PTS/REB/AST/STL/BLK/3PM)
+  const findTopProp = (edges, teamAbbr, opponentDefense, teamInjuries) => {
+    let best = null;
+    for (const p of edges) {
+      if (!p.bestEdge.stat || p.bestEdge.value < 1.5) continue;
+      // Check for injury
+      const inj = teamInjuries?.find(i => String(i.athleteId) === String(p.athleteId));
+      if (inj && /out/i.test(inj.status)) continue; // skip players who are OUT
+
+      const posDefense = opponentDefense?.positions?.[p.pos];
+      const injNote = inj ? `${inj.status}` : null;
+
+      if (!best || p.bestEdge.value > best.edge) {
+        best = {
+          player: p.name, team: teamAbbr, pos: p.pos,
+          stat: p.bestEdge.stat, statKey: p.bestEdge.key,
+          seasonAvg: p.edges[p.bestEdge.key]?.season,
+          h2hAvg: p.edges[p.bestEdge.key]?.h2h,
+          edge: p.bestEdge.value,
+          rating: p.rating,
+          posDefAvg: posDefense?.avg,
+          posDefWeakest: opponentDefense?.weakest === p.pos,
+          injuryNote: injNote,
+          headshot: p.headshotUrl,
+          gp: p.gp,
+        };
+      }
+    }
+    return best;
+  };
+
+  const awayTopProp = findTopProp(awayEdges, gameInfo.awayAbbr, homeDefense, injuries?.away);
+  const homeTopProp = findTopProp(homeEdges, gameInfo.homeAbbr, awayDefense, injuries?.home);
+
+  return {
+    awayEdges, homeEdges,
+    awayDefense, homeDefense,
+    awayTopProp, homeTopProp,
+    h2hGames: h2hSummaries.length,
+  };
+}
+
+/* ═══════════════════════════════════════════════════════════
    9. RENDER FUNCTIONS (ALL SPORTS)
    All renderers are sport-agnostic — they read SportConfig
    dynamically for stat categories, labels, and chart data.
@@ -2338,6 +2696,168 @@ function renderLineups({ gameInfo, awayLineup, homeLineup, injuries, lineupStats
     <!-- Matchups -->
     <div class="lu-matchups">
       ${matchupRows}
+    </div>`;
+}
+
+/* ── EDGE FINDER RENDER (NBA ONLY) ────────────────────── */
+function renderEdgeFinder(edgeData, gameData) {
+  const el = document.getElementById('edgesContent');
+  if (!el) return;
+  const { gameInfo, injuries } = gameData;
+
+  if (!edgeData) {
+    el.innerHTML = `<div class="ef-empty">No head-to-head games found between ${gameInfo.awayAbbr} and ${gameInfo.homeAbbr}.<br>Edge analysis requires H2H game data.</div>`;
+    return;
+  }
+
+  const { awayEdges, homeEdges, awayDefense, homeDefense, awayTopProp, homeTopProp, h2hGames } = edgeData;
+
+  // ── Section A: Top Props (hero cards) ──
+  const renderTopProp = (prop) => {
+    if (!prop) return '<div class="ef-no-pick">No clear edge found</div>';
+    const edgeSign = prop.edge > 0 ? '+' : '';
+    const ratingClass = prop.rating === 'STRONG' ? 'ef-badge-strong' : 'ef-badge-notable';
+    return `
+      <div class="ef-top-prop">
+        <div class="ef-top-prop-player">
+          <img class="ef-top-hs" src="${prop.headshot}" alt="${prop.player}" onerror="this.style.display='none'">
+          <div class="ef-top-info">
+            <span class="ef-top-name">${prop.player}</span>
+            <span class="ef-top-meta">${prop.team} · ${prop.pos} · ${prop.gp} H2H</span>
+          </div>
+          <span class="${ratingClass}">${prop.rating}</span>
+        </div>
+        <div class="ef-top-prop-stats">
+          <div class="ef-top-stat-col">
+            <span class="ef-top-stat-label">Prop</span>
+            <span class="ef-top-stat-val">${prop.stat} Over</span>
+          </div>
+          <div class="ef-top-stat-col">
+            <span class="ef-top-stat-label">Season</span>
+            <span class="ef-top-stat-val">${prop.seasonAvg?.toFixed(1) ?? '—'}</span>
+          </div>
+          <div class="ef-top-stat-col">
+            <span class="ef-top-stat-label">H2H Avg</span>
+            <span class="ef-top-stat-val" style="color:var(--green)">${prop.h2hAvg?.toFixed(1) ?? '—'}</span>
+          </div>
+          <div class="ef-top-stat-col">
+            <span class="ef-top-stat-label">Edge</span>
+            <span class="ef-top-stat-val ef-edge-pos">${edgeSign}${prop.edge.toFixed(1)}</span>
+          </div>
+          ${prop.posDefWeakest ? `<div class="ef-top-stat-col"><span class="ef-top-stat-label">Pos Def</span><span class="ef-top-stat-val" style="color:var(--red)">WEAK</span><span class="ef-top-stat-hint">Opponent's weakest defensive position</span></div>` : ''}
+        </div>
+        ${prop.injuryNote ? `<div class="ef-top-injury">⚠ ${prop.injuryNote}</div>` : ''}
+      </div>`;
+  };
+
+  // ── Section B: Positional Defense ──
+  const renderPosDefense = (defense, teamAbbr, teamColor) => {
+    if (!defense?.positions) return '';
+    const positions = ['PG', 'SG', 'SF', 'PF', 'C'];
+    return `
+      <div class="ef-def-card">
+        <div class="ef-def-title">How <span style="color:${teamColor}">${teamAbbr}</span> defends by position</div>
+        <div class="ef-def-subtitle">Avg points allowed to each position in ${h2hGames} H2H game${h2hGames > 1 ? 's' : ''}</div>
+        <div class="ef-def-hint">Higher = more points given up · WEAKEST = most exploitable position</div>
+        ${positions.map(pos => {
+          const d = defense.positions[pos];
+          const isWeak = defense.weakest === pos;
+          return `
+            <div class="ef-pos-row ${isWeak ? 'ef-pos-weak' : ''}">
+              <span class="ef-pos-label">${pos}</span>
+              <div class="ef-pos-bar-wrap">
+                <div class="ef-pos-bar" style="width:${Math.min(100, (d.avg / 35) * 100)}%;background:${isWeak ? 'var(--red)' : 'var(--text3)'}"></div>
+              </div>
+              <span class="ef-pos-val ${isWeak ? 'ef-pos-val-weak' : ''}">${d.avg.toFixed(1)}</span>
+              ${isWeak ? '<span class="ef-weak-tag">WEAKEST</span>' : ''}
+            </div>`;
+        }).join('')}
+      </div>`;
+  };
+
+  // ── Section C: All Player Edges Table ──
+  const allEdges = [
+    ...awayEdges.map(p => ({ ...p, teamAbbr: gameInfo.awayAbbr, teamColor: 'var(--blue)' })),
+    ...homeEdges.map(p => ({ ...p, teamAbbr: gameInfo.homeAbbr, teamColor: 'var(--lime)' })),
+  ].sort((a, b) => (b.bestEdge.value || 0) - (a.bestEdge.value || 0));
+
+  const edgeColor = (val) => {
+    if (val == null) return '';
+    if (val >= 3) return 'ef-edge-pos';
+    if (val <= -3) return 'ef-edge-neg';
+    if (val >= 1.5) return 'ef-edge-mild-pos';
+    if (val <= -1.5) return 'ef-edge-mild-neg';
+    return '';
+  };
+  const fmtEdge = (val) => {
+    if (val == null) return '—';
+    const sign = val > 0 ? '+' : '';
+    return `${sign}${val.toFixed(1)}`;
+  };
+  const fmtVal = (val) => val != null ? val.toFixed(1) : '—';
+
+  const playerRows = allEdges.map(p => `
+    <tr class="${p.isStarter ? 'ef-starter' : ''}">
+      <td class="ef-player-cell">
+        <img class="ef-row-hs" src="${p.headshotUrl}" alt="${p.shortName}" onerror="this.style.display='none'">
+        <div class="ef-row-info">
+          <span class="ef-row-name">${p.shortName}</span>
+          <span class="ef-row-meta" style="color:${p.teamColor}">${p.teamAbbr} · ${p.pos}</span>
+        </div>
+      </td>
+      <td class="ef-td-center">${p.gp}</td>
+      ${EDGE_DISPLAY_STATS.map(cfg => {
+        const e = p.edges[cfg.key];
+        return `
+          <td class="ef-td-stat">
+            <span class="ef-h2h-val">${fmtVal(e?.h2h)}</span>
+            <span class="ef-season-val">${fmtVal(e?.season)}</span>
+            <span class="ef-edge-val ${edgeColor(e?.edge)}">${fmtEdge(e?.edge)}</span>
+          </td>`;
+      }).join('')}
+      <td class="ef-td-center">${p.rating ? `<span class="${p.rating === 'STRONG' ? 'ef-badge-strong' : 'ef-badge-notable'}">${p.rating}</span>` : ''}</td>
+    </tr>`).join('');
+
+  el.innerHTML = `
+    <div class="ef-header">
+      <div class="ef-title">Edge Finder</div>
+      <div class="ef-subtitle">H2H performance vs season averages · ${h2hGames} game${h2hGames > 1 ? 's' : ''} analyzed</div>
+    </div>
+
+    <!-- Top Props -->
+    <div class="ef-section">
+      <div class="ef-section-title">Top Prop Picks</div>
+      <div class="ef-top-props-grid">
+        ${renderTopProp(awayTopProp)}
+        ${renderTopProp(homeTopProp)}
+      </div>
+    </div>
+
+    <!-- Positional Defense -->
+    <div class="ef-section">
+      <div class="ef-section-title">Positional Defense in H2H</div>
+      <div class="ef-def-grid">
+        ${renderPosDefense(awayDefense, gameInfo.awayAbbr, 'var(--blue)')}
+        ${renderPosDefense(homeDefense, gameInfo.homeAbbr, 'var(--lime)')}
+      </div>
+    </div>
+
+    <!-- All Player Edges -->
+    <div class="ef-section">
+      <div class="ef-section-title">All Player Edges</div>
+      <div class="ef-table-wrap">
+        <table class="ef-table">
+          <thead>
+            <tr>
+              <th class="ef-th-player">Player</th>
+              <th class="ef-th-center">GP</th>
+              ${EDGE_DISPLAY_STATS.map(s => `<th class="ef-th-stat">${s.label}<div class="ef-th-sub">H2H / SZN / Edge</div></th>`).join('')}
+              <th class="ef-th-center">Rating</th>
+            </tr>
+          </thead>
+          <tbody>${playerRows}</tbody>
+        </table>
+      </div>
     </div>`;
 }
 
