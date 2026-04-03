@@ -1996,3 +1996,192 @@ body {
   .ef-td-stat .ef-season-val { font-size: 8px; }
   .ef-td-stat .ef-edge-val { font-size: 9px; }
 }
+
+/* ── MLB Pitching Research ── */
+.pe-header,
+.pe-section,
+.pe-advantage {
+  background: var(--bg2);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  padding: 16px;
+  margin-bottom: 14px;
+}
+.pe-title {
+  font-family: var(--font-d);
+  font-size: 28px;
+  letter-spacing: 0.04em;
+}
+.pe-subtitle,
+.pe-hint,
+.pe-note,
+.pe-lineup-empty,
+.pe-workload-row,
+.pe-season-row,
+.pe-pitcher-meta {
+  color: var(--text3);
+}
+.pe-section-title,
+.pe-mini-title {
+  font-family: var(--font-m);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  font-size: 11px;
+  color: var(--text2);
+}
+.pe-mini-title { margin-bottom: 10px; }
+.pe-advantage {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.pe-adv-label,
+.pe-adv-team,
+.pe-adv-diff {
+  font-family: var(--font-m);
+}
+.pe-adv-team {
+  color: var(--lime);
+  font-weight: 700;
+}
+.pe-pitchers-grid,
+.pe-two-col {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+}
+.pe-pitcher-card,
+.pe-split-card,
+.pe-lineup-card,
+.pe-edge-card {
+  background: var(--bg3);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 14px;
+}
+.pe-pitcher-card {
+  border-width: 1px;
+}
+.pe-pitcher-head,
+.pe-edge-card,
+.pe-lineup-row,
+.pe-workload-row,
+.pe-season-row,
+.pe-stat-row,
+.pe-compare-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+.pe-pitcher-head {
+  justify-content: flex-start;
+  margin-bottom: 12px;
+}
+.pe-pitcher-hs {
+  width: 52px;
+  height: 52px;
+  border-radius: 50%;
+  object-fit: cover;
+  background: var(--bg4);
+}
+.pe-pitcher-info {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.pe-pitcher-name {
+  color: var(--text);
+  font-weight: 600;
+}
+.pe-pitcher-stats,
+.pe-split-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+}
+.pe-ps,
+.pe-split-grid div {
+  background: rgba(255,255,255,0.03);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 10px 8px;
+  text-align: center;
+}
+.pe-ps-val,
+.pe-split-grid strong {
+  display: block;
+  color: var(--text);
+  font-size: 14px;
+  font-weight: 700;
+}
+.pe-ps-label,
+.pe-split-grid span {
+  display: block;
+  margin-top: 4px;
+  font-size: 10px;
+  color: var(--text3);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+.pe-season-splits,
+.pe-mini-section,
+.pe-note-list,
+.pe-lineup-list {
+  margin-top: 12px;
+}
+.pe-workload-list,
+.pe-lineup-list,
+.pe-note-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.pe-lineup-row,
+.pe-workload-row,
+.pe-season-row,
+.pe-edge-card,
+.pe-stat-row {
+  font-family: var(--font-m);
+  font-size: 12px;
+}
+.pe-stat-row,
+.pe-compare-header {
+  padding: 8px 0;
+  border-bottom: 1px solid var(--border);
+}
+.pe-stat-row:last-child { border-bottom: 0; }
+.pe-sr-label,
+.pe-sr-val {
+  width: 33%;
+}
+.pe-sr-label {
+  text-align: center;
+  color: var(--text3);
+}
+.pe-sr-val:first-child { text-align: left; }
+.pe-sr-val:last-child { text-align: right; }
+.pe-rank {
+  color: var(--text3);
+  font-size: 10px;
+}
+.pe-edge-team,
+.pe-edge-detail {
+  font-family: var(--font-m);
+}
+.pe-empty {
+  padding: 18px;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  background: var(--bg2);
+  color: var(--text3);
+}
+@media (max-width: 900px) {
+  .pe-pitchers-grid,
+  .pe-two-col,
+  .pe-pitcher-stats,
+  .pe-split-grid {
+    grid-template-columns: 1fr;
+  }
+}
