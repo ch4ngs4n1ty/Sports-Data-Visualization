@@ -2054,7 +2054,8 @@ body {
 .pe-pitcher-card,
 .pe-split-card,
 .pe-lineup-card,
-.pe-edge-card {
+.pe-edge-card,
+.pe-signal-card {
   background: var(--bg3);
   border: 1px solid var(--border);
   border-radius: 12px;
@@ -2095,14 +2096,24 @@ body {
   color: var(--text);
   font-weight: 600;
 }
-.pe-pitcher-stats,
+.pe-pitcher-stats {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 6px;
+}
 .pe-split-grid {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 8px;
 }
+.pe-signal-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 6px;
+}
 .pe-ps,
-.pe-split-grid div {
+.pe-split-grid div,
+.pe-signal-grid div {
   background: rgba(255,255,255,0.03);
   border: 1px solid var(--border);
   border-radius: 10px;
@@ -2110,20 +2121,28 @@ body {
   text-align: center;
 }
 .pe-ps-val,
-.pe-split-grid strong {
+.pe-split-grid strong,
+.pe-signal-grid strong {
   display: block;
   color: var(--text);
   font-size: 14px;
   font-weight: 700;
 }
 .pe-ps-label,
-.pe-split-grid span {
+.pe-split-grid span,
+.pe-signal-grid span {
   display: block;
   margin-top: 4px;
   font-size: 10px;
   color: var(--text3);
   text-transform: uppercase;
   letter-spacing: 0.08em;
+}
+.pe-signal-name {
+  font-family: var(--font-m);
+  font-size: 13px;
+  font-weight: 700;
+  margin-bottom: 10px;
 }
 .pe-season-splits,
 .pe-mini-section,
@@ -2209,6 +2228,9 @@ body {
 .pe-edge-detail { flex: 1; color: var(--text2); font-size: 11px; }
 .pe-workload-row { font-size: 11px; padding: 4px 0; border-bottom: 1px solid var(--border); }
 .pe-workload-row:last-child { border-bottom: 0; }
+.pe-workload-opponent { display: inline-flex; align-items: center; gap: 6px; }
+.pe-workload-logo { width: 14px; height: 14px; object-fit: contain; flex: 0 0 auto; }
+.pe-workload-stats { color: var(--text2); white-space: nowrap; font-variant-numeric: tabular-nums; }
 .pe-season-row { font-size: 11px; padding: 4px 0; border-bottom: 1px solid var(--border); }
 .pe-season-row:last-child { border-bottom: 0; }
 .pe-season-row span:first-child { color: var(--text3); font-size: 10px; text-transform: uppercase; letter-spacing: 0.06em; }
@@ -2228,10 +2250,9 @@ body {
   .pe-title { font-size: 24px; }
   .pe-pitcher-hs { width: 42px; height: 42px; }
   .pe-pitcher-name { font-size: 12px; }
-  .pe-pitcher-stats, .pe-split-grid {
-    grid-template-columns: repeat(3, 1fr);
-  }
-  .pe-ps-val, .pe-split-grid strong { font-size: 12px; }
+  .pe-pitcher-stats { grid-template-columns: repeat(3, 1fr); }
+  .pe-split-grid, .pe-signal-grid { grid-template-columns: repeat(2, 1fr); }
+  .pe-ps-val, .pe-split-grid strong, .pe-signal-grid strong { font-size: 12px; }
   .pe-sr-val { font-size: 11px; }
   .pe-edge-card { flex-wrap: wrap; }
 }

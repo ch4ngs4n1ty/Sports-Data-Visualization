@@ -78,28 +78,43 @@ function extractMlbOverallTeamStats(stats) {
   if (!stats) return {};
   const g = (key) => stats[key]?.value ?? null;
   const r = (key) => stats[key]?.rank ?? null;
+  // ESPN uses varying key names across endpoints — try multiple variants
+  const first = (...keys) => { for (const k of keys) { const v = g(k); if (v != null) return v; } return null; };
+  const firstR = (...keys) => { for (const k of keys) { const v = r(k); if (v != null) return v; } return null; };
   return {
-    era: g('ERA'), eraRank: r('ERA'),
-    whip: g('WHIP'), whipRank: r('WHIP'),
-    k9: g('strikeoutsPerNineInnings'), k9Rank: r('strikeoutsPerNineInnings'),
-    bb9: g('walksPerNineInnings'), bb9Rank: r('walksPerNineInnings'),
-    battingAvg: g('avg') || g('battingAvg') || g('AVG'), battingAvgRank: r('avg') || r('battingAvg') || r('AVG'),
-    ops: g('OPS'), opsRank: r('OPS'),
-    obp: g('onBasePct') || g('OBP'),
-    strikeouts: g('strikeouts'),
-    walks: g('walks'),
-    plateAppearances: g('plateAppearances'),
-    kRate: g('strikeoutsPerPlateAppearance') || g('strikeoutRate'),
-    walkRate: g('walksPerPlateAppearance') || g('walkRate'),
+    era: first('ERA', 'earnedRunAverage'), eraRank: firstR('ERA', 'earnedRunAverage'),
+    whip: first('WHIP', 'walksAndHitsPerInningPitched'), whipRank: firstR('WHIP', 'walksAndHitsPerInningPitched'),
+    k9: first('strikeoutsPerNineInnings', 'K/9', 'strikeoutsPer9Inn'), k9Rank: firstR('strikeoutsPerNineInnings', 'K/9', 'strikeoutsPer9Inn'),
+    bb9: first('walksPerNineInnings', 'BB/9', 'basesOnBallsPerNineInnings', 'walksPer9Inn'), bb9Rank: firstR('walksPerNineInnings', 'BB/9', 'basesOnBallsPerNineInnings', 'walksPer9Inn'),
+    battingAvg: first('avg', 'battingAvg', 'AVG'), battingAvgRank: firstR('avg', 'battingAvg', 'AVG'),
+    ops: first('OPS', 'onBasePlusSlugging'), opsRank: firstR('OPS', 'onBasePlusSlugging'),
+    obp: first('onBasePct', 'OBP', 'onBasePercentage'),
+    strikeouts: first('strikeouts'),
+    walks: first('walks', 'basesOnBalls'),
+    plateAppearances: first('plateAppearances'),
+    innings: first('innings', 'inningsPitched'),
+    kRate: first('strikeoutsPerPlateAppearance', 'strikeoutRate', 'strikeoutPct'),
+    walkRate: first('walksPerPlateAppearance', 'walkRate', 'walkPct', 'basesOnBallsPct'),
   };
 }
 
 async function fetchMlbTeamSplitStats(teamId) {
   const data = await espn(`https://site.api.espn.com/apis/site/v2/sports/baseball/mlb/teams/${teamId}/statistics`);
   const splits = data?.results?.splits || [];
-  if (!Array.isArray(splits)) return {};
+  const statsCategories = data?.results?.stats?.categories || [];
+
+  // Extract overall pitching stats from the main stats block
+  const pitchingStats = {};
+  for (const cat of statsCategories) {
+    if (cat.name === 'pitching' || cat.displayName === 'Pitching') {
+      for (const stat of cat.stats || []) {
+        pitchingStats[stat.name] = { value: stat.value, rank: stat.rank ?? null };
+      }
+    }
+  }
 
   const normalizeSplit = (label) => {
+    if (!Array.isArray(splits)) return null;
     const entry = splits.find(s => s?.displayName === label || s?.name === label);
     const batting = entry?.categories?.find(c => c.name === 'batting');
     if (!batting?.stats?.length) return null;
@@ -125,6 +140,7 @@ async function fetchMlbTeamSplitStats(teamId) {
     vsRight: normalizeSplit('vs. Right'),
     home: normalizeSplit('Home'),
     away: normalizeSplit('Away'),
+    pitchingStats,
   };
 }
 
@@ -146,14 +162,27 @@ function extractRecentPitcherWorkload(gameLogData, limit = 5) {
   const eventMeta = gameLogData.events || {};
   const events = [];
 
+  const normalizeOpponent = (opponent) => {
+    if (!opponent) return { label: '?', fullName: '', logo: '' };
+    if (typeof opponent === 'string') return { label: opponent, fullName: opponent, logo: '' };
+    return {
+      label: opponent.abbreviation || opponent.shortDisplayName || opponent.displayName || '?',
+      fullName: opponent.displayName || opponent.shortDisplayName || opponent.abbreviation || '',
+      logo: opponent.logo || '',
+    };
+  };
+
   gameLogData.seasonTypes.forEach(seasonType => {
     (seasonType.categories || []).forEach(cat => {
       (cat.events || []).forEach(ev => {
         const meta = eventMeta[ev.eventId] || {};
+        const opponent = normalizeOpponent(meta.opponent);
         events.push({
           eventId: ev.eventId,
           date: meta.gameDate || '',
-          opponent: meta.opponent || '?',
+          opponent: opponent.label,
+          opponentFullName: opponent.fullName,
+          opponentLogo: opponent.logo,
           homeAway: meta.atVs || '',
           ip: ipIdx > -1 ? parseFloat(ev.stats?.[ipIdx]) || 0 : null,
           pitchCount: pIdx > -1 ? parseInt(ev.stats?.[pIdx]) || null : null,
@@ -288,8 +317,37 @@ async function buildPitchingEdgeData(gameData) {
     fetchMlbTeamSplitStats(gameInfo.homeTeamId),
   ]);
 
-  const away = extractMlbOverallTeamStats(awayStats);
-  const home = extractMlbOverallTeamStats(homeStats);
+  // Merge fetchTeamStats results with pitching-specific stats from the split endpoint
+  const mergeWithPitching = (teamStats, splitResult) => {
+    const merged = { ...(teamStats || {}) };
+    const ps = splitResult?.pitchingStats || {};
+    // Fill in pitching stats that fetchTeamStats may have missed
+    for (const [key, obj] of Object.entries(ps)) {
+      if (!merged[key]) merged[key] = obj;
+    }
+    return merged;
+  };
+  const away = extractMlbOverallTeamStats(mergeWithPitching(awayStats, awaySplits));
+  const home = extractMlbOverallTeamStats(mergeWithPitching(homeStats, homeSplits));
+
+  // Compute BB/9 and K/9 from raw stats if not directly available
+  const computeDerived = (team) => {
+    if (team.bb9 == null && team.walks != null && team.innings != null && team.innings > 0) {
+      team.bb9 = (team.walks * 9) / team.innings;
+    }
+    if (team.k9 == null && team.strikeouts != null && team.innings != null && team.innings > 0) {
+      team.k9 = (team.strikeouts * 9) / team.innings;
+    }
+    if (team.kRate == null && team.strikeouts != null && team.plateAppearances != null && team.plateAppearances > 0) {
+      team.kRate = team.strikeouts / team.plateAppearances;
+    }
+    if (team.walkRate == null && team.walks != null && team.plateAppearances != null && team.plateAppearances > 0) {
+      team.walkRate = team.walks / team.plateAppearances;
+    }
+  };
+  computeDerived(away);
+  computeDerived(home);
+
   const lineups = extractMlbLineups(summary, gameInfo);
 
   const matchupSplitFor = (teamSplits, handedness) => {
@@ -399,19 +457,24 @@ function renderPitchingEdge(data, gameData) {
   const pct = (v) => v != null ? `${(v * 100).toFixed(1)}%` : '—';
   const fmtDate = (d) => d ? new Date(d).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) : '—';
 
-  const pitcherCard = (p, teamAbbr, color) => {
+  // Unified pitcher card — profile + matchup signals + workload in one card
+  const pitcherCard = (p, teamAbbr, color, matchupSplit) => {
     if (!p) return `<div class="pe-pitcher-card"><div class="pe-no-pitcher">SP not announced</div></div>`;
     const workload = p.recentWorkload?.length ? `
       <div class="pe-mini-section">
-        <div class="pe-mini-title">Recent Workload</div>
+        <div class="pe-mini-title">Last ${p.recentWorkload.length} Starts</div>
         <div class="pe-workload-list">
           ${p.recentWorkload.map(g => `
             <div class="pe-workload-row">
-              <span>${fmtDate(g.date)} ${g.homeAway || ''} ${g.opponent || ''}</span>
-              <span>${fv(g.ip, 1)} IP · ${g.pitchCount ?? '—'} P</span>
+              <span class="pe-workload-opponent">
+                ${g.opponentLogo ? `<img class="pe-workload-logo" src="${g.opponentLogo}" alt="${g.opponentFullName || g.opponent || ''}" onerror="this.style.display='none'">` : ''}
+                ${fmtDate(g.date)} ${g.homeAway || ''} ${g.opponent || ''}
+              </span>
+              <span class="pe-workload-stats">${fv(g.ip, 1)} IP · ${g.pitchCount ?? '—'}P · ${g.strikeouts ?? '—'}K · ${g.walks ?? '—'}BB</span>
             </div>`).join('')}
         </div>
       </div>` : '';
+
     return `
       <div class="pe-pitcher-card" style="border-color:${color}">
         <div class="pe-pitcher-head">
@@ -433,33 +496,32 @@ function renderPitchingEdge(data, gameData) {
           <div class="pe-season-row"><span>Current</span><span>ERA ${fv(p.currentSeason?.era)} · WHIP ${fv(p.currentSeason?.whip)}</span></div>
           <div class="pe-season-row"><span>Previous</span><span>ERA ${fv(p.previousSeason?.era)} · WHIP ${fv(p.previousSeason?.whip)}</span></div>
         </div>
+        ${matchupSplit ? `
+          <div class="pe-mini-section">
+            <div class="pe-mini-title">Opponent ${p.throws ? `vs ${p.throws}HP` : 'Matchup'}</div>
+            <div class="pe-signal-grid">
+              <div><span>K Rate</span><strong>${pct(matchupSplit.kRate)}</strong></div>
+              <div><span>BB Rate</span><strong>${pct(matchupSplit.walkRate)}</strong></div>
+              <div><span>AVG</span><strong>${fv(matchupSplit.battingAvg, 3)}</strong></div>
+              <div><span>OPS</span><strong>${fv(matchupSplit.ops, 3)}</strong></div>
+            </div>
+          </div>` : ''}
         ${workload}
       </div>`;
   };
 
-  const statRow = (label, awayVal, homeVal, awayRank, homeRank, lower) => {
+  const statRow = (label, awayVal, homeVal, awayRank, homeRank, lower, dec = 3) => {
     const aBetter = lower ? awayVal < homeVal : awayVal > homeVal;
     const hBetter = !aBetter;
     const aColor = (awayVal != null && homeVal != null) ? (aBetter ? 'var(--green)' : 'var(--text2)') : 'var(--text2)';
     const hColor = (awayVal != null && homeVal != null) ? (hBetter ? 'var(--green)' : 'var(--text2)') : 'var(--text2)';
     return `
       <div class="pe-stat-row">
-        <span class="pe-sr-val" style="color:${aColor}">${fv(awayVal, 3)} ${rk(awayRank)}</span>
+        <span class="pe-sr-val" style="color:${aColor}">${fv(awayVal, dec)} ${rk(awayRank)}</span>
         <span class="pe-sr-label">${label}</span>
-        <span class="pe-sr-val" style="color:${hColor}">${fv(homeVal, 3)} ${rk(homeRank)}</span>
+        <span class="pe-sr-val" style="color:${hColor}">${fv(homeVal, dec)} ${rk(homeRank)}</span>
       </div>`;
   };
-
-  const handednessCard = (teamAbbr, split, starter) => `
-    <div class="pe-split-card">
-      <div class="pe-mini-title">${teamAbbr} ${starter?.throws ? `vs ${starter.throws}HP` : 'Matchup Split'}</div>
-      <div class="pe-split-grid">
-        <div><span>AVG</span><strong>${fv(split?.battingAvg, 3)}</strong></div>
-        <div><span>OPS</span><strong>${fv(split?.ops, 3)}</strong></div>
-        <div><span>OBP</span><strong>${fv(split?.obp, 3)}</strong></div>
-        <div><span>K Rate</span><strong>${pct(split?.kRate)}</strong></div>
-      </div>
-    </div>`;
 
   const lineupList = (teamName, lineup) => `
     <div class="pe-lineup-card">
@@ -473,7 +535,7 @@ function renderPitchingEdge(data, gameData) {
   el.innerHTML = `
     <div class="pe-header">
       <div class="pe-title">MLB Research</div>
-      <div class="pe-subtitle">ESPN starter profiles, handedness splits, lineup order, and prop signals</div>
+      <div class="pe-subtitle">Starting pitcher profiles, matchup splits, team stats, and prop signals</div>
     </div>
 
     ${pitchingEdge ? `
@@ -483,20 +545,12 @@ function renderPitchingEdge(data, gameData) {
         <span class="pe-adv-diff">${pitchingEdge.diff} ERA gap</span>
       </div>` : ''}
 
-    <!-- Starting Pitchers -->
+    <!-- Starting Pitchers (unified — profile + matchup signals + workload) -->
     <div class="pe-section">
       <div class="pe-section-title">Starting Pitchers</div>
       <div class="pe-pitchers-grid">
-        ${pitcherCard(pitchers.away, gameInfo.awayAbbr, 'var(--blue)')}
-        ${pitcherCard(pitchers.home, gameInfo.homeAbbr, 'var(--lime)')}
-      </div>
-    </div>
-
-    <div class="pe-section">
-      <div class="pe-section-title">Team vs Handedness</div>
-      <div class="pe-two-col">
-        ${handednessCard(gameInfo.awayAbbr, awayVsHand, pitchers.home)}
-        ${handednessCard(gameInfo.homeAbbr, homeVsHand, pitchers.away)}
+        ${pitcherCard(pitchers.away, gameInfo.awayAbbr, 'var(--blue)', homeVsHand)}
+        ${pitcherCard(pitchers.home, gameInfo.homeAbbr, 'var(--lime)', awayVsHand)}
       </div>
     </div>
 
@@ -508,10 +562,10 @@ function renderPitchingEdge(data, gameData) {
         <span></span>
         <span style="color:var(--lime)">${gameInfo.homeAbbr}</span>
       </div>
-      ${statRow('ERA', away.era, home.era, away.eraRank, home.eraRank, true)}
+      ${statRow('ERA', away.era, home.era, away.eraRank, home.eraRank, true, 2)}
       ${statRow('WHIP', away.whip, home.whip, away.whipRank, home.whipRank, true)}
-      ${statRow('K/9', away.k9, home.k9, away.k9Rank, home.k9Rank, false)}
-      ${statRow('BB/9', away.bb9, home.bb9, away.bb9Rank, home.bb9Rank, true)}
+      ${statRow('K/9', away.k9, home.k9, away.k9Rank, home.k9Rank, false, 1)}
+      ${statRow('BB/9', away.bb9, home.bb9, away.bb9Rank, home.bb9Rank, true, 1)}
     </div>
 
     <!-- Team Batting -->
@@ -526,8 +580,10 @@ function renderPitchingEdge(data, gameData) {
       ${statRow('OPS', away.ops, home.ops, away.opsRank, home.opsRank, false)}
       ${statRow('OBP', away.obp, home.obp, null, null, false)}
       ${statRow('K Rate', away.kRate, home.kRate, null, null, true)}
+      ${statRow('BB Rate', away.walkRate, home.walkRate, null, null, false)}
     </div>
 
+    <!-- Lineup Confirmation -->
     <div class="pe-section">
       <div class="pe-section-title">Lineup Confirmation</div>
       <div class="pe-two-col">
