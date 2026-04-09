@@ -1976,6 +1976,146 @@ body {
 /* Starter row accent */
 .ef-starter { border-left: 3px solid var(--lime); }
 
+/* Clickable player rows */
+.ef-row-clickable { cursor: pointer; transition: background 0.15s; }
+.ef-row-clickable:hover { background: var(--bg3); }
+
+/* ── Edge Detail Drill-Down ── */
+.ef-detail-row { background: var(--bg); }
+.ef-detail-row td { padding: 0 !important; }
+.ef-detail-cell { border: none !important; }
+.ef-detail-panel {
+  background: var(--bg2);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  margin: 4px 8px 12px;
+  padding: 16px;
+  opacity: 0;
+  transform: translateY(-8px);
+  transition: opacity 0.15s, transform 0.15s;
+}
+.ef-detail-visible .ef-detail-panel {
+  opacity: 1;
+  transform: translateY(0);
+}
+.ef-detail-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+.ef-detail-hs {
+  width: 42px;
+  height: 42px;
+  border-radius: 50%;
+  object-fit: cover;
+  background: var(--bg3);
+}
+.ef-detail-info { display: flex; flex-direction: column; gap: 2px; }
+.ef-detail-name {
+  font-family: var(--font-m);
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text);
+}
+.ef-detail-meta {
+  font-family: var(--font-m);
+  font-size: 10px;
+  color: var(--text3);
+}
+.ef-detail-controls {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+.ef-detail-label {
+  font-family: var(--font-m);
+  font-size: 10px;
+  color: var(--text3);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+.ef-detail-toggle {
+  display: flex;
+  gap: 4px;
+  flex-wrap: wrap;
+}
+.ef-detail-stat-btn {
+  font-family: var(--font-m);
+  font-size: 11px;
+  padding: 4px 10px;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: var(--bg3);
+  color: var(--text2);
+  cursor: pointer;
+  transition: all 0.12s;
+}
+.ef-detail-stat-btn:hover { border-color: var(--text3); }
+.ef-detail-stat-btn.active {
+  background: var(--lime);
+  color: var(--bg);
+  border-color: var(--lime);
+  font-weight: 600;
+}
+.ef-detail-btn-pos { border-color: rgba(35,209,139,0.4); }
+.ef-detail-btn-neg { border-color: rgba(255,61,90,0.3); }
+.ef-detail-chart-wrap {
+  height: 180px;
+  margin-bottom: 12px;
+}
+.ef-detail-summary-grid {
+  display: flex;
+  gap: 16px;
+  flex-wrap: wrap;
+  padding: 8px 0 0;
+  border-top: 1px solid var(--border);
+}
+.ef-detail-summary-item {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 60px;
+}
+.ef-detail-summary-label {
+  font-family: var(--font-m);
+  font-size: 9px;
+  color: var(--text3);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+.ef-detail-summary-val {
+  font-family: var(--font-m);
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--text);
+}
+.ef-detail-summary-hint {
+  font-size: 10px;
+  font-weight: 400;
+  color: var(--text3);
+}
+.ef-detail-section-label {
+  font-family: var(--font-d);
+  font-size: 16px;
+  letter-spacing: 1px;
+  color: var(--text2);
+  margin-bottom: 8px;
+  padding-bottom: 6px;
+  border-bottom: 1px solid var(--border);
+}
+.ef-detail-loading {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 32px 0;
+  font-family: var(--font-m);
+  font-size: 11px;
+  color: var(--text3);
+}
+
 /* ── Edge Finder Mobile ── */
 @media (max-width: 768px) {
   .ef-top-props-grid { grid-template-columns: 1fr; }

@@ -770,8 +770,8 @@ function renderEdgeFinder(edgeData, gameData) {
   };
 
   const allEdges = [
-    ...awayEdges.map(p => ({ ...p, teamAbbr: gameInfo.awayAbbr, teamColor: 'var(--blue)' })),
-    ...homeEdges.map(p => ({ ...p, teamAbbr: gameInfo.homeAbbr, teamColor: 'var(--lime)' })),
+    ...awayEdges.map(p => ({ ...p, teamAbbr: gameInfo.awayAbbr, teamColor: 'var(--blue)', teamId: gameInfo.awayTeamId })),
+    ...homeEdges.map(p => ({ ...p, teamAbbr: gameInfo.homeAbbr, teamColor: 'var(--lime)', teamId: gameInfo.homeTeamId })),
   ].sort((a, b) => (b.bestEdge.value || 0) - (a.bestEdge.value || 0));
 
   const edgeColor = (val) => {
@@ -789,8 +789,13 @@ function renderEdgeFinder(edgeData, gameData) {
   };
   const fmtVal = (val) => val != null ? val.toFixed(1) : '—';
 
-  const playerRows = allEdges.map(p => `
-    <tr class="${p.isStarter ? 'ef-starter' : ''}">
+  // Store for click handler access
+  S._edgeAllPlayers = allEdges;
+
+  const colCount = 3 + EDGE_DISPLAY_STATS.length; // player + GP + stats + rating
+
+  const playerRows = allEdges.map((p, idx) => `
+    <tr class="ef-row-clickable ${p.isStarter ? 'ef-starter' : ''}" onclick="toggleEdgeDetail(${idx}, ${colCount})">
       <td class="ef-player-cell">
         <img class="ef-row-hs" src="${p.headshotUrl}" alt="${p.shortName}" onerror="this.style.display='none'">
         <div class="ef-row-info">
@@ -852,4 +857,398 @@ function renderEdgeFinder(edgeData, gameData) {
         </table>
       </div>
     </div>`;
+}
+
+/* ── EDGE DETAIL DRILL-DOWN ───────────────────────────────
+   Click a player row → expand a detail row below with
+   bar charts showing per-game H2H stats (GP breakdown).
+─────────────────────────────────────────────────────────── */
+function destroyEdgeDetailCharts(idx) {
+  ['efDetail_', 'efLast5_'].forEach(prefix => {
+    const key = `${prefix}${idx}`;
+    if (S.charts[key]) { S.charts[key].destroy(); delete S.charts[key]; }
+  });
+}
+
+function toggleEdgeDetail(idx, colCount) {
+  const existing = document.getElementById(`ef-detail-${idx}`);
+  if (existing) {
+    destroyEdgeDetailCharts(idx);
+    existing.remove();
+    return;
+  }
+
+  // Close any other open detail
+  document.querySelectorAll('.ef-detail-row').forEach(row => {
+    const oldIdx = row.dataset.idx;
+    destroyEdgeDetailCharts(oldIdx);
+    row.remove();
+  });
+
+  const p = S._edgeAllPlayers?.[idx];
+  if (!p || !p.gameStats?.length) return;
+
+  const defaultStat = p.bestEdge?.key || EDGE_DISPLAY_STATS[0].key;
+
+  // Build H2H stat toggle buttons
+  const statBtns = EDGE_DISPLAY_STATS.map(cfg => {
+    const e = p.edges[cfg.key];
+    const active = cfg.key === defaultStat ? ' active' : '';
+    const edgeVal = e?.edge;
+    const edgeClass = edgeVal != null && edgeVal >= 1.5 ? 'ef-detail-btn-pos' : edgeVal != null && edgeVal <= -1.5 ? 'ef-detail-btn-neg' : '';
+    return `<button class="ef-detail-stat-btn${active} ${edgeClass}" onclick="event.stopPropagation(); switchEdgeDetailStat(${idx}, '${cfg.key}', this)">${cfg.label}</button>`;
+  }).join('');
+
+  // Build Last 5 stat toggle buttons (uses statCategories: pts, reb, ast)
+  const modalCats = window.SportConfig?.[S.gameData?.gameInfo?.sportKey]?.statCategories || [];
+  const defaultL5Stat = modalCats[0]?.key || 'pts';
+  const last5Btns = modalCats.map((c, i) =>
+    `<button class="ef-detail-stat-btn${i === 0 ? ' active' : ''}" onclick="event.stopPropagation(); switchEdgeLast5Stat(${idx}, '${c.key}', this)">${c.label}</button>`
+  ).join('');
+
+  // Insert detail row after the clicked row
+  const clickedRows = document.querySelectorAll('.ef-row-clickable');
+  const clickedRow = clickedRows[idx];
+  if (!clickedRow) return;
+
+  const detailRow = document.createElement('tr');
+  detailRow.id = `ef-detail-${idx}`;
+  detailRow.className = 'ef-detail-row';
+  detailRow.dataset.idx = idx;
+  detailRow.innerHTML = `
+    <td colspan="${colCount}" class="ef-detail-cell">
+      <div class="ef-detail-panel">
+        <div class="ef-detail-header">
+          <img class="ef-detail-hs" src="${p.headshotUrl}" alt="${p.shortName}" onerror="this.style.display='none'">
+          <div class="ef-detail-info">
+            <span class="ef-detail-name">${p.name}</span>
+            <span class="ef-detail-meta" style="color:${p.teamColor}">${p.teamAbbr} · ${p.pos} · ${p.gp} H2H Games</span>
+          </div>
+        </div>
+
+        <!-- H2H Games Section -->
+        <div class="ef-detail-section-label">H2H Games</div>
+        <div class="ef-detail-controls">
+          <span class="ef-detail-label">Stat</span>
+          <div class="ef-detail-toggle" id="efH2hToggle_${idx}">${statBtns}</div>
+        </div>
+        <div class="ef-detail-chart-wrap">
+          <canvas id="efDetailChart_${idx}" height="180"></canvas>
+        </div>
+        <div class="ef-detail-summary" id="efDetailSummary_${idx}"></div>
+
+        <!-- Last 5 Games Section -->
+        <div class="ef-detail-section-label" style="margin-top:16px">Last 5 Games</div>
+        <div class="ef-detail-controls">
+          <span class="ef-detail-label">Stat</span>
+          <div class="ef-detail-toggle" id="efL5Toggle_${idx}">${last5Btns}</div>
+        </div>
+        <div class="ef-detail-chart-wrap" id="efLast5Wrap_${idx}">
+          <div class="ef-detail-loading" id="efLast5Loading_${idx}">
+            <div class="mini-spin"></div> Loading last 5 games…
+          </div>
+          <canvas id="efLast5Chart_${idx}" height="180" style="display:none"></canvas>
+        </div>
+        <div class="ef-detail-summary" id="efLast5Summary_${idx}"></div>
+      </div>
+    </td>`;
+
+  clickedRow.after(detailRow);
+
+  // Animate in
+  requestAnimationFrame(() => detailRow.classList.add('ef-detail-visible'));
+
+  // Render H2H chart immediately
+  renderEdgeDetailChart(idx, defaultStat);
+
+  // Fetch last 5 games async
+  const { sportKey } = S.gameData.gameInfo;
+  fetchPlayerLastGames(sportKey, p.teamId, p.athleteId).then(games => {
+    // Store on the player object for stat switching
+    p._last5Games = games;
+    const loadEl = document.getElementById(`efLast5Loading_${idx}`);
+    const canvasEl = document.getElementById(`efLast5Chart_${idx}`);
+    if (loadEl) loadEl.style.display = 'none';
+    if (canvasEl) canvasEl.style.display = 'block';
+    if (!games?.length) {
+      const wrap = document.getElementById(`efLast5Wrap_${idx}`);
+      if (wrap) wrap.innerHTML = '<div class="ef-detail-loading" style="color:var(--text3)">No recent games found</div>';
+      return;
+    }
+    renderEdgeLast5Chart(idx, defaultL5Stat);
+  });
+}
+
+function switchEdgeDetailStat(idx, statKey, btn) {
+  btn.closest('.ef-detail-toggle').querySelectorAll('.ef-detail-stat-btn').forEach(b => b.classList.remove('active'));
+  btn.classList.add('active');
+  renderEdgeDetailChart(idx, statKey);
+}
+
+function renderEdgeDetailChart(idx, statKey) {
+  const p = S._edgeAllPlayers?.[idx];
+  if (!p) return;
+
+  const chartId = `efDetailChart_${idx}`;
+  const ctx = document.getElementById(chartId);
+  if (!ctx) return;
+  if (S.charts[`efDetail_${idx}`]) S.charts[`efDetail_${idx}`].destroy();
+
+  const games = p.gameStats;
+  const statCfg = EDGE_DISPLAY_STATS.find(c => c.key === statKey);
+  const statLabel = statCfg?.label || statKey;
+  const seasonAvg = p.edges[statKey]?.season;
+  const h2hAvg = p.edges[statKey]?.h2h;
+
+  const values = games.map(g => g[statKey] ?? 0);
+  const colors = values.map(v => {
+    if (seasonAvg == null) return 'rgba(212,245,60,0.75)';
+    return v >= seasonAvg ? 'rgba(35,209,139,0.82)' : 'rgba(255,61,90,0.72)';
+  });
+
+  const labels = games.map((_, i) => `G${i + 1}`);
+
+  S.charts[`efDetail_${idx}`] = new Chart(ctx, {
+    type: 'bar',
+    data: {
+      labels,
+      datasets: [
+        {
+          data: values,
+          backgroundColor: colors,
+          borderRadius: 5,
+          borderSkipped: false,
+          barPercentage: 0.7,
+        },
+        ...(seasonAvg != null ? [{
+          type: 'line',
+          label: 'Season Avg',
+          data: new Array(values.length).fill(parseFloat(seasonAvg.toFixed(1))),
+          borderColor: 'rgba(255,255,255,0.25)',
+          borderWidth: 1.5,
+          borderDash: [6, 4],
+          pointRadius: 0,
+          fill: false,
+          tension: 0,
+        }] : []),
+        ...(h2hAvg != null ? [{
+          type: 'line',
+          label: 'H2H Avg',
+          data: new Array(values.length).fill(parseFloat(h2hAvg.toFixed(1))),
+          borderColor: 'rgba(212,245,60,0.4)',
+          borderWidth: 1.5,
+          borderDash: [3, 3],
+          pointRadius: 0,
+          fill: false,
+          tension: 0,
+        }] : []),
+      ],
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      animation: { duration: 120 },
+      layout: { padding: { top: 24, bottom: 4 } },
+      plugins: {
+        legend: { display: false },
+        tooltip: {
+          callbacks: {
+            title: (items) => `Game ${items[0].dataIndex + 1}`,
+            label: (item) => {
+              if (item.datasetIndex === 0) return `${statLabel}: ${item.raw}`;
+              return `${item.dataset.label}: ${item.raw}`;
+            },
+          },
+          backgroundColor: 'rgba(13,13,18,0.95)',
+          borderColor: 'rgba(255,255,255,0.1)',
+          borderWidth: 1,
+          titleColor: '#f0f0fa',
+          bodyColor: '#b8bce8',
+          padding: 10,
+        },
+      },
+      scales: {
+        x: {
+          ticks: { color: '#8888b0', font: { family: 'IBM Plex Mono', size: 10 } },
+          grid: { display: false },
+          border: { display: false },
+        },
+        y: {
+          ticks: { color: '#8888b0', font: { family: 'IBM Plex Mono', size: 10 }, stepSize: 5 },
+          grid: { color: 'rgba(255,255,255,0.04)' },
+          border: { display: false },
+          beginAtZero: true,
+        },
+      },
+    },
+  });
+
+  // Update summary
+  const summaryEl = document.getElementById(`efDetailSummary_${idx}`);
+  if (summaryEl) {
+    const max = Math.max(...values);
+    const min = Math.min(...values);
+    const maxIdx = values.indexOf(max);
+    const minIdx = values.indexOf(min);
+    const edge = p.edges[statKey]?.edge;
+    const edgeSign = edge != null && edge > 0 ? '+' : '';
+    const edgeClass = edge != null && edge >= 1.5 ? 'ef-edge-pos' : edge != null && edge <= -1.5 ? 'ef-edge-neg' : '';
+
+    summaryEl.innerHTML = `
+      <div class="ef-detail-summary-grid">
+        <div class="ef-detail-summary-item">
+          <span class="ef-detail-summary-label">Season Avg</span>
+          <span class="ef-detail-summary-val">${seasonAvg != null ? seasonAvg.toFixed(1) : '—'}</span>
+        </div>
+        <div class="ef-detail-summary-item">
+          <span class="ef-detail-summary-label">H2H Avg</span>
+          <span class="ef-detail-summary-val" style="color:var(--lime)">${h2hAvg != null ? h2hAvg.toFixed(1) : '—'}</span>
+        </div>
+        <div class="ef-detail-summary-item">
+          <span class="ef-detail-summary-label">Edge</span>
+          <span class="ef-detail-summary-val ${edgeClass}">${edge != null ? edgeSign + edge.toFixed(1) : '—'}</span>
+        </div>
+        <div class="ef-detail-summary-item">
+          <span class="ef-detail-summary-label">High</span>
+          <span class="ef-detail-summary-val" style="color:var(--green)">${max} <span class="ef-detail-summary-hint">G${maxIdx + 1}</span></span>
+        </div>
+        <div class="ef-detail-summary-item">
+          <span class="ef-detail-summary-label">Low</span>
+          <span class="ef-detail-summary-val" style="color:var(--red)">${min} <span class="ef-detail-summary-hint">G${minIdx + 1}</span></span>
+        </div>
+      </div>`;
+  }
+}
+
+/* ── LAST 5 GAMES CHART (inside edge detail) ────────────── */
+function switchEdgeLast5Stat(idx, statKey, btn) {
+  btn.closest('.ef-detail-toggle').querySelectorAll('.ef-detail-stat-btn').forEach(b => b.classList.remove('active'));
+  btn.classList.add('active');
+  renderEdgeLast5Chart(idx, statKey);
+}
+
+function renderEdgeLast5Chart(idx, statKey) {
+  const p = S._edgeAllPlayers?.[idx];
+  if (!p || !p._last5Games?.length) return;
+
+  const chartKey = `efLast5_${idx}`;
+  const ctx = document.getElementById(`efLast5Chart_${idx}`);
+  if (!ctx) return;
+  if (S.charts[chartKey]) S.charts[chartKey].destroy();
+
+  const games = p._last5Games;
+  const played = games.filter(g => !g.didNotPlay);
+
+  const labels = games.map(g => {
+    const lbl = `${g.isHome ? 'vs' : '@'}${g.opponent}`;
+    return g.didNotPlay ? `${lbl}\nDNP` : lbl;
+  });
+  const values = games.map(g => g.didNotPlay ? 0 : (g[statKey] || 0));
+  const colors = games.map(g =>
+    g.didNotPlay ? 'rgba(120,120,160,0.28)' :
+    g.result === 'W' ? 'rgba(35,209,139,0.82)' : 'rgba(255,61,90,0.82)'
+  );
+  const playedVals = played.map(g => g[statKey] || 0);
+  const avg = playedVals.length ? playedVals.reduce((s, v) => s + v, 0) / playedVals.length : 0;
+
+  S.charts[chartKey] = new Chart(ctx, {
+    type: 'bar',
+    data: {
+      labels,
+      datasets: [
+        {
+          data: values,
+          backgroundColor: colors,
+          borderRadius: 5,
+          borderSkipped: false,
+          barPercentage: 0.7,
+          minBarLength: 6,
+        },
+        {
+          type: 'line',
+          label: 'L5 Avg',
+          data: new Array(values.length).fill(parseFloat(avg.toFixed(1))),
+          borderColor: 'rgba(255,255,255,0.22)',
+          borderWidth: 1.5,
+          borderDash: [5, 4],
+          pointRadius: 0,
+          fill: false,
+          tension: 0,
+        },
+      ],
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      animation: { duration: 120 },
+      layout: { padding: { top: 24, bottom: 4 } },
+      plugins: {
+        legend: { display: false },
+        tooltip: {
+          callbacks: {
+            title: (items) => {
+              const g = games[items[0].dataIndex];
+              return `${g.isHome ? 'vs' : '@'}${g.opponent}  ${g.date}`;
+            },
+            label: (item) => {
+              const g = games[item.dataIndex];
+              if (item.datasetIndex > 0) return `${item.dataset.label}: ${item.raw}`;
+              if (g.didNotPlay) return `DNP — ${g.dnpReason}`;
+              return `${item.raw} ${statKey.toUpperCase()}  (${g.result}  ${g.myScore}-${g.oppScore})`;
+            },
+          },
+          backgroundColor: 'rgba(13,13,18,0.95)',
+          borderColor: 'rgba(255,255,255,0.1)',
+          borderWidth: 1,
+          titleColor: '#f0f0fa',
+          bodyColor: '#b8bce8',
+          padding: 10,
+        },
+      },
+      scales: {
+        x: {
+          ticks: { color: '#b8bce8', font: { family: 'IBM Plex Mono', size: 10 } },
+          grid: { display: false },
+          border: { display: false },
+        },
+        y: {
+          ticks: { color: '#8888b0', font: { family: 'IBM Plex Mono', size: 10 }, stepSize: 5 },
+          grid: { color: 'rgba(255,255,255,0.04)' },
+          border: { display: false },
+          beginAtZero: true,
+        },
+      },
+    },
+  });
+
+  // Update Last 5 summary
+  const summaryEl = document.getElementById(`efLast5Summary_${idx}`);
+  if (summaryEl) {
+    if (!played.length) { summaryEl.innerHTML = ''; return; }
+    const max = Math.max(...playedVals);
+    const min = Math.min(...playedVals);
+    const maxGame = played[playedVals.indexOf(max)];
+    const minGame = played[playedVals.indexOf(min)];
+    const record = `${played.filter(g => g.result === 'W').length}-${played.filter(g => g.result === 'L').length}`;
+
+    summaryEl.innerHTML = `
+      <div class="ef-detail-summary-grid">
+        <div class="ef-detail-summary-item">
+          <span class="ef-detail-summary-label">L5 Avg</span>
+          <span class="ef-detail-summary-val">${avg.toFixed(1)}</span>
+        </div>
+        <div class="ef-detail-summary-item">
+          <span class="ef-detail-summary-label">Record</span>
+          <span class="ef-detail-summary-val">${record}</span>
+        </div>
+        <div class="ef-detail-summary-item">
+          <span class="ef-detail-summary-label">High</span>
+          <span class="ef-detail-summary-val" style="color:var(--green)">${max} <span class="ef-detail-summary-hint">${maxGame ? `${maxGame.isHome ? 'vs' : '@'}${maxGame.opponent}` : ''}</span></span>
+        </div>
+        <div class="ef-detail-summary-item">
+          <span class="ef-detail-summary-label">Low</span>
+          <span class="ef-detail-summary-val" style="color:var(--red)">${min} <span class="ef-detail-summary-hint">${minGame ? `${minGame.isHome ? 'vs' : '@'}${minGame.opponent}` : ''}</span></span>
+        </div>
+      </div>`;
+  }
 }
