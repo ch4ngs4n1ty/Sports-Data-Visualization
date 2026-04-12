@@ -106,6 +106,7 @@
       <button class="tab" data-tab="lineups" onclick="switchTab('lineups')" id="tabLineups" style="display:none">Lineups</button>
       <button class="tab" data-tab="edges" onclick="switchTab('edges')" id="tabEdges" style="display:none">Edge Finder</button>
       <button class="tab" data-tab="pitching" onclick="switchTab('pitching')" id="tabPitching" style="display:none">Pitching Edge</button>
+      <button class="tab" data-tab="lowhr" onclick="switchTab('lowhr')" id="tabLowHr" style="display:none">Low HR</button>
       <button class="tab tab-ai" data-tab="plays" onclick="switchTab('plays')">◆ AI Plays</button>
     </div>
 
@@ -158,6 +159,11 @@
       <!-- PITCHING EDGE (MLB) -->
       <div class="tab-pane hidden" id="tab-pitching">
         <div id="pitchingContent"></div>
+      </div>
+
+      <!-- LOW HR (MLB) -->
+      <div class="tab-pane hidden" id="tab-lowhr">
+        <div id="lowHrContent"></div>
       </div>
 
 <!-- AI PLAYS -->

@@ -596,3 +596,443 @@ function renderPitchingEdge(data, gameData) {
       </div>` : ''}
   `;
 }
+
+/* ═══════════════════════════════════════════════════════════
+   LOW HOME RUN MATCHUPS (MLB ONLY)
+   Strict ESPN-only implementation of the requested no-home-run strategy.
+   If any required strategy field is missing from verified ESPN payloads,
+   this module stops and returns the exact failsafe message.
+═══════════════════════════════════════════════════════════ */
+
+function lowHrDataNotFound() {
+  return 'DATA NOT FOUND';
+}
+
+function escapeHtml(text) {
+  return String(text ?? '')
+    .replaceAll('&', '&amp;')
+    .replaceAll('<', '&lt;')
+    .replaceAll('>', '&gt;');
+}
+
+function parseRatioStat(value) {
+  if (value == null || value === '') return null;
+  if (typeof value === 'number') return value;
+  if (typeof value === 'string' && value.includes('/')) {
+    const [left, right] = value.split('/').map(v => parseFloat(v));
+    if (Number.isFinite(left) && Number.isFinite(right) && right) return left / right;
+  }
+  const num = parseFloat(value);
+  return Number.isFinite(num) ? num : null;
+}
+
+function formatMetricValue(value, digits = 3, suffix = '') {
+  if (value == null) return lowHrDataNotFound();
+  return `${Number(value).toFixed(digits)}${suffix}`;
+}
+
+function findRowStat(stats, exactKeys = [], patterns = []) {
+  if (!stats) return null;
+  for (const key of exactKeys) {
+    if (stats[key] != null) return { key, value: stats[key] };
+  }
+  const entries = Object.entries(stats);
+  for (const pattern of patterns) {
+    const hit = entries.find(([key]) => pattern.test(key));
+    if (hit) return { key: hit[0], value: hit[1] };
+  }
+  return null;
+}
+
+function pickSeasonRowFromCategory(statsData, categoryNames, seasonYear) {
+  for (const categoryName of categoryNames) {
+    const cat = statsData?.categories?.find(c => c.name === categoryName);
+    const rows = parseMlbStatCategory(cat);
+    const row = pickSeasonRow(rows, seasonYear) || rows[rows.length - 1];
+    if (row) return { row, categoryName };
+  }
+  return null;
+}
+
+function buildEspnSource(url, label) {
+  return { label, url };
+}
+
+function extractLineupStatus(lineup) {
+  if (!lineup?.length || lineup.length < 9) return 'UNCONFIRMED';
+  const orders = lineup.map(player => Number(player.order)).filter(Number.isFinite).sort((a, b) => a - b);
+  return orders.length >= 9 && orders.slice(0, 9).every((order, idx) => order === idx + 1)
+    ? 'CONFIRMED'
+    : 'UNCONFIRMED';
+}
+
+function lowHrFailsafe(reason, sourceLinks = []) {
+  return {
+    error: 'DATA NOT AVAILABLE – cannot complete strategy',
+    reason,
+    source_links: sourceLinks,
+  };
+}
+
+function normalizePlayerName(name) {
+  return String(name || '')
+    .toLowerCase()
+    .replace(/\./g, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function baseballInningsToDecimal(inningsValue) {
+  if (inningsValue == null || inningsValue === '') return null;
+  if (typeof inningsValue === 'number') inningsValue = String(inningsValue);
+  const text = String(inningsValue);
+  if (!text.includes('.')) {
+    const whole = parseInt(text, 10);
+    return Number.isFinite(whole) ? whole : null;
+  }
+  const [wholePart, fracPart] = text.split('.');
+  const whole = parseInt(wholePart, 10);
+  const frac = parseInt(fracPart || '0', 10);
+  if (!Number.isFinite(whole) || !Number.isFinite(frac)) return null;
+  if (frac === 1) return whole + (1 / 3);
+  if (frac === 2) return whole + (2 / 3);
+  return parseFloat(text);
+}
+
+function extractPitcherHr9FromEspnStats(statsData) {
+  const seasonYear = getSeasonYear('mlb');
+  const pitching = pickSeasonRowFromCategory(statsData, ['pitching', 'expanded-pitching'], seasonYear);
+  const expanded = pickSeasonRowFromCategory(statsData, ['expanded-pitching', 'pitching'], seasonYear);
+  const oppBatting = pickSeasonRowFromCategory(statsData, ['opponent-batting'], seasonYear);
+  const stats = { ...(pitching?.row?.stats || {}), ...(expanded?.row?.stats || {}), ...(oppBatting?.row?.stats || {}) };
+  const hr9 = findRowStat(
+    stats,
+    ['homeRunsPerNineInnings', 'homeRunsAllowedPerNineInnings', 'HR/9'],
+    [/home.*runs?.*nine/i, /hr\/9/i]
+  );
+  if (hr9?.value != null) return parseRatioStat(hr9.value);
+  const hrAllowed = findRowStat(stats, ['homeRuns', 'HR'], [/^hr$/i, /homeRuns/i]);
+  const innings = findRowStat(stats, ['innings', 'inningsPitched', 'IP'], [/innings/i, /^ip$/i]);
+  const hrAllowedValue = parseRatioStat(hrAllowed?.value);
+  const inningsValue = baseballInningsToDecimal(innings?.value);
+  if (hrAllowedValue == null || inningsValue == null || inningsValue <= 0) return null;
+  return (hrAllowedValue * 9) / inningsValue;
+}
+
+function extractSeasonHrAbProbabilities(statsData) {
+  const seasonYear = getSeasonYear('mlb');
+  const current = pickSeasonRowFromCategory(statsData, ['career-batting', 'batting', 'expanded-batting'], seasonYear);
+  const prior = pickSeasonRowFromCategory(statsData, ['career-batting', 'batting', 'expanded-batting'], seasonYear - 1);
+  const read = (row) => {
+    const stats = row?.row?.stats || {};
+    const ab = parseRatioStat(findRowStat(stats, ['atBats', 'AB'], [/^ab$/i, /atBats/i])?.value);
+    const hr = parseRatioStat(findRowStat(stats, ['homeRuns', 'HR'], [/^hr$/i, /homeRuns/i])?.value);
+    if (ab == null || hr == null || ab <= 0) return null;
+    const hrProbability = hr / ab;
+    return {
+      ab,
+      hr,
+      hr_probability: hrProbability,
+      no_hr_probability: 1 - hrProbability,
+    };
+  };
+  return {
+    current: read(current),
+    prior: read(prior),
+  };
+}
+
+
+async function buildLowHrMatchupData(gameData) {
+  const { gameInfo } = gameData;
+  const summaryUrl = `https://site.api.espn.com/apis/site/v2/sports/baseball/mlb/summary?event=${gameInfo.eventId}`;
+  const summary = await espn(summaryUrl);
+  if (!summary?.header?.competitions?.[0]) {
+    return lowHrFailsafe('Required ESPN game summary payload is unavailable.', [
+      buildEspnSource(summaryUrl, 'Game summary'),
+    ]);
+  }
+
+  const sources = [buildEspnSource(summaryUrl, 'Game summary')];
+  const pitchers = await fetchStartingPitchers(gameInfo, summary);
+  const lineups = extractMlbLineups(summary, gameInfo);
+  const awayLineupStatus = extractLineupStatus(lineups.away);
+  const homeLineupStatus = extractLineupStatus(lineups.home);
+
+  if (!pitchers.away?.id || !pitchers.home?.id) {
+    return lowHrFailsafe('ESPN probable pitcher data is missing — check back closer to game time.', sources);
+  }
+
+  const [awayPitcherStats, homePitcherStats] = await Promise.all([
+    fetchMlbAthleteStats(pitchers.away.id),
+    fetchMlbAthleteStats(pitchers.home.id),
+  ]);
+  sources.push(
+    buildEspnSource(`https://site.web.api.espn.com/apis/common/v3/sports/baseball/mlb/athletes/${pitchers.away.id}/stats`, `${pitchers.away.name} stats`),
+    buildEspnSource(`https://site.web.api.espn.com/apis/common/v3/sports/baseball/mlb/athletes/${pitchers.home.id}/stats`, `${pitchers.home.name} stats`)
+  );
+
+  const awayHr9 = awayPitcherStats ? extractPitcherHr9FromEspnStats(awayPitcherStats) : null;
+  const homeHr9 = homePitcherStats ? extractPitcherHr9FromEspnStats(homePitcherStats) : null;
+
+  const result = {
+    game: `${gameInfo.awayAbbr} vs ${gameInfo.homeAbbr}`,
+    lineup_status: { away: awayLineupStatus, home: homeLineupStatus },
+    starting_pitchers: [
+      {
+        team: gameInfo.awayAbbr,
+        name: pitchers.away.name,
+        hr_per_9: awayHr9 != null ? Number(awayHr9.toFixed(3)) : null,
+        hr_per_9_label: awayHr9 != null ? (awayHr9 <= 1.0 ? 'LOW' : 'ELEVATED') : 'N/A',
+      },
+      {
+        team: gameInfo.homeAbbr,
+        name: pitchers.home.name,
+        hr_per_9: homeHr9 != null ? Number(homeHr9.toFixed(3)) : null,
+        hr_per_9_label: homeHr9 != null ? (homeHr9 <= 1.0 ? 'LOW' : 'ELEVATED') : 'N/A',
+      },
+    ],
+    matchups: [],
+    source_links: sources,
+  };
+
+  // Build matchups: each pitcher vs the opposing lineup
+  const sides = [
+    { pitcher: pitchers.away, hr9: awayHr9, lineup: lineups.home, lineupStatus: homeLineupStatus, team: gameInfo.awayAbbr, oppTeam: gameInfo.homeAbbr },
+    { pitcher: pitchers.home, hr9: homeHr9, lineup: lineups.away, lineupStatus: awayLineupStatus, team: gameInfo.homeAbbr, oppTeam: gameInfo.awayAbbr },
+  ];
+
+  for (const side of sides) {
+    const batters = side.lineup || [];
+    if (!batters.length) {
+      result.matchups.push({
+        pitcher: side.pitcher.name,
+        pitcher_team: side.team,
+        hr_per_9: side.hr9 != null ? Number(side.hr9.toFixed(3)) : null,
+        hr_per_9_label: side.hr9 != null ? (side.hr9 <= 1.0 ? 'LOW' : 'ELEVATED') : 'N/A',
+        opponent_team: side.oppTeam,
+        lineup_status: side.lineupStatus,
+        hitters: [],
+        note: side.lineupStatus !== 'CONFIRMED' ? 'Lineup not confirmed yet — check back closer to first pitch' : 'No lineup data available',
+      });
+      continue;
+    }
+
+    // Fetch all batter stats in parallel
+    const batterStatsList = await Promise.all(
+      batters.map(b => fetchMlbAthleteStats(b.athleteId).catch(() => null))
+    );
+
+    const hitters = [];
+    for (let i = 0; i < batters.length; i++) {
+      const batter = batters[i];
+      const stats = batterStatsList[i];
+      sources.push(buildEspnSource(
+        `https://site.web.api.espn.com/apis/common/v3/sports/baseball/mlb/athletes/${batter.athleteId}/stats`,
+        `${batter.name} stats`
+      ));
+
+      const seasonal = stats ? extractSeasonHrAbProbabilities(stats) : { current: null, prior: null };
+
+      // Use current season if available, fall back to prior
+      const curr = seasonal.current;
+      const prior = seasonal.prior;
+      const bestSeason = curr || prior;
+
+      hitters.push({
+        name: batter.name,
+        lineup_position: batter.order || '—',
+        current_season: curr ? {
+          ab: curr.ab,
+          hr: curr.hr,
+          hr_rate: Number((curr.hr_probability * 100).toFixed(2)),
+          no_hr_rate: Number((curr.no_hr_probability * 100).toFixed(2)),
+        } : null,
+        prior_season: prior ? {
+          ab: prior.ab,
+          hr: prior.hr,
+          hr_rate: Number((prior.hr_probability * 100).toFixed(2)),
+          no_hr_rate: Number((prior.no_hr_probability * 100).toFixed(2)),
+        } : null,
+        // ranking value = current season no_hr %, fallback to prior
+        rank_no_hr: bestSeason ? Number((bestSeason.no_hr_probability * 100).toFixed(2)) : null,
+      });
+    }
+
+    // Sort by no-HR probability descending (highest = safest no-HR bet)
+    hitters.sort((a, b) => (b.rank_no_hr ?? -1) - (a.rank_no_hr ?? -1));
+
+    result.matchups.push({
+      pitcher: side.pitcher.name,
+      pitcher_team: side.team,
+      hr_per_9: side.hr9 != null ? Number(side.hr9.toFixed(3)) : null,
+      hr_per_9_label: side.hr9 != null ? (side.hr9 <= 1.0 ? 'LOW' : 'ELEVATED') : 'N/A',
+      opponent_team: side.oppTeam,
+      lineup_status: side.lineupStatus,
+      hitters,
+    });
+  }
+
+  return result;
+}
+
+function renderLowHrMatchup(data, gameData) {
+  const el = document.getElementById('lowHrContent');
+  if (!el) return;
+  const esc = escapeHtml;
+
+  // ── Error state ──
+  if (!data || data.error) {
+    el.innerHTML = `
+      <div class="pe-header">
+        <div class="pe-title">Low HR Scanner</div>
+        <div class="pe-subtitle">No-home-run probability analysis from ESPN season stats</div>
+      </div>
+      <div class="lhr-verdict lhr-verdict--fail">
+        <span class="lhr-verdict-icon">&#x26A0;</span>
+        <div>
+          <div class="lhr-verdict-text">${esc(data?.error || 'Unable to load Low HR data')}</div>
+          ${data?.reason ? `<div class="lhr-verdict-sub">${esc(data.reason)}</div>` : ''}
+        </div>
+      </div>`;
+    return;
+  }
+
+  const { gameInfo } = gameData;
+
+  // ── Pitcher card ──
+  const pitcherCard = (sp) => {
+    if (!sp) return '';
+    const isLow = sp.hr_per_9_label === 'LOW';
+    const color = sp.team === gameInfo.awayAbbr ? 'var(--blue)' : 'var(--lime)';
+    return `
+      <div class="lhr-pitcher-card"${isLow ? ' style="border-color:var(--green);box-shadow:0 0 14px rgba(35,209,139,0.07)"' : ''}>
+        <div class="lhr-pitcher-head">
+          <div>
+            <div class="lhr-pitcher-name">${esc(sp.name)}</div>
+            <div class="lhr-pitcher-team" style="color:${color}">${esc(sp.team)}</div>
+          </div>
+          <span class="lhr-signal-badge ${isLow ? 'lhr-signal-badge--pass' : 'lhr-signal-badge--fail'}">${esc(sp.hr_per_9_label)}</span>
+        </div>
+        <div class="lhr-metrics-grid" style="grid-template-columns:1fr">
+          <div class="lhr-metric${isLow ? ' lhr-metric--hit' : ''}">
+            <span class="lhr-metric-val" style="font-size:22px">${sp.hr_per_9 != null ? sp.hr_per_9 : '—'}</span>
+            <span class="lhr-metric-label">HR / 9 Inn</span>
+          </div>
+        </div>
+      </div>`;
+  };
+
+  // ── Hitter row (table-style for the ranked list) ──
+  const hitterRow = (h, rank) => {
+    const noHr = h.rank_no_hr;
+    const barColor = noHr != null && noHr >= 97 ? 'var(--green)' : noHr != null && noHr >= 95 ? 'var(--lime)' : 'var(--text2)';
+    const currAb = h.current_season?.ab;
+    const currHr = h.current_season?.hr;
+    const currNoHr = h.current_season?.no_hr_rate;
+    const prevAb = h.prior_season?.ab;
+    const prevHr = h.prior_season?.hr;
+    const prevNoHr = h.prior_season?.no_hr_rate;
+
+    return `
+      <div class="lhr-hitter-card">
+        <div class="lhr-hitter-head">
+          <div style="display:flex;align-items:center;gap:8px">
+            <span class="lhr-rank-badge">${rank}</span>
+            <div>
+              <div class="lhr-hitter-name">${esc(h.name)}</div>
+              <span style="font-family:var(--font-m);font-size:10px;color:var(--text3)">Lineup #${esc(String(h.lineup_position))}</span>
+            </div>
+          </div>
+          ${noHr != null ? `<span style="font-family:var(--font-m);font-size:16px;font-weight:700;color:${barColor}">${noHr}%</span>` : ''}
+        </div>
+        ${noHr != null ? `
+        <div style="margin:8px 0 10px">
+          <div style="background:var(--bg2);border-radius:6px;overflow:hidden;height:5px;position:relative">
+            <div style="position:absolute;left:0;top:0;height:100%;width:${Math.min(noHr, 100)}%;background:${barColor};border-radius:6px"></div>
+          </div>
+        </div>` : ''}
+        <div class="lhr-hitter-stats" style="grid-template-columns:repeat(3,1fr)">
+          <div class="lhr-hitter-stat">
+            <span class="lhr-hitter-stat-val">${currAb != null ? currAb : '—'}</span>
+            <span class="lhr-hitter-stat-label">AB (curr)</span>
+          </div>
+          <div class="lhr-hitter-stat">
+            <span class="lhr-hitter-stat-val">${currHr != null ? currHr : '—'}</span>
+            <span class="lhr-hitter-stat-label">HR (curr)</span>
+          </div>
+          <div class="lhr-hitter-stat">
+            <span class="lhr-hitter-stat-val" style="color:${currNoHr != null && currNoHr >= 95 ? 'var(--green)' : 'var(--text)'}">${currNoHr != null ? currNoHr + '%' : '—'}</span>
+            <span class="lhr-hitter-stat-label">No-HR (curr)</span>
+          </div>
+          <div class="lhr-hitter-stat">
+            <span class="lhr-hitter-stat-val">${prevAb != null ? prevAb : '—'}</span>
+            <span class="lhr-hitter-stat-label">AB (prev)</span>
+          </div>
+          <div class="lhr-hitter-stat">
+            <span class="lhr-hitter-stat-val">${prevHr != null ? prevHr : '—'}</span>
+            <span class="lhr-hitter-stat-label">HR (prev)</span>
+          </div>
+          <div class="lhr-hitter-stat">
+            <span class="lhr-hitter-stat-val" style="color:${prevNoHr != null && prevNoHr >= 95 ? 'var(--green)' : 'var(--text)'}">${prevNoHr != null ? prevNoHr + '%' : '—'}</span>
+            <span class="lhr-hitter-stat-label">No-HR (prev)</span>
+          </div>
+        </div>
+      </div>`;
+  };
+
+  // ── Matchup sections ──
+  const matchupsHtml = (data.matchups || []).map(m => {
+    const isLow = m.hr_per_9_label === 'LOW';
+    const hitters = m.hitters || [];
+
+    if (m.note) {
+      return `
+        <div class="pe-section">
+          <div class="pe-section-title">${esc(m.pitcher)} (${esc(m.pitcher_team)}) vs ${esc(m.opponent_team)} Lineup</div>
+          <div class="lhr-verdict lhr-verdict--fail" style="margin-bottom:0">
+            <span class="lhr-verdict-icon">&#x23F3;</span>
+            <div>
+              <div class="lhr-verdict-text">${esc(m.note)}</div>
+            </div>
+          </div>
+        </div>`;
+    }
+
+    return `
+      <div class="pe-section">
+        <div class="pe-section-title" style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:6px">
+          <span>${esc(m.pitcher)} (${esc(m.pitcher_team)}) vs ${esc(m.opponent_team)} Lineup</span>
+          <span class="lhr-signal-badge ${isLow ? 'lhr-signal-badge--pass' : 'lhr-signal-badge--fail'}" style="font-size:9px;padding:2px 8px">HR/9: ${m.hr_per_9 != null ? m.hr_per_9 : '—'}</span>
+        </div>
+        <div class="pe-hint" style="margin-bottom:12px">Opposing batters ranked by no-home-run probability (highest first). Current and prior season splits shown.</div>
+        <div class="lhr-hitters-grid">
+          ${hitters.map((h, i) => hitterRow(h, i + 1)).join('')}
+        </div>
+      </div>`;
+  }).join('');
+
+  // ── Status pills ──
+  const statusPill = (label, status) => `<span class="lhr-pill ${status === 'CONFIRMED' ? 'lhr-pill--confirmed' : 'lhr-pill--unconfirmed'}">${esc(label)}: ${esc(status)}</span>`;
+
+  el.innerHTML = `
+    <div class="pe-header">
+      <div class="pe-title">Low HR Scanner</div>
+      <div class="pe-subtitle">Season HR rate analysis — opposing batters ranked by no-home-run probability per at-bat</div>
+    </div>
+
+    <div class="lhr-context-row">
+      ${statusPill('Away Lineup', data.lineup_status?.away || '—')}
+      ${statusPill('Home Lineup', data.lineup_status?.home || '—')}
+    </div>
+
+    <div class="pe-section">
+      <div class="pe-section-title">Starting Pitchers — HR/9</div>
+      <div class="pe-pitchers-grid">
+        ${(data.starting_pitchers || []).map(sp => pitcherCard(sp)).join('')}
+      </div>
+    </div>
+
+    ${matchupsHtml}
+  `;
+}

@@ -2475,3 +2475,282 @@ tr.ef-detail-tr td.ef-detail-cell { padding: 4px 8px 12px; border: none; }
   .pe-sr-val { font-size: 11px; }
   .pe-edge-card { flex-wrap: wrap; }
 }
+
+/* ═══════════════════════════════════════
+   LOW HR TAB
+═══════════════════════════════════════ */
+.lhr-verdict {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 14px 18px;
+  border-radius: 10px;
+  background: var(--bg3);
+  border: 1px solid var(--border);
+  margin-bottom: 14px;
+}
+.lhr-verdict-icon {
+  font-size: 22px;
+  line-height: 1;
+  flex-shrink: 0;
+}
+.lhr-verdict-text {
+  font-family: var(--font-m);
+  font-size: 13px;
+  color: var(--text);
+  font-weight: 600;
+}
+.lhr-verdict-sub {
+  font-family: var(--font-m);
+  font-size: 11px;
+  color: var(--text3);
+  margin-top: 2px;
+  font-weight: 400;
+}
+.lhr-verdict--pass {
+  border-color: var(--green);
+  box-shadow: 0 0 16px rgba(35,209,139,0.08);
+}
+.lhr-verdict--fail {
+  border-color: var(--border2);
+}
+
+/* Pitcher suppression card */
+.lhr-pitcher-card {
+  background: var(--bg3);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 16px;
+}
+.lhr-pitcher-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 12px;
+}
+.lhr-pitcher-name {
+  font-family: var(--font-m);
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--text);
+}
+.lhr-pitcher-team {
+  font-family: var(--font-m);
+  font-size: 11px;
+  font-weight: 600;
+}
+.lhr-signal-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-family: var(--font-m);
+  font-size: 11px;
+  font-weight: 700;
+  padding: 4px 10px;
+  border-radius: 20px;
+  letter-spacing: 0.03em;
+}
+.lhr-signal-badge--pass {
+  background: rgba(35,209,139,0.12);
+  color: var(--green);
+  border: 1px solid rgba(35,209,139,0.25);
+}
+.lhr-signal-badge--fail {
+  background: rgba(255,61,90,0.10);
+  color: var(--red);
+  border: 1px solid rgba(255,61,90,0.2);
+}
+
+/* Signal dots row */
+.lhr-signals {
+  display: flex;
+  gap: 6px;
+  margin-bottom: 14px;
+}
+.lhr-signal-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--border2);
+}
+.lhr-signal-dot--on {
+  background: var(--green);
+  box-shadow: 0 0 6px rgba(35,209,139,0.4);
+}
+
+/* Metric grid inside pitcher card */
+.lhr-metrics-grid {
+  display: grid;
+  grid-template-columns: repeat(5, 1fr);
+  gap: 8px;
+}
+.lhr-metric {
+  text-align: center;
+  padding: 8px 4px;
+  background: var(--bg2);
+  border-radius: 8px;
+  border: 1px solid var(--border);
+}
+.lhr-metric-val {
+  font-family: var(--font-m);
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--text);
+  display: block;
+}
+.lhr-metric-label {
+  font-family: var(--font-m);
+  font-size: 9px;
+  color: var(--text3);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  margin-top: 2px;
+  display: block;
+}
+.lhr-metric--hit {
+  border-color: rgba(35,209,139,0.3);
+}
+.lhr-metric--hit .lhr-metric-val {
+  color: var(--green);
+}
+
+/* Hitter cards */
+.lhr-hitters-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 10px;
+}
+.lhr-hitter-card {
+  background: var(--bg3);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 12px 14px;
+}
+.lhr-hitter-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 8px;
+}
+.lhr-rank-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  background: var(--bg2);
+  border: 1px solid var(--border);
+  font-family: var(--font-m);
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--text2);
+  flex-shrink: 0;
+}
+.lhr-hitter-order {
+  font-family: var(--font-m);
+  font-size: 10px;
+  color: var(--text3);
+  background: var(--bg2);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 2px 6px;
+  letter-spacing: 0.04em;
+}
+.lhr-hitter-name {
+  font-family: var(--font-m);
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--text);
+}
+.lhr-hitter-reason {
+  font-family: var(--font-m);
+  font-size: 10px;
+  color: var(--text3);
+  margin-bottom: 10px;
+  line-height: 1.4;
+}
+.lhr-hitter-stats {
+  display: grid;
+  grid-template-columns: repeat(5, 1fr);
+  gap: 4px;
+}
+.lhr-hitter-stat {
+  text-align: center;
+}
+.lhr-hitter-stat-val {
+  font-family: var(--font-m);
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--text);
+  display: block;
+}
+.lhr-hitter-stat-label {
+  font-family: var(--font-m);
+  font-size: 8px;
+  color: var(--text3);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  display: block;
+}
+
+/* Context pills (lineup status, park factor) */
+.lhr-context-row {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-bottom: 14px;
+}
+.lhr-pill {
+  font-family: var(--font-m);
+  font-size: 10px;
+  padding: 4px 10px;
+  border-radius: 20px;
+  background: var(--bg3);
+  border: 1px solid var(--border);
+  color: var(--text2);
+  letter-spacing: 0.03em;
+}
+.lhr-pill--confirmed {
+  color: var(--green);
+  border-color: rgba(35,209,139,0.25);
+}
+.lhr-pill--unconfirmed {
+  color: var(--yellow);
+  border-color: rgba(245,200,66,0.25);
+}
+.lhr-pill--verified {
+  color: var(--green);
+  border-color: rgba(35,209,139,0.25);
+}
+
+/* Source links */
+.lhr-sources {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.lhr-sources a {
+  font-family: var(--font-m);
+  font-size: 10px;
+  color: var(--text3);
+  text-decoration: none;
+  padding: 3px 8px;
+  border-radius: 4px;
+  background: var(--bg3);
+  border: 1px solid var(--border);
+  transition: color 0.15s, border-color 0.15s;
+}
+.lhr-sources a:hover {
+  color: var(--lime);
+  border-color: var(--lime);
+}
+
+@media (max-width: 900px) {
+  .lhr-hitters-grid { grid-template-columns: 1fr; }
+  .lhr-metrics-grid { grid-template-columns: repeat(3, 1fr); }
+}
+@media (max-width: 480px) {
+  .lhr-hitter-stats { grid-template-columns: repeat(3, 1fr); }
+  .lhr-metrics-grid { grid-template-columns: repeat(2, 1fr); }
+}
