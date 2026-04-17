@@ -2,3 +2,5 @@
 [4/15/2026, 10:17:45 AM EDT] PlayIQ server running on http://localhost:3001
 [4/16/2026, 10:27:58 AM EDT] PlayIQ server running on http://localhost:3001
 [4/17/2026, 12:53:13 PM EDT] PlayIQ server running on http://localhost:3001
+[4/17/2026, 3:31:47 PM EDT] PlayIQ server running on http://localhost:3001
+[UNCAUGHT] listen EADDRINUSE: address already in use :::3001

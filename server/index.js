@@ -273,14 +273,39 @@ function summarizeBvP(pitches, batterId, pitcherId) {
         ab++; // field_out, force_out, grounded_into_double_play, etc.
     }
 
-    // Track per-game results
-    if (!gameResults[gameDate]) gameResults[gameDate] = [];
-    gameResults[gameDate].push(ev);
+    // Track per-game results with full stats
+    if (!gameResults[gameDate]) {
+      gameResults[gameDate] = { pa: 0, ab: 0, h: 0, hr: 0, bb: 0, k: 0, hbp: 0, singles: 0, doubles: 0, triples: 0, sf: 0, events: [] };
+    }
+    const gm = gameResults[gameDate];
+    gm.pa++;
+    gm.events.push(ev);
+    switch (ev) {
+      case 'single': gm.singles++; gm.h++; gm.ab++; break;
+      case 'double': gm.doubles++; gm.h++; gm.ab++; break;
+      case 'triple': gm.triples++; gm.h++; gm.ab++; break;
+      case 'home_run': gm.hr++; gm.h++; gm.ab++; break;
+      case 'strikeout': case 'strikeout_double_play': gm.k++; gm.ab++; break;
+      case 'walk': case 'intent_walk': gm.bb++; break;
+      case 'hit_by_pitch': gm.hbp++; break;
+      case 'sac_fly': case 'sac_fly_double_play': gm.sf++; break;
+      case 'sac_bunt': case 'sac_bunt_double_play': break;
+      default: gm.ab++; break;
+    }
   }
 
   const avg = ab > 0 ? (hits / ab) : 0;
   const obp = (ab + bb + hbp + sf) > 0 ? ((hits + bb + hbp) / (ab + bb + hbp + sf)) : 0;
   const slg = ab > 0 ? ((singles + doubles * 2 + triples * 3 + hr * 4) / ab) : 0;
+
+  // Build per-game breakdown sorted by date descending
+  const gameByGame = Object.entries(gameResults)
+    .sort((a, b) => b[0].localeCompare(a[0]))
+    .map(([date, g]) => ({
+      date,
+      pa: g.pa, ab: g.ab, h: g.h, hr: g.hr, bb: g.bb, k: g.k,
+      avg: g.ab > 0 ? Number((g.h / g.ab).toFixed(3)) : 0,
+    }));
 
   return {
     batterId: Number(batterId),
@@ -303,6 +328,7 @@ function summarizeBvP(pitches, batterId, pitcherId) {
     ops: Number((obp + slg).toFixed(3)),
     gamesPlayed: Object.keys(gameResults).length,
     lastFaced: Object.keys(gameResults).sort().pop() || null,
+    gameByGame,
   };
 }
 
