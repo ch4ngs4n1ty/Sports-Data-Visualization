@@ -1980,6 +1980,61 @@ body {
 .ef-row-clickable { cursor: pointer; transition: background 0.15s; }
 .ef-row-clickable:hover { background: var(--bg3); }
 
+/* ── MLB Edge Finder — Prop Cards ── */
+.me-props-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 10px;
+}
+.me-prop-card {
+  background: var(--bg2);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 12px;
+}
+.me-prop-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+.me-prop-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.me-prop-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.me-prop-pill {
+  font-family: var(--font-m);
+  font-size: 10px;
+  font-weight: 600;
+  padding: 2px 8px;
+  border-radius: 4px;
+  white-space: nowrap;
+}
+.me-prop-high {
+  background: rgba(35,209,139,0.15);
+  color: var(--green);
+  border: 1px solid rgba(35,209,139,0.3);
+}
+.me-prop-medium {
+  background: rgba(245,200,66,0.12);
+  color: var(--yellow);
+  border: 1px solid rgba(245,200,66,0.25);
+}
+.me-prop-reason {
+  font-family: var(--font-m);
+  font-size: 10px;
+  color: var(--text3);
+}
+@media (max-width: 480px) {
+  .me-props-grid { grid-template-columns: 1fr; }
+}
+
 /* ── Edge Detail Drill-Down ── */
 .ef-detail-panel-outer {
   opacity: 0;

@@ -388,11 +388,14 @@ async function startAnalysis(gameInfo) {
     // MLB-only: build pitching research tab from ESPN starter, split, and lineup data
     const pitchingTab = document.getElementById('tabPitching');
     const lowHrTab = document.getElementById('tabLowHr');
+    const mlbEdgesTab = document.getElementById('tabMlbEdges');
     if (gameInfo.sportKey === 'mlb') {
       pitchingTab.style.display = '';
       lowHrTab.style.display = '';
+      mlbEdgesTab.style.display = '';
       document.getElementById('pitchingContent').innerHTML = '<div class="pe-empty">Loading MLB research...</div>';
       document.getElementById('lowHrContent').innerHTML = '<div class="pe-empty">Loading low home run matchups...</div>';
+      document.getElementById('mlbEdgesContent').innerHTML = '<div class="pe-empty">Analyzing batter edges...</div>';
       buildPitchingEdgeData(S.gameData).then(pitchingData => {
         S.gameData.pitchingData = pitchingData;
         renderPitchingEdge(pitchingData, S.gameData);
@@ -407,9 +410,17 @@ async function startAnalysis(gameInfo) {
         console.error('Low HR error:', e);
         document.getElementById('lowHrContent').innerHTML = '<div class="pe-empty">DATA NOT AVAILABLE – cannot complete strategy</div>';
       });
+      buildMlbEdgeFinderData(S.gameData).then(mlbEdgeData => {
+        S.gameData.mlbEdgeData = mlbEdgeData;
+        renderMlbEdgeFinder(mlbEdgeData, S.gameData);
+      }).catch(e => {
+        console.error('MLB Edge Finder error:', e);
+        document.getElementById('mlbEdgesContent').innerHTML = '<div class="pe-empty">Edge analysis failed to load.</div>';
+      });
     } else {
       pitchingTab.style.display = 'none';
       lowHrTab.style.display = 'none';
+      mlbEdgesTab.style.display = 'none';
     }
 
     setStep(5);

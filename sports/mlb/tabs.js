@@ -903,30 +903,45 @@ async function buildLowHrMatchupData(gameData) {
 
   // Build matchups: each pitcher vs the opposing lineup
   const sides = [
-    { pitcher: pitchers.away, hr9: awayHr9, lineup: lineups.home, lineupStatus: homeLineupStatus, team: gameInfo.awayAbbr, oppTeam: gameInfo.homeAbbr, pitcherTeamFull: gameInfo.awayFull },
-    { pitcher: pitchers.home, hr9: homeHr9, lineup: lineups.away, lineupStatus: awayLineupStatus, team: gameInfo.homeAbbr, oppTeam: gameInfo.awayAbbr, pitcherTeamFull: gameInfo.homeFull },
+    { pitcher: pitchers.away, hr9: awayHr9, lineup: lineups.home, lineupStatus: homeLineupStatus, team: gameInfo.awayAbbr, oppTeam: gameInfo.homeAbbr, pitcherTeamFull: gameInfo.awayFull, battingSide: 'home' },
+    { pitcher: pitchers.home, hr9: homeHr9, lineup: lineups.away, lineupStatus: awayLineupStatus, team: gameInfo.homeAbbr, oppTeam: gameInfo.awayAbbr, pitcherTeamFull: gameInfo.homeFull, battingSide: 'away' },
   ];
 
   // ── Fetch BvP data from backend (Baseball Savant via PlayIQ server) ──
   let bvpData = null;
   try {
-    const bvpUrl = `http://localhost:3001/api/mlb/game-bvp?away=${encodeURIComponent(gameInfo.awayFull)}&home=${encodeURIComponent(gameInfo.homeFull)}`;
+    // Extract YYYY-MM-DD from the ESPN game date so the backend checks the right day
+    const gameDate = gameInfo.date ? gameInfo.date.slice(0, 10) : '';
+    const bvpUrl = `http://localhost:3001/api/mlb/game-bvp`
+      + `?away=${encodeURIComponent(gameInfo.awayFull)}`
+      + `&home=${encodeURIComponent(gameInfo.homeFull)}`
+      + (gameDate ? `&date=${gameDate}` : '');
+    console.log('[Low HR] Fetching BvP from:', bvpUrl);
     const bvpResp = await fetch(bvpUrl);
-    if (bvpResp.ok) bvpData = await bvpResp.json();
-  } catch { /* backend not running — continue without BvP */ }
-
-  // Build a name→bvp lookup from backend data
-  function buildBvpLookup(bvpMatchups, pitcherName) {
-    if (!bvpMatchups?.length) return {};
-    const m = bvpMatchups.find(mu =>
-      normalizePlayerName(mu.pitcher?.name).includes(normalizePlayerName(pitcherName).split(' ').pop())
-    );
-    if (!m?.batters?.length) return {};
-    const lookup = {};
-    for (const b of m.batters) {
-      lookup[normalizePlayerName(b.name)] = b.bvp;
+    if (bvpResp.ok) {
+      bvpData = await bvpResp.json();
+      console.log('[Low HR] BvP data loaded:', bvpData?.matchups?.length, 'matchups, gamePk:', bvpData?.gamePk);
+    } else {
+      console.warn('[Low HR] BvP backend responded with status:', bvpResp.status);
     }
-    return lookup;
+  } catch (err) {
+    console.warn('[Low HR] BvP backend not available:', err.message);
+  }
+
+  // Build an order→bvp lookup from backend data
+  // Match by batting order (1–9) — reliable across ESPN and MLB Stats API
+  // Also build a name fallback for cases where order differs
+  function buildBvpByOrder(bvpMatchups, battingSide) {
+    if (!bvpMatchups?.length) return { byOrder: {}, byName: {}, pitcherName: null };
+    const m = bvpMatchups.find(mu => mu.side === battingSide);
+    if (!m?.batters?.length) return { byOrder: {}, byName: {}, pitcherName: null };
+    const byOrder = {};
+    const byName = {};
+    for (const b of m.batters) {
+      byOrder[b.order] = b.bvp;
+      byName[normalizePlayerName(b.name)] = b.bvp;
+    }
+    return { byOrder, byName, pitcherName: m.pitcher?.name || null };
   }
 
   for (const side of sides) {
@@ -945,8 +960,8 @@ async function buildLowHrMatchupData(gameData) {
       continue;
     }
 
-    // Build BvP lookup for this side's pitcher
-    const bvpLookup = buildBvpLookup(bvpData?.matchups, side.pitcher.name);
+    // Build BvP lookup — match by batting order first, name as fallback
+    const { byOrder: bvpByOrder, byName: bvpByName, pitcherName: bvpPitcherName } = buildBvpByOrder(bvpData?.matchups, side.battingSide);
 
     // Fetch batter season stats AND career vs pitcher's team in parallel
     const batterFetches = batters.map(b => Promise.all([
@@ -971,8 +986,10 @@ async function buildLowHrMatchupData(gameData) {
       const prior = seasonal.prior;
       const bestSeason = curr || prior;
 
-      // Match BvP from Savant backend
-      const bvp = bvpLookup[normalizePlayerName(batter.name)] || null;
+      // Match BvP — order first, name fallback, always set a value
+      const bvp = bvpByOrder[batter.order]
+        ?? bvpByName[normalizePlayerName(batter.name)]
+        ?? (bvpPitcherName ? { pa: 0, neverFaced: true } : null);
 
       hitters.push({
         name: batter.name,
@@ -1000,17 +1017,995 @@ async function buildLowHrMatchupData(gameData) {
     hitters.sort((a, b) => (b.rank_no_hr ?? -1) - (a.rank_no_hr ?? -1));
 
     result.matchups.push({
-      pitcher: side.pitcher.name,
+      pitcher: bvpPitcherName || side.pitcher.name,
       pitcher_team: side.team,
       hr_per_9: side.hr9 != null ? Number(side.hr9.toFixed(3)) : null,
       hr_per_9_label: side.hr9 != null ? (side.hr9 <= 1.0 ? 'LOW' : 'ELEVATED') : 'N/A',
       opponent_team: side.oppTeam,
       lineup_status: side.lineupStatus,
+      bvp_available: !!bvpPitcherName,
       hitters,
     });
   }
 
   return result;
+}
+
+/* ═══════════════════════════════════════════════════════════
+   MLB EDGE FINDER
+   Compares batter-vs-pitcher (Savant) performance against
+   season batting averages to surface prop betting edges.
+   Stats: AVG, K rate, HR rate, OBP, SLG
+═══════════════════════════════════════════════════════════ */
+
+const MLB_EDGE_STATS = [
+  { key: 'avg',    label: 'AVG',   format: v => v != null ? (v < 1 ? String(v.toFixed(3)).substring(1) : v.toFixed(3)) : '—', higher: true },
+  { key: 'kRate',  label: 'K%',    format: v => v != null ? (v * 100).toFixed(1) + '%' : '—', higher: false },
+  { key: 'hrRate', label: 'HR%',   format: v => v != null ? (v * 100).toFixed(1) + '%' : '—', higher: true },
+  { key: 'obp',    label: 'OBP',   format: v => v != null ? (v < 1 ? String(v.toFixed(3)).substring(1) : v.toFixed(3)) : '—', higher: true },
+  { key: 'slg',    label: 'SLG',   format: v => v != null ? (v < 1 ? String(v.toFixed(3)).substring(1) : v.toFixed(3)) : '—', higher: true },
+];
+
+function extractBatterSeasonStats(statsData) {
+  const seasonYear = getSeasonYear('mlb');
+  const battingResult = pickSeasonRowFromCategory(statsData, ['batting', 'career-batting'], seasonYear);
+  if (!battingResult) return null;
+  const stats = battingResult.row.stats || {};
+
+  const ab = parseRatioStat(findRowStat(stats, ['atBats', 'AB'], [/^ab$/i, /atBats/i])?.value);
+  const hits = parseRatioStat(findRowStat(stats, ['hits', 'H'], [/^h$/i, /^hits$/i])?.value);
+  const hr = parseRatioStat(findRowStat(stats, ['homeRuns', 'HR'], [/^hr$/i, /homeRuns/i])?.value);
+  const rbi = parseRatioStat(findRowStat(stats, ['RBIs', 'RBI'], [/^rbi/i])?.value);
+  const runs = parseRatioStat(findRowStat(stats, ['runs', 'R'], [/^runs$/i, /^r$/i])?.value);
+  const k = parseRatioStat(findRowStat(stats, ['strikeouts', 'K', 'SO'], [/strikeout/i])?.value);
+  const bb = parseRatioStat(findRowStat(stats, ['walks', 'BB'], [/^walks$/i, /^bb$/i])?.value);
+  const hbp = parseRatioStat(findRowStat(stats, ['hitByPitches', 'HBP'], [/hitByPitch/i])?.value) || 0;
+  const sf = parseRatioStat(findRowStat(stats, ['sacFlies', 'SF'], [/sacFl/i])?.value) || 0;
+  const gp = parseRatioStat(findRowStat(stats, ['gamesPlayed', 'GP', 'G'], [/games/i])?.value);
+  const pa = parseRatioStat(findRowStat(stats, ['plateAppearances', 'PA'], [/plate/i])?.value);
+  const doubles = parseRatioStat(findRowStat(stats, ['doubles', '2B'], [/doubles/i])?.value) || 0;
+  const triples = parseRatioStat(findRowStat(stats, ['triples', '3B'], [/triples/i])?.value) || 0;
+
+  const avgVal = findRowStat(stats, ['avg', 'AVG', 'battingAverage'], [/^avg$/i])?.value;
+  const avg = parseRatioStat(avgVal);
+  const opsVal = findRowStat(stats, ['OPS', 'onBasePlusSlugging'], [/^ops$/i])?.value;
+  const ops = parseRatioStat(opsVal);
+  const obpVal = findRowStat(stats, ['onBasePct', 'OBP', 'onBasePercentage'], [/^obp$/i])?.value;
+  const obpStat = parseRatioStat(obpVal);
+  const slgVal = findRowStat(stats, ['slugPct', 'SLG', 'sluggingPercentage', 'sluggingPct'], [/^slg$/i, /slugging/i])?.value;
+  const slgStat = parseRatioStat(slgVal);
+
+  // Compute derived rates
+  const kRate = (k != null && pa != null && pa > 0) ? k / pa : null;
+  const hrRate = (hr != null && ab != null && ab > 0) ? hr / ab : null;
+  const computedObp = obpStat ?? ((ab != null && bb != null && hits != null) ?
+    (hits + (bb || 0) + hbp) / (ab + (bb || 0) + hbp + sf) : null);
+  const computedSlg = slgStat ?? ((ab != null && ab > 0 && hits != null) ?
+    ((hits - (doubles || 0) - (triples || 0) - (hr || 0)) + doubles * 2 + triples * 3 + (hr || 0) * 4) / ab : null);
+
+  return {
+    gp, pa, ab, hits, hr, rbi, runs, k, bb,
+    avg: avg ?? ((ab && ab > 0) ? hits / ab : null),
+    obp: computedObp,
+    slg: computedSlg,
+    ops,
+    kRate,
+    hrRate,
+    hitsPerGame: (gp && gp > 0 && hits != null) ? hits / gp : null,
+    rbiPerGame: (gp && gp > 0 && rbi != null) ? rbi / gp : null,
+    runsPerGame: (gp && gp > 0 && runs != null) ? runs / gp : null,
+    kPerGame: (gp && gp > 0 && k != null) ? k / gp : null,
+  };
+}
+
+function computeMlbBatterEdge(bvp, season) {
+  if (!bvp || bvp.pa === 0 || !season) return null;
+
+  const edges = {};
+  let bestEdge = { stat: null, value: 0, key: null };
+
+  // AVG edge
+  const avgEdge = (bvp.avg != null && season.avg != null) ? bvp.avg - season.avg : null;
+  edges.avg = { bvp: bvp.avg, season: season.avg, edge: avgEdge };
+
+  // K rate edge (lower BvP K% = good for batter, so edge is season - bvp)
+  const bvpKRate = bvp.pa > 0 ? bvp.k / bvp.pa : null;
+  edges.kRate = { bvp: bvpKRate, season: season.kRate, edge: (bvpKRate != null && season.kRate != null) ? bvpKRate - season.kRate : null };
+
+  // HR rate edge
+  const bvpHrRate = bvp.ab > 0 ? bvp.hr / bvp.ab : null;
+  edges.hrRate = { bvp: bvpHrRate, season: season.hrRate, edge: (bvpHrRate != null && season.hrRate != null) ? bvpHrRate - season.hrRate : null };
+
+  // OBP edge
+  edges.obp = { bvp: bvp.obp, season: season.obp, edge: (bvp.obp != null && season.obp != null) ? bvp.obp - season.obp : null };
+
+  // SLG edge
+  edges.slg = { bvp: bvp.slg, season: season.slg, edge: (bvp.slg != null && season.slg != null) ? bvp.slg - season.slg : null };
+
+  // Find best edge for prop suggestion
+  for (const cfg of MLB_EDGE_STATS) {
+    const e = edges[cfg.key];
+    if (e?.edge == null) continue;
+    // For K rate, a positive edge means more strikeouts (bad for batter, good for K over)
+    const absEdge = Math.abs(e.edge);
+    if (absEdge > Math.abs(bestEdge.value)) {
+      bestEdge = { stat: cfg.label, value: e.edge, key: cfg.key };
+    }
+  }
+
+  // Rating based on absolute magnitude of best edge
+  const absBest = Math.abs(bestEdge.value);
+  let rating = null;
+  if (edges.avg?.edge != null) {
+    // Use AVG edge thresholds (.050+ = STRONG, .030+ = NOTABLE)
+    const absAvg = Math.abs(edges.avg.edge);
+    if (absAvg >= 0.080) rating = 'STRONG';
+    else if (absAvg >= 0.040) rating = 'NOTABLE';
+  }
+  // Also check K rate and HR rate for significance
+  if (!rating && edges.kRate?.edge != null) {
+    const absK = Math.abs(edges.kRate.edge);
+    if (absK >= 0.10) rating = rating || 'STRONG';
+    else if (absK >= 0.05) rating = rating || 'NOTABLE';
+  }
+  if (!rating && edges.hrRate?.edge != null) {
+    const absHR = Math.abs(edges.hrRate.edge);
+    if (absHR >= 0.04) rating = rating || 'STRONG';
+    else if (absHR >= 0.02) rating = rating || 'NOTABLE';
+  }
+
+  return { edges, bestEdge, rating };
+}
+
+function deriveEdgeProps(batter) {
+  const props = [];
+  if (!batter.edgeResult) return props;
+  const { edges } = batter.edgeResult;
+  const bvp = batter.bvp;
+  const season = batter.season;
+  if (!bvp || bvp.pa < 3) return props;
+
+  // Hits prop: BvP avg significantly higher → Hits Over
+  if (edges.avg?.edge != null && edges.avg.edge >= 0.040 && bvp.pa >= 5) {
+    props.push({
+      type: 'Hits Over',
+      confidence: edges.avg.edge >= 0.080 ? 'HIGH' : 'MEDIUM',
+      reason: `${MLB_EDGE_STATS[0].format(bvp.avg)} BvP AVG vs ${MLB_EDGE_STATS[0].format(season.avg)} season`,
+    });
+  }
+
+  // K prop: BvP K rate significantly higher → K Over (for the pitcher)
+  const bvpKRate = bvp.pa > 0 ? bvp.k / bvp.pa : null;
+  if (edges.kRate?.edge != null && edges.kRate.edge >= 0.05 && bvp.pa >= 5) {
+    props.push({
+      type: 'Strikeout Over',
+      confidence: edges.kRate.edge >= 0.10 ? 'HIGH' : 'MEDIUM',
+      reason: `${(bvpKRate * 100).toFixed(0)}% BvP K rate vs ${(season.kRate * 100).toFixed(0)}% season`,
+    });
+  }
+
+  // K Under: BvP K rate significantly lower
+  if (edges.kRate?.edge != null && edges.kRate.edge <= -0.05 && bvp.pa >= 5) {
+    props.push({
+      type: 'Strikeout Under',
+      confidence: edges.kRate.edge <= -0.10 ? 'HIGH' : 'MEDIUM',
+      reason: `${(bvpKRate * 100).toFixed(0)}% BvP K rate vs ${(season.kRate * 100).toFixed(0)}% season`,
+    });
+  }
+
+  // HR prop: BvP HR rate elevated
+  if (edges.hrRate?.edge != null && edges.hrRate.edge >= 0.02 && bvp.hr > 0) {
+    props.push({
+      type: 'HR Yes',
+      confidence: edges.hrRate.edge >= 0.04 ? 'HIGH' : 'MEDIUM',
+      reason: `${bvp.hr} HR in ${bvp.ab} AB vs this pitcher`,
+    });
+  }
+
+  return props;
+}
+
+async function buildMlbEdgeFinderData(gameData) {
+  const { gameInfo } = gameData;
+  const summary = await espn(`https://site.api.espn.com/apis/site/v2/sports/baseball/mlb/summary?event=${gameInfo.eventId}`);
+  if (!summary) return null;
+
+  const pitchers = await fetchStartingPitchers(gameInfo, summary);
+  const lineups = extractMlbLineups(summary, gameInfo);
+
+  if (!pitchers.away?.id && !pitchers.home?.id) return null;
+
+  // Fetch BvP from backend
+  let bvpData = null;
+  try {
+    const gameDate = gameInfo.date ? gameInfo.date.slice(0, 10) : '';
+    const bvpUrl = `http://localhost:3001/api/mlb/game-bvp`
+      + `?away=${encodeURIComponent(gameInfo.awayFull)}`
+      + `&home=${encodeURIComponent(gameInfo.homeFull)}`
+      + (gameDate ? `&date=${gameDate}` : '');
+    const bvpResp = await fetch(bvpUrl);
+    if (bvpResp.ok) bvpData = await bvpResp.json();
+  } catch (_) { /* backend unavailable */ }
+
+  const sides = [
+    { pitcher: pitchers.away, lineup: lineups.home, team: gameInfo.awayAbbr, oppTeam: gameInfo.homeAbbr, battingSide: 'home', teamColor: 'var(--lime)' },
+    { pitcher: pitchers.home, lineup: lineups.away, team: gameInfo.homeAbbr, oppTeam: gameInfo.awayAbbr, battingSide: 'away', teamColor: 'var(--blue)' },
+  ];
+
+  const allBatters = [];
+
+  for (const side of sides) {
+    if (!side.lineup?.length || !side.pitcher?.id) continue;
+
+    // Build BvP lookup
+    const bvpMatchup = bvpData?.matchups?.find(m => m.side === side.battingSide);
+    const bvpByOrder = {};
+    const bvpByName = {};
+    if (bvpMatchup?.batters?.length) {
+      for (const b of bvpMatchup.batters) {
+        bvpByOrder[b.order] = b.bvp;
+        bvpByName[normalizePlayerName(b.name)] = b.bvp;
+      }
+    }
+
+    // Fetch season stats for all batters in parallel
+    const seasonFetches = side.lineup.map(b => fetchMlbAthleteStats(b.athleteId).catch(() => null));
+    const seasonResults = await Promise.all(seasonFetches);
+
+    for (let i = 0; i < side.lineup.length; i++) {
+      const batter = side.lineup[i];
+      const bvp = bvpByOrder[batter.order]
+        ?? bvpByName[normalizePlayerName(batter.name)]
+        ?? null;
+      const seasonRaw = seasonResults[i];
+      const season = seasonRaw ? extractBatterSeasonStats(seasonRaw) : null;
+      const edgeResult = computeMlbBatterEdge(bvp, season);
+      const props = [];
+
+      const entry = {
+        name: batter.name,
+        shortName: batter.shortName || batter.name.split(' ').pop(),
+        athleteId: batter.athleteId,
+        order: batter.order,
+        pos: batter.pos,
+        pitcher: side.pitcher.name,
+        pitcherTeam: side.team,
+        battingTeam: side.oppTeam,
+        teamColor: side.teamColor,
+        headshotUrl: `https://a.espncdn.com/i/headshots/mlb/players/full/${batter.athleteId}.png`,
+        bvp: (bvp && bvp.pa > 0) ? bvp : null,
+        neverFaced: !bvp || bvp.pa === 0,
+        season,
+        edgeResult,
+      };
+
+      entry.props = deriveEdgeProps(entry);
+      allBatters.push(entry);
+    }
+  }
+
+  // Sort by best edge magnitude (batters with data first, then no-data)
+  allBatters.sort((a, b) => {
+    if (a.edgeResult && !b.edgeResult) return -1;
+    if (!a.edgeResult && b.edgeResult) return 1;
+    if (!a.edgeResult && !b.edgeResult) return 0;
+    const aVal = Math.abs(a.edgeResult.bestEdge.value || 0);
+    const bVal = Math.abs(b.edgeResult.bestEdge.value || 0);
+    return bVal - aVal;
+  });
+
+  // Top edge picks (best rated batter per team)
+  const topPicks = [];
+  for (const team of [gameInfo.awayAbbr, gameInfo.homeAbbr]) {
+    const pick = allBatters.find(b => b.battingTeam === team && b.edgeResult?.rating);
+    if (pick) topPicks.push(pick);
+  }
+
+  return {
+    batters: allBatters,
+    topPicks,
+    pitchers,
+    bvpAvailable: !!bvpData,
+    awayAbbr: gameInfo.awayAbbr,
+    homeAbbr: gameInfo.homeAbbr,
+  };
+}
+
+function renderMlbEdgeFinder(data, gameData) {
+  const el = document.getElementById('mlbEdgesContent');
+  if (!el) return;
+  const { gameInfo } = gameData;
+
+  if (!data || !data.batters?.length) {
+    el.innerHTML = `<div class="ef-empty">No edge data available — lineups may not be confirmed yet.</div>`;
+    return;
+  }
+
+  const edgeColor = (val, cfg) => {
+    if (val == null) return '';
+    const abs = Math.abs(val);
+    // For K rate, positive = more K's (bad for batter), so reverse color
+    const isGood = cfg.key === 'kRate' ? val < 0 : val > 0;
+    if (cfg.key === 'avg' || cfg.key === 'obp' || cfg.key === 'slg') {
+      if (abs >= 0.080) return isGood ? 'ef-edge-pos' : 'ef-edge-neg';
+      if (abs >= 0.040) return isGood ? 'ef-edge-mild-pos' : 'ef-edge-mild-neg';
+    } else if (cfg.key === 'kRate') {
+      if (abs >= 0.10) return isGood ? 'ef-edge-pos' : 'ef-edge-neg';
+      if (abs >= 0.05) return isGood ? 'ef-edge-mild-pos' : 'ef-edge-mild-neg';
+    } else if (cfg.key === 'hrRate') {
+      if (abs >= 0.04) return isGood ? 'ef-edge-pos' : 'ef-edge-neg';
+      if (abs >= 0.02) return isGood ? 'ef-edge-mild-pos' : 'ef-edge-mild-neg';
+    }
+    return '';
+  };
+
+  const fmtEdge = (val, cfg) => {
+    if (val == null) return '—';
+    if (cfg.key === 'kRate' || cfg.key === 'hrRate') {
+      const sign = val > 0 ? '+' : '';
+      return `${sign}${(val * 100).toFixed(1)}%`;
+    }
+    const sign = val > 0 ? '+' : '';
+    return `${sign}${val.toFixed(3)}`;
+  };
+
+  // Top picks section
+  const renderTopPick = (batter) => {
+    if (!batter) return '<div class="ef-no-pick">No clear edge found</div>';
+    const er = batter.edgeResult;
+    const ratingClass = er.rating === 'STRONG' ? 'ef-badge-strong' : 'ef-badge-notable';
+    const topProps = batter.props.slice(0, 2);
+    return `
+      <div class="ef-top-prop">
+        <div class="ef-top-prop-player">
+          <img class="ef-top-hs" src="${batter.headshotUrl}" alt="${batter.name}" onerror="this.style.display='none'">
+          <div class="ef-top-info">
+            <span class="ef-top-name">${batter.name}</span>
+            <span class="ef-top-meta">${batter.battingTeam} · ${batter.pos} · #${batter.order} · vs ${batter.pitcher}</span>
+          </div>
+          <span class="${ratingClass}">${er.rating}</span>
+        </div>
+        <div class="ef-top-prop-stats">
+          ${MLB_EDGE_STATS.filter(cfg => er.edges[cfg.key]?.edge != null).slice(0, 4).map(cfg => {
+            const e = er.edges[cfg.key];
+            return `
+              <div class="ef-top-stat-col">
+                <span class="ef-top-stat-label">${cfg.label}</span>
+                <span class="ef-top-stat-val ${edgeColor(e.edge, cfg)}">${fmtEdge(e.edge, cfg)}</span>
+              </div>`;
+          }).join('')}
+        </div>
+        ${topProps.length ? `
+          <div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:8px">
+            ${topProps.map(p => `<span class="me-prop-pill me-prop-${p.confidence.toLowerCase()}">${p.type}</span>`).join('')}
+          </div>` : ''}
+        ${batter.bvp ? `<div style="font-family:var(--font-m);font-size:10px;color:var(--text3);margin-top:6px">${batter.bvp.pa} PA · ${batter.bvp.hits}-${batter.bvp.ab} · ${batter.bvp.hr} HR · ${batter.bvp.k} K vs this pitcher</div>` : ''}
+      </div>`;
+  };
+
+  // Season stats summary row
+  const seasonRow = (batter) => {
+    const s = batter.season;
+    if (!s) return '<span style="color:var(--text3)">No season data</span>';
+    return `${s.gp || '—'}G · ${s.hits || '—'}H · ${s.hr || '—'}HR · ${s.rbi || '—'}RBI · ${s.k || '—'}K · ${MLB_EDGE_STATS[0].format(s.avg)} AVG`;
+  };
+
+  // Store batters for drill-down access
+  S._mlbEdgeBatters = data.batters;
+
+  // Desktop table rows
+  const playerRows = data.batters.map((b, idx) => {
+    const er = b.edgeResult;
+    const teamColorStyle = `color:${b.teamColor}`;
+    return `
+      <tr class="ef-row-clickable" onclick="toggleMlbEdgeDetail(${idx})">
+        <td class="ef-player-cell">
+          <img class="ef-row-hs" src="${b.headshotUrl}" alt="${b.shortName}" onerror="this.style.display='none'">
+          <div class="ef-row-info">
+            <span class="ef-row-name">${b.shortName}</span>
+            <span class="ef-row-meta" style="${teamColorStyle}">${b.battingTeam} · ${b.pos} · #${b.order}</span>
+          </div>
+        </td>
+        <td class="ef-td-center" style="font-family:var(--font-m);font-size:10px;color:var(--text3)">${b.neverFaced ? '—' : (b.bvp?.pa || 0)}</td>
+        <td class="ef-td-stat">
+          <span class="ef-h2h-val">${b.season?.hr ?? '—'}</span>
+          <span class="ef-season-val">${b.season?.rbi ?? '—'}</span>
+          <span class="ef-edge-val" style="color:var(--text3)">${b.season?.runs ?? '—'}</span>
+        </td>
+        <td class="ef-td-stat">
+          <span class="ef-h2h-val">${b.season?.hits ?? '—'}</span>
+          <span class="ef-season-val">${b.season?.k ?? '—'}</span>
+          <span class="ef-edge-val" style="color:var(--text3)">${b.season?.gp ?? '—'}</span>
+        </td>
+        ${MLB_EDGE_STATS.map(cfg => {
+          if (!er) return '<td class="ef-td-stat"><span class="ef-h2h-val">—</span><span class="ef-season-val">—</span><span class="ef-edge-val">—</span></td>';
+          const e = er.edges[cfg.key];
+          return `
+            <td class="ef-td-stat">
+              <span class="ef-h2h-val">${e?.bvp != null ? cfg.format(e.bvp) : '—'}</span>
+              <span class="ef-season-val">${e?.season != null ? cfg.format(e.season) : '—'}</span>
+              <span class="ef-edge-val ${edgeColor(e?.edge, cfg)}">${fmtEdge(e?.edge, cfg)}</span>
+            </td>`;
+        }).join('')}
+        <td class="ef-td-center">${er?.rating ? `<span class="${er.rating === 'STRONG' ? 'ef-badge-strong' : 'ef-badge-notable'}">${er.rating}</span>` : (b.neverFaced ? '<span style="font-size:9px;color:var(--text3)">NEW</span>' : '')}</td>
+      </tr>`;
+  }).join('');
+
+  // Mobile cards
+  const playerCards = data.batters.map((b, idx) => {
+    const er = b.edgeResult;
+    const topEdges = er ? MLB_EDGE_STATS.filter(cfg => er.edges[cfg.key]?.edge != null)
+      .sort((a, c) => Math.abs(er.edges[c.key].edge) - Math.abs(er.edges[a.key].edge))
+      .slice(0, 3) : [];
+    return `
+      <div class="ef-card" onclick="toggleMlbEdgeDetail(${idx})">
+        <div class="ef-card-left">
+          <img class="ef-card-hs" src="${b.headshotUrl}" alt="${b.shortName}" onerror="this.style.display='none'">
+          <div class="ef-card-info">
+            <span class="ef-card-name">${b.shortName}</span>
+            <span class="ef-card-meta" style="color:${b.teamColor}">${b.battingTeam} · ${b.pos} · #${b.order}</span>
+            ${b.season ? `<span class="ef-card-meta" style="color:var(--text3)">${b.season.hr ?? 0}HR · ${b.season.rbi ?? 0}RBI · ${b.season.runs ?? 0}R · ${b.season.hits ?? 0}H · ${b.season.k ?? 0}K</span>` : ''}
+          </div>
+        </div>
+        <div class="ef-card-right">
+          ${topEdges.map(cfg => {
+            const e = er.edges[cfg.key];
+            return `<span class="ef-card-edge ${edgeColor(e.edge, cfg)}">${cfg.label} ${fmtEdge(e.edge, cfg)}</span>`;
+          }).join('')}
+          ${er?.rating ? `<span class="${er.rating === 'STRONG' ? 'ef-badge-strong' : 'ef-badge-notable'}">${er.rating}</span>` : (b.neverFaced ? '<span style="font-size:9px;color:var(--text3)">NEW</span>' : '')}
+        </div>
+      </div>`;
+  }).join('');
+
+  // Prop edge summary — collect all prop suggestions
+  const allProps = data.batters.filter(b => b.props.length > 0);
+
+  const propsHtml = allProps.length ? `
+    <div class="ef-section">
+      <div class="ef-section-title">Prop Edge Summary</div>
+      <div class="pe-hint" style="margin-bottom:10px">Based on BvP vs season stat comparison — higher confidence = larger deviation from season norms</div>
+      <div class="me-props-grid">
+        ${allProps.map(b => `
+          <div class="me-prop-card">
+            <div class="me-prop-head">
+              <img class="ef-card-hs" src="${b.headshotUrl}" alt="${b.shortName}" onerror="this.style.display='none'">
+              <div>
+                <div style="font-family:var(--font-m);font-size:12px;font-weight:600;color:var(--text)">${b.shortName}</div>
+                <div style="font-family:var(--font-m);font-size:10px;color:${b.teamColor}">${b.battingTeam} vs ${b.pitcher}</div>
+              </div>
+            </div>
+            <div class="me-prop-list">
+              ${b.props.map(p => `
+                <div class="me-prop-row">
+                  <span class="me-prop-pill me-prop-${p.confidence.toLowerCase()}">${p.type}</span>
+                  <span class="me-prop-reason">${p.reason}</span>
+                </div>`).join('')}
+            </div>
+            <div style="font-family:var(--font-m);font-size:9px;color:var(--text3);margin-top:4px">${b.bvp ? `${b.bvp.pa} PA career vs pitcher` : ''}</div>
+          </div>`).join('')}
+      </div>
+    </div>` : '';
+
+  const withBvp = data.batters.filter(b => !b.neverFaced).length;
+  const neverFaced = data.batters.filter(b => b.neverFaced).length;
+
+  el.innerHTML = `
+    <div class="ef-header">
+      <div class="ef-title">MLB Edge Finder</div>
+      <div class="ef-subtitle">BvP (Savant) vs Season stats · ${withBvp} batters with history · ${neverFaced} first matchups</div>
+    </div>
+
+    ${data.topPicks.length ? `
+    <div class="ef-section">
+      <div class="ef-section-title">Top Edge Picks</div>
+      <div class="ef-top-props-grid">
+        ${data.topPicks.map(p => renderTopPick(p)).join('')}
+      </div>
+    </div>` : ''}
+
+    ${propsHtml}
+
+    <div class="ef-section">
+      <div class="ef-section-title">All Batter Edges</div>
+      <div class="ef-table-wrap ef-desktop-only">
+        <table class="ef-table">
+          <thead>
+            <tr>
+              <th class="ef-th-player">Batter</th>
+              <th class="ef-th-center">PA</th>
+              <th class="ef-th-stat">Season<div class="ef-th-sub">HR / RBI / R</div></th>
+              <th class="ef-th-stat">Season<div class="ef-th-sub">H / K / GP</div></th>
+              ${MLB_EDGE_STATS.map(s => `<th class="ef-th-stat">${s.label}<div class="ef-th-sub">BvP / SZN / Edge</div></th>`).join('')}
+              <th class="ef-th-center">Rating</th>
+            </tr>
+          </thead>
+          <tbody>${playerRows}</tbody>
+        </table>
+      </div>
+      <div class="ef-card-list ef-mobile-only">
+        ${playerCards}
+      </div>
+    </div>
+
+    ${!data.bvpAvailable ? `
+    <div class="pe-section">
+      <div class="pe-note" style="color:var(--yellow)">BvP backend unavailable — edges are based on limited data. Start the PlayIQ server for full Savant BvP integration.</div>
+    </div>` : ''}
+  `;
+}
+
+/* ── MLB EDGE DETAIL DRILL-DOWN ───────────────────────────
+   Click a player row → expand a detail panel with:
+   1. Last 5 season games (H, R, RBI, K bar charts)
+   2. Games vs this specific pitcher (H, HR, K, BB bar charts)
+─────────────────────────────────────────────────────────── */
+
+const MLB_DETAIL_STATS = [
+  { key: 'h', label: 'H', espnIdx: 'H' },
+  { key: 'r', label: 'R', espnIdx: 'R' },
+  { key: 'rbi', label: 'RBI', espnIdx: 'RBI' },
+  { key: 'k', label: 'K', espnIdx: 'SO' },
+];
+
+const MLB_BVP_GAME_STATS = [
+  { key: 'h', label: 'H' },
+  { key: 'hr', label: 'HR' },
+  { key: 'k', label: 'K' },
+  { key: 'bb', label: 'BB' },
+];
+
+function extractBatterRecentGames(gameLogData, limit = 5) {
+  if (!gameLogData?.labels?.length || !gameLogData?.seasonTypes?.length) return [];
+  const labels = gameLogData.labels;
+  const idxMap = {};
+  ['AB', 'R', 'H', '2B', '3B', 'HR', 'RBI', 'BB', 'SO', 'AVG'].forEach(lbl => {
+    const i = labels.indexOf(lbl);
+    if (i > -1) idxMap[lbl] = i;
+  });
+  const eventMeta = gameLogData.events || {};
+  const games = [];
+
+  gameLogData.seasonTypes.forEach(seasonType => {
+    (seasonType.categories || []).forEach(cat => {
+      (cat.events || []).forEach(ev => {
+        const meta = eventMeta[ev.eventId] || {};
+        const opponent = meta.opponent;
+        const oppLabel = opponent?.abbreviation || opponent?.shortDisplayName || opponent?.displayName || '?';
+        const oppLogo = opponent?.logo || '';
+        const st = ev.stats || [];
+        games.push({
+          eventId: ev.eventId,
+          date: meta.gameDate || '',
+          opponent: oppLabel,
+          opponentLogo: oppLogo,
+          homeAway: meta.atVs || '',
+          ab: idxMap.AB != null ? parseInt(st[idxMap.AB]) || 0 : 0,
+          h: idxMap.H != null ? parseInt(st[idxMap.H]) || 0 : 0,
+          r: idxMap.R != null ? parseInt(st[idxMap.R]) || 0 : 0,
+          hr: idxMap.HR != null ? parseInt(st[idxMap.HR]) || 0 : 0,
+          rbi: idxMap.RBI != null ? parseInt(st[idxMap.RBI]) || 0 : 0,
+          bb: idxMap.BB != null ? parseInt(st[idxMap.BB]) || 0 : 0,
+          k: idxMap.SO != null ? parseInt(st[idxMap.SO]) || 0 : 0,
+        });
+      });
+    });
+  });
+
+  return games
+    .filter(g => g.date)
+    .sort((a, b) => new Date(b.date) - new Date(a.date))
+    .slice(0, limit);
+}
+
+function destroyMlbEdgeCharts(idx) {
+  ['meL5_', 'meBvp_'].forEach(prefix => {
+    const key = `${prefix}${idx}`;
+    if (S.charts[key]) { S.charts[key].destroy(); delete S.charts[key]; }
+  });
+}
+
+function toggleMlbEdgeDetail(idx) {
+  const existing = document.getElementById(`me-detail-${idx}`);
+  if (existing) {
+    destroyMlbEdgeCharts(idx);
+    existing.remove();
+    return;
+  }
+
+  // Close any other open detail
+  document.querySelectorAll('[id^="me-detail-"]').forEach(el => {
+    const oldIdx = el.dataset.idx;
+    destroyMlbEdgeCharts(oldIdx);
+    el.remove();
+  });
+
+  const b = S._mlbEdgeBatters?.[idx];
+  if (!b) return;
+
+  const defaultL5Stat = 'h';
+  const defaultBvpStat = 'h';
+
+  const l5Btns = MLB_DETAIL_STATS.map((c, i) =>
+    `<button class="ef-detail-stat-btn${i === 0 ? ' active' : ''}" onclick="event.stopPropagation(); switchMlbL5Stat(${idx}, '${c.key}', this)">${c.label}</button>`
+  ).join('');
+
+  const bvpBtns = MLB_BVP_GAME_STATS.map((c, i) =>
+    `<button class="ef-detail-stat-btn${i === 0 ? ' active' : ''}" onclick="event.stopPropagation(); switchMlbBvpStat(${idx}, '${c.key}', this)">${c.label}</button>`
+  ).join('');
+
+  const hasBvpGames = b.bvp?.gameByGame?.length > 0;
+
+  const panelHTML = `
+    <div class="ef-detail-panel">
+      <div class="ef-detail-header">
+        <img class="ef-detail-hs" src="${b.headshotUrl}" alt="${b.shortName}" onerror="this.style.display='none'">
+        <div class="ef-detail-info">
+          <span class="ef-detail-name">${b.name}</span>
+          <span class="ef-detail-meta" style="color:${b.teamColor}">${b.battingTeam} · ${b.pos} · #${b.order} · vs ${b.pitcher}</span>
+        </div>
+      </div>
+
+      <!-- Season Last 5 Games -->
+      <div class="ef-detail-section-label">Last 5 Games (Season)</div>
+      <div class="ef-detail-controls">
+        <span class="ef-detail-label">Stat</span>
+        <div class="ef-detail-toggle" id="meL5Toggle_${idx}">${l5Btns}</div>
+      </div>
+      <div class="ef-detail-chart-wrap" id="meL5Wrap_${idx}">
+        <div class="ef-detail-loading" id="meL5Loading_${idx}">
+          <div class="mini-spin"></div> Loading last 5 games…
+        </div>
+        <canvas id="meL5Chart_${idx}" height="140" style="display:none"></canvas>
+      </div>
+      <div class="ef-detail-summary" id="meL5Summary_${idx}"></div>
+
+      <!-- Games vs This Pitcher (BvP) -->
+      <div class="ef-detail-section-label" style="margin-top:10px">Games vs ${escapeHtml(b.pitcher)} (Savant)</div>
+      <div class="ef-detail-controls">
+        <span class="ef-detail-label">Stat</span>
+        <div class="ef-detail-toggle" id="meBvpToggle_${idx}">${bvpBtns}</div>
+      </div>
+      <div class="ef-detail-chart-wrap" id="meBvpWrap_${idx}">
+        ${hasBvpGames
+          ? `<canvas id="meBvpChart_${idx}" height="140"></canvas>`
+          : `<div class="ef-detail-loading" style="color:var(--text3)">${b.neverFaced ? 'These two have never faced each other' : 'No per-game BvP data available'}</div>`
+        }
+      </div>
+      <div class="ef-detail-summary" id="meBvpSummary_${idx}"></div>
+    </div>`;
+
+  // Insert into DOM
+  const edgesEl = document.getElementById('mlbEdgesContent');
+  if (!edgesEl) return;
+  const cardList = edgesEl.querySelector('.ef-card-list');
+  const isMobile = cardList && cardList.offsetParent !== null;
+
+  let detailEl;
+  if (isMobile) {
+    const card = edgesEl.querySelectorAll('.ef-card')[idx];
+    if (!card) return;
+    detailEl = document.createElement('div');
+    detailEl.id = `me-detail-${idx}`;
+    detailEl.className = 'ef-detail-panel-outer';
+    detailEl.dataset.idx = idx;
+    detailEl.innerHTML = panelHTML;
+    card.after(detailEl);
+  } else {
+    const clickedRow = edgesEl.querySelectorAll('.ef-row-clickable')[idx];
+    if (!clickedRow) return;
+    const colCount = clickedRow.cells.length;
+    const tr = document.createElement('tr');
+    tr.id = `me-detail-${idx}`;
+    tr.className = 'ef-detail-panel-outer ef-detail-tr';
+    tr.dataset.idx = idx;
+    tr.innerHTML = `<td colspan="${colCount}" class="ef-detail-cell">${panelHTML}</td>`;
+    clickedRow.after(tr);
+    detailEl = tr;
+  }
+
+  requestAnimationFrame(() => detailEl.classList.add('ef-detail-visible'));
+  detailEl.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+
+  // Render BvP chart immediately if data exists
+  if (hasBvpGames) {
+    renderMlbBvpChart(idx, defaultBvpStat);
+  }
+
+  // Fetch last 5 games async from ESPN gamelog
+  fetchMlbAthleteGameLog(b.athleteId).then(gameLogData => {
+    const games = extractBatterRecentGames(gameLogData);
+    b._last5Games = games;
+    const loadEl = document.getElementById(`meL5Loading_${idx}`);
+    const canvasEl = document.getElementById(`meL5Chart_${idx}`);
+    if (loadEl) loadEl.style.display = 'none';
+    if (canvasEl) canvasEl.style.display = 'block';
+    if (!games?.length) {
+      const wrap = document.getElementById(`meL5Wrap_${idx}`);
+      if (wrap) wrap.innerHTML = '<div class="ef-detail-loading" style="color:var(--text3)">No recent games found</div>';
+      return;
+    }
+    renderMlbL5Chart(idx, defaultL5Stat);
+  }).catch(() => {
+    const wrap = document.getElementById(`meL5Wrap_${idx}`);
+    if (wrap) wrap.innerHTML = '<div class="ef-detail-loading" style="color:var(--text3)">Failed to load game log</div>';
+  });
+}
+
+function switchMlbL5Stat(idx, statKey, btn) {
+  btn.closest('.ef-detail-toggle').querySelectorAll('.ef-detail-stat-btn').forEach(b => b.classList.remove('active'));
+  btn.classList.add('active');
+  renderMlbL5Chart(idx, statKey);
+}
+
+function switchMlbBvpStat(idx, statKey, btn) {
+  btn.closest('.ef-detail-toggle').querySelectorAll('.ef-detail-stat-btn').forEach(b => b.classList.remove('active'));
+  btn.classList.add('active');
+  renderMlbBvpChart(idx, statKey);
+}
+
+function renderMlbL5Chart(idx, statKey) {
+  const b = S._mlbEdgeBatters?.[idx];
+  if (!b || !b._last5Games?.length) return;
+
+  const chartKey = `meL5_${idx}`;
+  const ctx = document.getElementById(`meL5Chart_${idx}`);
+  if (!ctx) return;
+  if (S.charts[chartKey]) S.charts[chartKey].destroy();
+
+  const games = b._last5Games;
+  const statCfg = MLB_DETAIL_STATS.find(c => c.key === statKey);
+  const statLabel = statCfg?.label || statKey;
+
+  const values = games.map(g => g[statKey] || 0);
+  const labels = games.map(g => {
+    const d = g.date ? new Date(g.date).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) : '?';
+    return `${g.homeAway || ''}${g.opponent}\n${d}`;
+  });
+  const avg = values.length ? values.reduce((s, v) => s + v, 0) / values.length : 0;
+  const colors = values.map(v => v > avg ? 'rgba(35,209,139,0.82)' : 'rgba(77,139,255,0.75)');
+
+  S.charts[chartKey] = new Chart(ctx, {
+    type: 'bar',
+    data: {
+      labels,
+      datasets: [
+        {
+          data: values,
+          backgroundColor: colors,
+          borderRadius: 5,
+          borderSkipped: false,
+          barPercentage: 0.5,
+          maxBarThickness: 48,
+          minBarLength: 4,
+        },
+        {
+          type: 'line',
+          label: 'L5 Avg',
+          data: new Array(values.length).fill(parseFloat(avg.toFixed(1))),
+          borderColor: 'rgba(255,255,255,0.18)',
+          borderWidth: 1,
+          pointRadius: 0,
+          fill: false,
+          tension: 0,
+        },
+      ],
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      animation: { duration: 120 },
+      layout: { padding: { top: 6, bottom: 2 } },
+      plugins: {
+        legend: { display: false },
+        tooltip: {
+          callbacks: {
+            title: (items) => {
+              const g = games[items[0].dataIndex];
+              const d = g.date ? new Date(g.date).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) : '';
+              return `${g.homeAway || ''}${g.opponent}  ${d}`;
+            },
+            label: (item) => {
+              if (item.datasetIndex > 0) return `${item.dataset.label}: ${item.raw}`;
+              const g = games[item.dataIndex];
+              return `${statLabel}: ${item.raw}  (${g.ab} AB · ${g.h}H · ${g.r}R · ${g.rbi}RBI · ${g.k}K)`;
+            },
+          },
+          backgroundColor: 'rgba(13,13,18,0.95)',
+          borderColor: 'rgba(255,255,255,0.1)',
+          borderWidth: 1,
+          titleColor: '#f0f0fa',
+          bodyColor: '#b8bce8',
+          padding: 10,
+        },
+      },
+      scales: {
+        x: {
+          ticks: { color: '#b8bce8', font: { family: 'IBM Plex Mono', size: 9 }, maxRotation: 0 },
+          grid: { display: false },
+          border: { display: false },
+        },
+        y: {
+          ticks: { color: '#8888b0', font: { family: 'IBM Plex Mono', size: 10 }, stepSize: 1 },
+          grid: { color: 'rgba(255,255,255,0.04)' },
+          border: { display: false },
+          beginAtZero: true,
+        },
+      },
+    },
+  });
+
+  // Summary
+  const summaryEl = document.getElementById(`meL5Summary_${idx}`);
+  if (summaryEl) {
+    const max = Math.max(...values);
+    const min = Math.min(...values);
+    const total = values.reduce((s, v) => s + v, 0);
+    summaryEl.innerHTML = `
+      <div class="ef-detail-summary-grid">
+        <div class="ef-detail-summary-item">
+          <span class="ef-detail-summary-label">L5 Avg</span>
+          <span class="ef-detail-summary-val">${avg.toFixed(1)}</span>
+        </div>
+        <div class="ef-detail-summary-item">
+          <span class="ef-detail-summary-label">Total</span>
+          <span class="ef-detail-summary-val">${total}</span>
+        </div>
+        <div class="ef-detail-summary-item">
+          <span class="ef-detail-summary-label">High</span>
+          <span class="ef-detail-summary-val" style="color:var(--green)">${max}</span>
+        </div>
+        <div class="ef-detail-summary-item">
+          <span class="ef-detail-summary-label">Low</span>
+          <span class="ef-detail-summary-val" style="color:var(--red)">${min}</span>
+        </div>
+      </div>`;
+  }
+}
+
+function renderMlbBvpChart(idx, statKey) {
+  const b = S._mlbEdgeBatters?.[idx];
+  if (!b?.bvp?.gameByGame?.length) return;
+
+  const chartKey = `meBvp_${idx}`;
+  const ctx = document.getElementById(`meBvpChart_${idx}`);
+  if (!ctx) return;
+  if (S.charts[chartKey]) S.charts[chartKey].destroy();
+
+  const games = b.bvp.gameByGame.slice(0, 10); // Show up to last 10 games vs pitcher
+  const statCfg = MLB_BVP_GAME_STATS.find(c => c.key === statKey);
+  const statLabel = statCfg?.label || statKey;
+
+  const values = games.map(g => g[statKey] || 0);
+  const labels = games.map(g => {
+    const d = g.date ? new Date(g.date + 'T12:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: '2-digit' }) : '?';
+    return d;
+  });
+  const avg = values.length ? values.reduce((s, v) => s + v, 0) / values.length : 0;
+
+  // Season avg for comparison line (if available)
+  const seasonAvg = b.season ? {
+    h: b.season.hitsPerGame,
+    hr: (b.season.hr && b.season.gp) ? b.season.hr / b.season.gp : null,
+    k: b.season.kPerGame,
+    bb: (b.season.bb && b.season.gp) ? b.season.bb / b.season.gp : null,
+  }[statKey] : null;
+
+  const colors = values.map(v => {
+    if (seasonAvg != null) return v > seasonAvg ? 'rgba(212,245,60,0.82)' : 'rgba(255,61,90,0.72)';
+    return 'rgba(212,245,60,0.75)';
+  });
+
+  const datasets = [
+    {
+      data: values,
+      backgroundColor: colors,
+      borderRadius: 5,
+      borderSkipped: false,
+      barPercentage: 0.5,
+      maxBarThickness: 48,
+      minBarLength: 4,
+    },
+    {
+      type: 'line',
+      label: 'BvP Avg',
+      data: new Array(values.length).fill(parseFloat(avg.toFixed(1))),
+      borderColor: 'rgba(212,245,60,0.35)',
+      borderWidth: 1,
+      pointRadius: 0,
+      fill: false,
+      tension: 0,
+    },
+  ];
+  if (seasonAvg != null) {
+    datasets.push({
+      type: 'line',
+      label: 'Season Avg',
+      data: new Array(values.length).fill(parseFloat(seasonAvg.toFixed(1))),
+      borderColor: 'rgba(255,255,255,0.18)',
+      borderWidth: 1,
+      pointRadius: 0,
+      fill: false,
+      tension: 0,
+    });
+  }
+
+  S.charts[chartKey] = new Chart(ctx, {
+    type: 'bar',
+    data: { labels, datasets },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      animation: { duration: 120 },
+      layout: { padding: { top: 6, bottom: 2 } },
+      plugins: {
+        legend: { display: false },
+        tooltip: {
+          callbacks: {
+            title: (items) => {
+              const g = games[items[0].dataIndex];
+              return g.date || '?';
+            },
+            label: (item) => {
+              if (item.datasetIndex > 0) return `${item.dataset.label}: ${item.raw}`;
+              const g = games[item.dataIndex];
+              return `${statLabel}: ${item.raw}  (${g.ab} AB · ${g.h}H · ${g.hr}HR · ${g.k}K · ${g.bb}BB)`;
+            },
+          },
+          backgroundColor: 'rgba(13,13,18,0.95)',
+          borderColor: 'rgba(255,255,255,0.1)',
+          borderWidth: 1,
+          titleColor: '#f0f0fa',
+          bodyColor: '#b8bce8',
+          padding: 10,
+        },
+      },
+      scales: {
+        x: {
+          ticks: { color: '#b8bce8', font: { family: 'IBM Plex Mono', size: 9 }, maxRotation: 45 },
+          grid: { display: false },
+          border: { display: false },
+        },
+        y: {
+          ticks: { color: '#8888b0', font: { family: 'IBM Plex Mono', size: 10 }, stepSize: 1 },
+          grid: { color: 'rgba(255,255,255,0.04)' },
+          border: { display: false },
+          beginAtZero: true,
+        },
+      },
+    },
+  });
+
+  // Summary
+  const summaryEl = document.getElementById(`meBvpSummary_${idx}`);
+  if (summaryEl) {
+    const max = Math.max(...values);
+    const min = Math.min(...values);
+    const total = values.reduce((s, v) => s + v, 0);
+    summaryEl.innerHTML = `
+      <div class="ef-detail-summary-grid">
+        <div class="ef-detail-summary-item">
+          <span class="ef-detail-summary-label">BvP Avg</span>
+          <span class="ef-detail-summary-val" style="color:var(--lime)">${avg.toFixed(1)}</span>
+        </div>
+        ${seasonAvg != null ? `
+        <div class="ef-detail-summary-item">
+          <span class="ef-detail-summary-label">Season Avg</span>
+          <span class="ef-detail-summary-val">${seasonAvg.toFixed(1)}</span>
+        </div>` : ''}
+        <div class="ef-detail-summary-item">
+          <span class="ef-detail-summary-label">${games.length} Game${games.length !== 1 ? 's' : ''}</span>
+          <span class="ef-detail-summary-val">${total} total</span>
+        </div>
+        <div class="ef-detail-summary-item">
+          <span class="ef-detail-summary-label">High</span>
+          <span class="ef-detail-summary-val" style="color:var(--green)">${max}</span>
+        </div>
+        <div class="ef-detail-summary-item">
+          <span class="ef-detail-summary-label">Low</span>
+          <span class="ef-detail-summary-val" style="color:var(--red)">${min}</span>
+        </div>
+      </div>`;
+  }
 }
 
 function renderLowHrMatchup(data, gameData) {
@@ -1141,8 +2136,9 @@ function renderLowHrMatchup(data, gameData) {
         </div>
         ${bvp.lastFaced ? `<div style="font-family:var(--font-m);font-size:9px;color:var(--text3);margin-top:6px">Last faced: ${bvp.lastFaced} · ${bvp.gamesPlayed} game${bvp.gamesPlayed !== 1 ? 's' : ''}</div>` : ''}
       </div>` : bvp ? `
-      <div class="lhr-vs-section" style="border-left:2px solid var(--border);padding-left:10px">
-        <div class="lhr-vs-label" style="color:var(--text3)">vs ${esc(pitcherName)}: No matchup history</div>
+      <div class="lhr-vs-section" style="border-left:2px solid var(--border2);padding-left:10px">
+        <div class="lhr-vs-label" style="color:var(--text3)">vs ${esc(pitcherName)}</div>
+        <div style="font-family:var(--font-m);font-size:11px;color:var(--text3);margin-top:4px;font-style:italic">These two have never faced each other</div>
       </div>` : '';
 
     return `
@@ -1231,7 +2227,7 @@ function renderLowHrMatchup(data, gameData) {
           <span>${esc(m.pitcher)} (${esc(m.pitcher_team)}) vs ${esc(m.opponent_team)} Lineup</span>
           <span class="lhr-signal-badge ${isLow ? 'lhr-signal-badge--pass' : 'lhr-signal-badge--fail'}" style="font-size:9px;padding:2px 8px">HR/9: ${m.hr_per_9 != null ? m.hr_per_9 : '—'}</span>
         </div>
-        <div class="pe-hint" style="margin-bottom:12px">Batters ranked by no-HR probability. BvP from Baseball Savant + career vs ${esc(m.pitcher_team)} + season splits.</div>
+        <div class="pe-hint" style="margin-bottom:12px">${m.bvp_available ? `BvP (Savant) · career vs ${esc(m.pitcher_team)} · season splits` : `Career vs ${esc(m.pitcher_team)} · season splits · BvP unavailable (lineup not confirmed)`}</div>
         <div class="lhr-hitters-grid">
           ${hitters.map((h, i) => hitterRow(h, i + 1, m.pitcher_team, m.pitcher)).join('')}
         </div>

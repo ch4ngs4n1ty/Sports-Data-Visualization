@@ -107,6 +107,7 @@
       <button class="tab" data-tab="edges" onclick="switchTab('edges')" id="tabEdges" style="display:none">Edge Finder</button>
       <button class="tab" data-tab="pitching" onclick="switchTab('pitching')" id="tabPitching" style="display:none">Pitching Edge</button>
       <button class="tab" data-tab="lowhr" onclick="switchTab('lowhr')" id="tabLowHr" style="display:none">Low HR</button>
+      <button class="tab" data-tab="mlbedges" onclick="switchTab('mlbedges')" id="tabMlbEdges" style="display:none">Edge Finder</button>
       <button class="tab tab-ai" data-tab="plays" onclick="switchTab('plays')">◆ AI Plays</button>
     </div>
 
@@ -164,6 +165,11 @@
       <!-- LOW HR (MLB) -->
       <div class="tab-pane hidden" id="tab-lowhr">
         <div id="lowHrContent"></div>
+      </div>
+
+      <!-- MLB EDGE FINDER -->
+      <div class="tab-pane hidden" id="tab-mlbedges">
+        <div id="mlbEdgesContent"></div>
       </div>
 
 <!-- AI PLAYS -->
