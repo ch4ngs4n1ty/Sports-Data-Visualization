@@ -80,13 +80,13 @@ function getLocalDate() {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 }
 
-async function getGamesToday() {
-  const today = getLocalDate();
-  const cacheKey = `games_${today}`;
+async function getGames(dateOverride) {
+  const date = dateOverride || getLocalDate();
+  const cacheKey = `games_${date}`;
   const cached = cacheGet(cacheKey);
   if (cached) return cached;
 
-  const data = await fetchJson(`${MLB_API}/schedule?sportId=1&date=${today}&hydrate=probablePitcher`);
+  const data = await fetchJson(`${MLB_API}/schedule?sportId=1&date=${date}&hydrate=probablePitcher`);
   const games = [];
   for (const d of data.dates || []) {
     for (const g of d.games || []) {
@@ -383,12 +383,7 @@ function normalizeTeamName(name) {
   return String(name || '').toLowerCase().replace(/[^a-z]/g, '');
 }
 
-async function findGamePkByTeams(awayName, homeName) {
-  const games = await getGamesToday();
-  const aq = normalizeTeamName(awayName);
-  const hq = normalizeTeamName(homeName);
-
-  // Try exact-ish match first
+function matchTeams(games, aq, hq) {
   for (const g of games) {
     const gAway = normalizeTeamName(g.away.name);
     const gHome = normalizeTeamName(g.home.name);
@@ -397,15 +392,34 @@ async function findGamePkByTeams(awayName, homeName) {
       return g.gamePk;
     }
   }
-  // Try partial word match
-  for (const g of games) {
-    const gAway = normalizeTeamName(g.away.name);
-    const gHome = normalizeTeamName(g.home.name);
-    const awayWords = aq.length > 3 ? [aq] : [];
-    const homeWords = hq.length > 3 ? [hq] : [];
-    if (awayWords.some(w => gAway.includes(w)) && homeWords.some(w => gHome.includes(w))) {
-      return g.gamePk;
-    }
+  return null;
+}
+
+function offsetDate(dateStr, days) {
+  // dateStr = 'YYYY-MM-DD', days = -1 for yesterday, +1 for tomorrow
+  const d = new Date(dateStr + 'T12:00:00');
+  d.setDate(d.getDate() + days);
+  return d.toISOString().slice(0, 10);
+}
+
+async function findGamePkByTeams(awayName, homeName, date) {
+  const aq = normalizeTeamName(awayName);
+  const hq = normalizeTeamName(homeName);
+
+  // Build list of dates to search: given date, yesterday, today, tomorrow
+  const today = getLocalDate();
+  const candidates = [...new Set([
+    date,
+    date ? offsetDate(date, -1) : null,
+    today,
+    offsetDate(today, -1),
+    offsetDate(today, 1),
+  ].filter(Boolean))];
+
+  for (const d of candidates) {
+    const games = await getGames(d).catch(() => []);
+    const gamePk = matchTeams(games, aq, hq);
+    if (gamePk) return gamePk;
   }
   return null;
 }
@@ -445,9 +459,10 @@ const server = http.createServer(async (req, res) => {
   const path = url.pathname;
 
   try {
-    // GET /api/mlb/games — today's games
+    // GET /api/mlb/games?date=2026-04-13 — games for a date (defaults to today)
     if (path === '/api/mlb/games') {
-      const games = await getGamesToday();
+      const date = url.searchParams.get('date') || undefined;
+      const games = await getGames(date);
       return sendJson(res, { games });
     }
 
@@ -468,14 +483,15 @@ const server = http.createServer(async (req, res) => {
       return sendJson(res, bvp);
     }
 
-    // GET /api/mlb/game-bvp?gamePk=... OR ?away=...&home=...
+    // GET /api/mlb/game-bvp?gamePk=... OR ?away=...&home=...&date=2026-04-13
     if (path === '/api/mlb/game-bvp') {
       let gamePk = url.searchParams.get('gamePk');
       if (!gamePk) {
         const away = url.searchParams.get('away');
         const home = url.searchParams.get('home');
+        const date = url.searchParams.get('date') || undefined;
         if (!away || !home) return sendError(res, 'gamePk or away+home team names required');
-        gamePk = await findGamePkByTeams(away, home);
+        gamePk = await findGamePkByTeams(away, home, date);
         if (!gamePk) return sendError(res, `No game found for ${away} @ ${home}`, 404);
       }
       const result = await getGameBvp(gamePk);
@@ -495,11 +511,14 @@ const server = http.createServer(async (req, res) => {
 });
 
 server.listen(PORT, () => {
-  console.log(`PlayIQ server running on http://localhost:${PORT}`);
-  console.log('Endpoints:');
-  console.log('  GET /api/mlb/games         — today\'s games');
-  console.log('  GET /api/mlb/lineups       — game lineups (gamePk)');
-  console.log('  GET /api/mlb/bvp           — single BvP (batterId, pitcherId)');
-  console.log('  GET /api/mlb/game-bvp      — full game BvP (gamePk)');
-  console.log('  GET /api/health            — health check');
+  const now = new Date().toLocaleString('en-US', { timeZoneName: 'short' });
+  console.log(`[${now}] PlayIQ server running on http://localhost:${PORT}`);
+});
+
+// ── Keep alive — catch unhandled errors so server never crashes ──
+process.on('uncaughtException', err => {
+  console.error('[UNCAUGHT]', err.message);
+});
+process.on('unhandledRejection', reason => {
+  console.error('[UNHANDLED REJECTION]', reason);
 });
