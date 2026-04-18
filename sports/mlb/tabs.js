@@ -117,6 +117,29 @@ async function fetchMlbAthleteStats(athleteId) {
   return espn(`https://site.web.api.espn.com/apis/common/v3/sports/baseball/mlb/athletes/${athleteId}/stats?region=us&lang=en&contentorigin=espn`);
 }
 
+// ── ESPN roster → normalized-name map (for backend-lineup fallback) ──
+const _mlbRosterCache = new Map();
+async function fetchMlbRosterMap(teamId) {
+  if (!teamId) return {};
+  if (_mlbRosterCache.has(teamId)) return _mlbRosterCache.get(teamId);
+  const data = await espn(`https://site.api.espn.com/apis/site/v2/sports/baseball/mlb/teams/${teamId}/roster`);
+  const map = {};
+  const groups = data?.athletes || [];
+  groups.forEach(group => {
+    (group.items || []).forEach(a => {
+      if (!a?.id) return;
+      const key = normalizePlayerName(a.displayName || a.fullName || '');
+      if (key) map[key] = {
+        id: a.id,
+        shortName: a.shortName || a.displayName,
+        pos: a.position?.abbreviation || '—',
+      };
+    });
+  });
+  _mlbRosterCache.set(teamId, map);
+  return map;
+}
+
 async function fetchMlbAthleteSplits(athleteId, season) {
   return espn(`https://site.web.api.espn.com/apis/common/v3/sports/baseball/mlb/athletes/${athleteId}/splits?region=us&lang=en&contentorigin=espn&season=${season}`);
 }
@@ -908,14 +931,19 @@ async function buildLowHrMatchupData(gameData) {
   ];
 
   // ── Fetch BvP data from backend (Baseball Savant via PlayIQ server) ──
+  // Pass ESPN lineup names so backend can resolve them via MLB rosters when
+  // boxscore battingOrder is empty (MLB API often lags behind ESPN).
   let bvpData = null;
   try {
-    // Extract YYYY-MM-DD from the ESPN game date so the backend checks the right day
     const gameDate = gameInfo.date ? gameInfo.date.slice(0, 10) : '';
+    const awayNames = lineups.away.map(b => b.name).join(',');
+    const homeNames = lineups.home.map(b => b.name).join(',');
     const bvpUrl = `http://localhost:3001/api/mlb/game-bvp`
       + `?away=${encodeURIComponent(gameInfo.awayFull)}`
       + `&home=${encodeURIComponent(gameInfo.homeFull)}`
-      + (gameDate ? `&date=${gameDate}` : '');
+      + (gameDate ? `&date=${gameDate}` : '')
+      + (awayNames ? `&awayLineup=${encodeURIComponent(awayNames)}` : '')
+      + (homeNames ? `&homeLineup=${encodeURIComponent(homeNames)}` : '');
     console.log('[Low HR] Fetching BvP from:', bvpUrl);
     const bvpResp = await fetch(bvpUrl);
     if (bvpResp.ok) {
@@ -1205,40 +1233,85 @@ function deriveEdgeProps(batter) {
   return props;
 }
 
-async function buildMlbEdgeFinderData(gameData) {
+async function buildMlbEdgeFinderData(gameData, options = {}) {
   const { gameInfo } = gameData;
+
+  // Step 1: fetch ESPN summary first — we need its lineup to pass to backend
+  // (MLB's own boxscore often lags behind ESPN by hours)
   const summary = await espn(`https://site.api.espn.com/apis/site/v2/sports/baseball/mlb/summary?event=${gameInfo.eventId}`);
-  if (!summary) return null;
+  const pitchers = summary ? await fetchStartingPitchers(gameInfo, summary) : { away: null, home: null };
+  const lineups = summary ? extractMlbLineups(summary, gameInfo) : { away: [], home: [] };
 
-  const pitchers = await fetchStartingPitchers(gameInfo, summary);
-  const lineups = extractMlbLineups(summary, gameInfo);
+  // Step 2: build backend BvP URL, passing ESPN lineup names so the server can
+  // resolve them against MLB rosters when boxscore battingOrder is empty.
+  const gameDate = gameInfo.date ? gameInfo.date.slice(0, 10) : '';
+  const awayNames = lineups.away.map(b => b.name).join(',');
+  const homeNames = lineups.home.map(b => b.name).join(',');
+  const bvpUrl = `http://localhost:3001/api/mlb/game-bvp`
+    + `?away=${encodeURIComponent(gameInfo.awayFull)}`
+    + `&home=${encodeURIComponent(gameInfo.homeFull)}`
+    + (gameDate ? `&date=${gameDate}` : '')
+    + (awayNames ? `&awayLineup=${encodeURIComponent(awayNames)}` : '')
+    + (homeNames ? `&homeLineup=${encodeURIComponent(homeNames)}` : '')
+    + (options.refresh ? `&refresh=1` : '');
 
-  if (!pitchers.away?.id && !pitchers.home?.id) return null;
-
-  // Fetch BvP from backend
   let bvpData = null;
   try {
-    const gameDate = gameInfo.date ? gameInfo.date.slice(0, 10) : '';
-    const bvpUrl = `http://localhost:3001/api/mlb/game-bvp`
-      + `?away=${encodeURIComponent(gameInfo.awayFull)}`
-      + `&home=${encodeURIComponent(gameInfo.homeFull)}`
-      + (gameDate ? `&date=${gameDate}` : '');
-    const bvpResp = await fetch(bvpUrl);
-    if (bvpResp.ok) bvpData = await bvpResp.json();
+    const r = await fetch(bvpUrl);
+    if (r.ok) bvpData = await r.json();
   } catch (_) { /* backend unavailable */ }
 
+  if (!summary && !bvpData) return null;
+
+  // Bail only if BOTH sources are completely empty
+  const backendHasAny = bvpData?.matchups?.some(m => m.batters?.length || m.pitcher);
+  const espnHasAny = pitchers.away?.id || pitchers.home?.id;
+  if (!espnHasAny && !backendHasAny) return null;
+
   const sides = [
-    { pitcher: pitchers.away, lineup: lineups.home, team: gameInfo.awayAbbr, oppTeam: gameInfo.homeAbbr, battingSide: 'home', teamColor: 'var(--lime)' },
-    { pitcher: pitchers.home, lineup: lineups.away, team: gameInfo.homeAbbr, oppTeam: gameInfo.awayAbbr, battingSide: 'away', teamColor: 'var(--blue)' },
+    { pitcher: pitchers.away, lineup: lineups.home, team: gameInfo.awayAbbr, oppTeam: gameInfo.homeAbbr, battingSide: 'home', battingTeamId: gameInfo.homeTeamId, teamColor: 'var(--lime)' },
+    { pitcher: pitchers.home, lineup: lineups.away, team: gameInfo.homeAbbr, oppTeam: gameInfo.awayAbbr, battingSide: 'away', battingTeamId: gameInfo.awayTeamId, teamColor: 'var(--blue)' },
   ];
 
   const allBatters = [];
 
   for (const side of sides) {
-    if (!side.lineup?.length || !side.pitcher?.id) continue;
+    const bvpMatchup = bvpData?.matchups?.find(m => m.side === side.battingSide);
+
+    // Fallback: if ESPN lineup is empty or ESPN pitcher missing, use the
+    // backend's MLB Stats API data (which usually posts earlier and is more reliable).
+    let effectiveLineup = side.lineup;
+    let effectivePitcher = side.pitcher;
+
+    const needLineupFallback = !effectiveLineup?.length && bvpMatchup?.batters?.length;
+    const needPitcherFallback = !effectivePitcher?.id && bvpMatchup?.pitcher?.id;
+
+    if (needLineupFallback) {
+      const rosterMap = await fetchMlbRosterMap(side.battingTeamId);
+      effectiveLineup = bvpMatchup.batters.map(b => {
+        const espnMatch = rosterMap[normalizePlayerName(b.name)] || {};
+        return {
+          name: b.name,
+          shortName: espnMatch.shortName || b.name.split(' ').slice(-1)[0],
+          athleteId: espnMatch.id || null,   // may be null → no ESPN stats fallback, but BvP still renders
+          mlbId: b.id,                        // used for MLB headshot fallback
+          order: b.order,
+          pos: b.position || espnMatch.pos || '—',
+        };
+      });
+    }
+
+    if (needPitcherFallback) {
+      effectivePitcher = {
+        id: null,                             // no ESPN id — season stats widgets that need it will skip
+        name: bvpMatchup.pitcher.name,
+        shortName: bvpMatchup.pitcher.name.split(' ').slice(-1)[0],
+      };
+    }
+
+    if (!effectiveLineup?.length || !effectivePitcher?.name) continue;
 
     // Build BvP lookup
-    const bvpMatchup = bvpData?.matchups?.find(m => m.side === side.battingSide);
     const bvpByOrder = {};
     const bvpByName = {};
     if (bvpMatchup?.batters?.length) {
@@ -1248,19 +1321,27 @@ async function buildMlbEdgeFinderData(gameData) {
       }
     }
 
-    // Fetch season stats for all batters in parallel
-    const seasonFetches = side.lineup.map(b => fetchMlbAthleteStats(b.athleteId).catch(() => null));
+    // Fetch season stats for all batters in parallel — skip when ESPN id unknown
+    const seasonFetches = effectiveLineup.map(b => b.athleteId
+      ? fetchMlbAthleteStats(b.athleteId).catch(() => null)
+      : Promise.resolve(null));
     const seasonResults = await Promise.all(seasonFetches);
 
-    for (let i = 0; i < side.lineup.length; i++) {
-      const batter = side.lineup[i];
+    for (let i = 0; i < effectiveLineup.length; i++) {
+      const batter = effectiveLineup[i];
       const bvp = bvpByOrder[batter.order]
         ?? bvpByName[normalizePlayerName(batter.name)]
         ?? null;
       const seasonRaw = seasonResults[i];
       const season = seasonRaw ? extractBatterSeasonStats(seasonRaw) : null;
       const edgeResult = computeMlbBatterEdge(bvp, season);
-      const props = [];
+
+      // Prefer ESPN headshot; fall back to MLB photo CDN when we only have an MLB id.
+      const headshotUrl = batter.athleteId
+        ? `https://a.espncdn.com/i/headshots/mlb/players/full/${batter.athleteId}.png`
+        : batter.mlbId
+          ? `https://midfield.mlbstatic.com/v1/people/${batter.mlbId}/spots/120`
+          : '';
 
       const entry = {
         name: batter.name,
@@ -1268,11 +1349,11 @@ async function buildMlbEdgeFinderData(gameData) {
         athleteId: batter.athleteId,
         order: batter.order,
         pos: batter.pos,
-        pitcher: side.pitcher.name,
+        pitcher: effectivePitcher.name,
         pitcherTeam: side.team,
         battingTeam: side.oppTeam,
         teamColor: side.teamColor,
-        headshotUrl: `https://a.espncdn.com/i/headshots/mlb/players/full/${batter.athleteId}.png`,
+        headshotUrl,
         bvp: (bvp && bvp.pa > 0) ? bvp : null,
         neverFaced: !bvp || bvp.pa === 0,
         season,
@@ -1306,9 +1387,86 @@ async function buildMlbEdgeFinderData(gameData) {
     topPicks,
     pitchers,
     bvpAvailable: !!bvpData,
+    bvpStatus: bvpData?.status || null,
     awayAbbr: gameInfo.awayAbbr,
     homeAbbr: gameInfo.homeAbbr,
+    fetchedAt: Date.now(),
   };
+}
+
+// ─────────────────────────────────────────────────────────────
+//  Auto-refresh: poll backend while BvP data is incomplete
+//  Runs until lineups confirmed + all batters resolved, or until
+//  the user leaves the MLB analysis.
+// ─────────────────────────────────────────────────────────────
+let _mlbEdgePollTimer = null;
+let _mlbEdgePollAttempts = 0;
+
+function mlbEdgeIsComplete(data) {
+  if (!data) return false;
+  const s = data.bvpStatus;
+  if (!s) return false;
+  if (s.lineupStatus !== 'confirmed') return false;
+  if (!s.totalBatters) return false;
+  // Accept if at least 80% of batters resolved (some historical pitcher/batter
+  // combos legitimately have zero PA — don't poll forever chasing them)
+  return s.resolvedBatters / s.totalBatters >= 0.8;
+}
+
+function stopMlbEdgePolling() {
+  if (_mlbEdgePollTimer) {
+    clearTimeout(_mlbEdgePollTimer);
+    _mlbEdgePollTimer = null;
+  }
+  _mlbEdgePollAttempts = 0;
+}
+
+function scheduleMlbEdgeAutoRefresh(gameData) {
+  stopMlbEdgePolling();
+  const data = gameData.mlbEdgeData;
+  if (mlbEdgeIsComplete(data)) return;
+
+  // Back off gradually: 45s, 60s, 90s, then 120s repeating (max ~15 min)
+  const delays = [45000, 60000, 90000, 120000];
+  const delay = delays[Math.min(_mlbEdgePollAttempts, delays.length - 1)];
+  if (_mlbEdgePollAttempts >= 15) return; // give up after ~20 min
+
+  _mlbEdgePollTimer = setTimeout(async () => {
+    _mlbEdgePollAttempts++;
+    // Skip if the user navigated away from the MLB analysis entirely
+    if (!document.getElementById('mlbEdgesContent')) {
+      stopMlbEdgePolling();
+      return;
+    }
+    try {
+      const fresh = await buildMlbEdgeFinderData(gameData, { refresh: true });
+      if (fresh) {
+        gameData.mlbEdgeData = fresh;
+        renderMlbEdgeFinder(fresh, gameData);
+      }
+    } catch (e) {
+      console.warn('MLB edge auto-refresh failed:', e);
+    }
+    scheduleMlbEdgeAutoRefresh(gameData);
+  }, delay);
+}
+
+async function refreshMlbEdgeFinder() {
+  if (!S?.gameData) return;
+  const btn = document.getElementById('mlbEdgeRefreshBtn');
+  if (btn) { btn.disabled = true; btn.textContent = '↻ Refreshing...'; }
+  try {
+    stopMlbEdgePolling();
+    const fresh = await buildMlbEdgeFinderData(S.gameData, { refresh: true });
+    if (fresh) {
+      S.gameData.mlbEdgeData = fresh;
+      renderMlbEdgeFinder(fresh, S.gameData);
+    }
+  } catch (e) {
+    console.error('MLB edge manual refresh failed:', e);
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = '↻ Refresh'; }
+  }
 }
 
 function renderMlbEdgeFinder(data, gameData) {
@@ -1489,11 +1647,40 @@ function renderMlbEdgeFinder(data, gameData) {
   const withBvp = data.batters.filter(b => !b.neverFaced).length;
   const neverFaced = data.batters.filter(b => b.neverFaced).length;
 
+  // Data status banner — shown when lineups/BvP aren't fully resolved
+  const status = data.bvpStatus;
+  const complete = mlbEdgeIsComplete(data);
+  let statusBanner = '';
+  if (status) {
+    const resolvedPct = status.totalBatters ? Math.round((status.resolvedBatters / status.totalBatters) * 100) : 0;
+    const statusLabel = status.lineupStatus === 'confirmed' ? 'Lineups confirmed'
+      : status.lineupStatus === 'partial' ? 'Partial lineups (auto-refreshing)'
+      : 'Lineups not yet posted (auto-refreshing)';
+    const color = complete ? 'var(--green)' : 'var(--yellow)';
+    statusBanner = `
+      <div class="me-status-banner" style="border-left:2px solid ${color}">
+        <div class="me-status-text">
+          <span style="color:${color};font-weight:600">${statusLabel}</span>
+          <span style="color:var(--text3)">· ${status.resolvedBatters}/${status.totalBatters} BvP resolved (${resolvedPct}%)</span>
+          ${status.failedBatters ? `<span style="color:var(--red)">· ${status.failedBatters} failed</span>` : ''}
+        </div>
+        <button class="refresh-btn" id="mlbEdgeRefreshBtn" onclick="refreshMlbEdgeFinder()">↻ Refresh</button>
+      </div>`;
+  } else if (!data.bvpAvailable) {
+    statusBanner = `
+      <div class="me-status-banner" style="border-left:2px solid var(--red)">
+        <div class="me-status-text"><span style="color:var(--red);font-weight:600">BvP backend offline</span></div>
+        <button class="refresh-btn" id="mlbEdgeRefreshBtn" onclick="refreshMlbEdgeFinder()">↻ Retry</button>
+      </div>`;
+  }
+
   el.innerHTML = `
     <div class="ef-header">
       <div class="ef-title">MLB Edge Finder</div>
       <div class="ef-subtitle">BvP (Savant) vs Season stats · ${withBvp} batters with history · ${neverFaced} first matchups</div>
     </div>
+
+    ${statusBanner}
 
     ${data.topPicks.length ? `
     <div class="ef-section">
@@ -1526,12 +1713,14 @@ function renderMlbEdgeFinder(data, gameData) {
         ${playerCards}
       </div>
     </div>
-
-    ${!data.bvpAvailable ? `
-    <div class="pe-section">
-      <div class="pe-note" style="color:var(--yellow)">BvP backend unavailable — edges are based on limited data. Start the PlayIQ server for full Savant BvP integration.</div>
-    </div>` : ''}
   `;
+
+  // Kick off (or cancel) background polling depending on completeness
+  if (gameData && !complete && data.bvpAvailable) {
+    scheduleMlbEdgeAutoRefresh(gameData);
+  } else {
+    stopMlbEdgePolling();
+  }
 }
 
 /* ── MLB EDGE DETAIL DRILL-DOWN ───────────────────────────

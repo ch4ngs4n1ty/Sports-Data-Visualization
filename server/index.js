@@ -117,10 +117,78 @@ async function getGames(dateOverride) {
   return games;
 }
 
-async function getGameLineups(gamePk) {
-  const cacheKey = `lineup_${gamePk}`;
+// Short TTL for unconfirmed lineups so we repoll quickly as they get announced
+const UNCONFIRMED_LINEUP_TTL = 30 * 1000; // 30s
+const CONFIRMED_LINEUP_TTL = 30 * 60 * 1000; // 30min — once confirmed, rarely changes
+
+// Name normalization that survives diacritics, punctuation, and suffixes
+// so "Peña" matches "Pena", "J.T. Realmuto" matches "JT Realmuto", etc.
+function normalizeName(s) {
+  return String(s || '')
+    .normalize('NFD')                       // split accents into base + combining marks
+    .replace(/[\u0300-\u036f]/g, '')        // drop combining marks (é → e, ñ → n)
+    .toLowerCase()
+    .replace(/\./g, '')                     // JT vs J.T.
+    .replace(/\s+(jr|sr|ii|iii|iv)\b/g, '') // ignore Jr./Sr./roman numerals
+    .replace(/[^a-z0-9\s]/g, '')            // apostrophes, hyphens, etc.
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+// Last-name-only key as a fallback when full-name match fails
+function lastNameKey(s) {
+  const parts = normalizeName(s).split(' ');
+  return parts[parts.length - 1] || '';
+}
+
+// Fetch MLB team's 40-man roster as a normalized name → {id, name, position} map
+async function getTeamRosterMap(teamId) {
+  if (!teamId) return { byFull: {}, byLast: {} };
+  const cacheKey = `mlb_roster_${teamId}`;
   const cached = cacheGet(cacheKey);
   if (cached) return cached;
+  try {
+    const data = await fetchJson(`${MLB_API}/teams/${teamId}/roster?rosterType=40Man`);
+    const byFull = {};
+    const byLast = {};
+    for (const p of data.roster || []) {
+      const person = p.person || {};
+      if (!person.id || !person.fullName) continue;
+      const entry = {
+        id: person.id,
+        name: person.fullName,
+        position: p.position?.abbreviation || '?',
+      };
+      const fullKey = normalizeName(person.fullName);
+      if (fullKey) byFull[fullKey] = entry;
+      const lastKey = lastNameKey(person.fullName);
+      // Only index last-name if unique on this roster (ambiguous matches = skip)
+      if (lastKey) byLast[lastKey] = byLast[lastKey] === undefined ? entry : null;
+    }
+    const map = { byFull, byLast };
+    cacheSet(cacheKey, map, CONFIRMED_LINEUP_TTL);
+    return map;
+  } catch (err) {
+    return { byFull: {}, byLast: {} };
+  }
+}
+
+// Resolve an ESPN lineup name against an MLB roster map using escalating
+// strategies: exact full-name, then unique last-name. Returns null if no match.
+function resolveRosterEntry(name, rosterMap) {
+  const fullKey = normalizeName(name);
+  if (rosterMap.byFull[fullKey]) return rosterMap.byFull[fullKey];
+  const lastKey = lastNameKey(name);
+  if (lastKey && rosterMap.byLast[lastKey]) return rosterMap.byLast[lastKey];
+  return null;
+}
+
+async function getGameLineups(gamePk, options = {}) {
+  const cacheKey = `lineup_${gamePk}_${options.awayLineup?.join(',') || ''}_${options.homeLineup?.join(',') || ''}`;
+  if (!options.refresh) {
+    const cached = cacheGet(cacheKey);
+    if (cached) return cached;
+  }
 
   const [boxData, feedData] = await Promise.all([
     fetchJson(`${MLB_API}/game/${gamePk}/boxscore`),
@@ -135,7 +203,7 @@ async function getGameLineups(gamePk) {
     const battingOrder = team.battingOrder || [];
     const players = team.players || {};
 
-    const lineup = battingOrder.slice(0, 9).map((pid, idx) => {
+    let lineup = battingOrder.slice(0, 9).map((pid, idx) => {
       const p = players[`ID${pid}`] || {};
       const person = p.person || {};
       return {
@@ -146,6 +214,30 @@ async function getGameLineups(gamePk) {
       };
     });
 
+    // Fallback: MLB boxscore battingOrder is sometimes empty even when ESPN has
+    // the lineup. If the caller passed a lineup (e.g. names scraped from ESPN),
+    // resolve names against the team's 40-man roster to get MLB ids.
+    const providedLineup = options[`${side}Lineup`];
+    if (lineup.length === 0 && Array.isArray(providedLineup) && providedLineup.length) {
+      const rosterMap = await getTeamRosterMap(team.team?.id);
+      lineup = providedLineup.slice(0, 9).map((name, idx) => {
+        const hit = resolveRosterEntry(name, rosterMap);
+        return hit ? {
+          id: hit.id,
+          name: hit.name,
+          position: hit.position,
+          order: idx + 1,
+          resolvedFrom: 'roster',
+        } : {
+          id: null,
+          name,
+          position: '?',
+          order: idx + 1,
+          resolvedFrom: 'unmatched',
+        };
+      }).filter(b => b.id); // drop unmatched — no MLB id means no Savant query
+    }
+
     const pp = probablePitchers[side];
     result[side] = {
       teamId: team.team?.id,
@@ -155,7 +247,13 @@ async function getGameLineups(gamePk) {
     };
   }
 
-  cacheSet(cacheKey, result, LIVE_CACHE_TTL);
+  const fullyLoaded =
+    result.away.lineup.length >= 9 &&
+    result.home.lineup.length >= 9 &&
+    result.away.probablePitcher &&
+    result.home.probablePitcher;
+  const ttl = fullyLoaded ? CONFIRMED_LINEUP_TTL : UNCONFIRMED_LINEUP_TTL;
+  cacheSet(cacheKey, result, ttl);
   return result;
 }
 
@@ -213,10 +311,12 @@ function parseCSVLine(line) {
   return result;
 }
 
-async function fetchSavantBvP(batterId, pitcherId) {
+async function fetchSavantBvP(batterId, pitcherId, options = {}) {
   const cacheKey = `bvp_${batterId}_${pitcherId}`;
-  const cached = cacheGet(cacheKey);
-  if (cached) return cached;
+  if (!options.refresh) {
+    const cached = cacheGet(cacheKey);
+    if (cached) return cached;
+  }
 
   const url = `https://baseballsavant.mlb.com/statcast_search/csv?all=true`
     + `&player_type=batter`
@@ -227,11 +327,23 @@ async function fetchSavantBvP(batterId, pitcherId) {
     + `&type=details`
     + `&min_pitches=0&min_results=0&min_pas=0`;
 
-  const text = await fetchUrl(url);
-  const pitches = parseCsv(text);
-  const summary = summarizeBvP(pitches, batterId, pitcherId);
-  cacheSet(cacheKey, summary);
-  return summary;
+  // Retry up to 3 times with exponential backoff — Savant is flaky
+  let lastErr;
+  for (let attempt = 0; attempt < 3; attempt++) {
+    try {
+      const text = await fetchUrl(url);
+      const pitches = parseCsv(text);
+      const summary = summarizeBvP(pitches, batterId, pitcherId);
+      cacheSet(cacheKey, summary);
+      return summary;
+    } catch (err) {
+      lastErr = err;
+      if (attempt < 2) {
+        await new Promise(r => setTimeout(r, 500 * Math.pow(2, attempt)));
+      }
+    }
+  }
+  throw lastErr;
 }
 
 function summarizeBvP(pitches, batterId, pitcherId) {
@@ -338,10 +450,13 @@ function summarizeBvP(pitches, batterId, pitcherId) {
 //  Returns BvP for every batter vs opposing starter
 // ══════════════════════════════════════════════════════════
 
-async function getGameBvp(gamePk) {
-  const lineups = await getGameLineups(gamePk);
+async function getGameBvp(gamePk, options = {}) {
+  const lineups = await getGameLineups(gamePk, options);
 
   const matchups = [];
+  let totalBatters = 0;
+  let resolvedBatters = 0;
+  let failedBatters = 0;
 
   for (const [side, oppSide] of [['away', 'home'], ['home', 'away']]) {
     const team = lineups[side];
@@ -360,11 +475,24 @@ async function getGameBvp(gamePk) {
       continue;
     }
 
-    // Fetch all BvP in parallel (with concurrency limit)
+    if (!team.lineup?.length) {
+      matchups.push({
+        side,
+        teamName: team.teamName,
+        pitcher: { id: pitcher.id, name: pitcher.name },
+        pitcherTeam: opponent.teamName,
+        error: 'Lineup not yet posted',
+        batters: [],
+      });
+      continue;
+    }
+
+    // Fetch all BvP in parallel — fetchSavantBvP has built-in retries
     const batters = team.lineup;
+    totalBatters += batters.length;
     const bvpResults = await Promise.all(
       batters.map(b =>
-        fetchSavantBvP(b.id, pitcher.id).catch(err => ({
+        fetchSavantBvP(b.id, pitcher.id, options).catch(err => ({
           batterId: b.id,
           pitcherId: pitcher.id,
           error: err.message,
@@ -374,6 +502,11 @@ async function getGameBvp(gamePk) {
         }))
       )
     );
+
+    bvpResults.forEach(r => {
+      if (r.error) failedBatters++;
+      else resolvedBatters++;
+    });
 
     const batterDetails = batters.map((b, i) => ({
       id: b.id,
@@ -392,9 +525,26 @@ async function getGameBvp(gamePk) {
     });
   }
 
+  // Infer lineup status for frontend auto-refresh decisions
+  const awayFull = lineups.away.lineup.length >= 9 && lineups.away.probablePitcher;
+  const homeFull = lineups.home.lineup.length >= 9 && lineups.home.probablePitcher;
+  const lineupStatus = awayFull && homeFull
+    ? 'confirmed'
+    : (lineups.away.lineup.length || lineups.home.lineup.length) ? 'partial' : 'pending';
+
   return {
     gamePk,
     matchups,
+    status: {
+      lineupStatus,           // 'confirmed' | 'partial' | 'pending'
+      totalBatters,
+      resolvedBatters,
+      failedBatters,
+      awayLineupPosted: lineups.away.lineup.length >= 9,
+      homeLineupPosted: lineups.home.lineup.length >= 9,
+      awayPitcherPosted: !!lineups.away.probablePitcher,
+      homePitcherPosted: !!lineups.home.probablePitcher,
+    },
     source: 'Baseball Savant Statcast + MLB Stats API',
     cachedAt: new Date().toISOString(),
   };
@@ -492,24 +642,29 @@ const server = http.createServer(async (req, res) => {
       return sendJson(res, { games });
     }
 
-    // GET /api/mlb/lineups?gamePk=...
+    // GET /api/mlb/lineups?gamePk=...&refresh=1
     if (path === '/api/mlb/lineups') {
       const gamePk = url.searchParams.get('gamePk');
       if (!gamePk) return sendError(res, 'gamePk required');
-      const lineups = await getGameLineups(gamePk);
+      const refresh = url.searchParams.get('refresh') === '1';
+      const lineups = await getGameLineups(gamePk, { refresh });
       return sendJson(res, lineups);
     }
 
-    // GET /api/mlb/bvp?batterId=...&pitcherId=...
+    // GET /api/mlb/bvp?batterId=...&pitcherId=...&refresh=1
     if (path === '/api/mlb/bvp') {
       const batterId = url.searchParams.get('batterId');
       const pitcherId = url.searchParams.get('pitcherId');
       if (!batterId || !pitcherId) return sendError(res, 'batterId and pitcherId required');
-      const bvp = await fetchSavantBvP(batterId, pitcherId);
+      const refresh = url.searchParams.get('refresh') === '1';
+      const bvp = await fetchSavantBvP(batterId, pitcherId, { refresh });
       return sendJson(res, bvp);
     }
 
     // GET /api/mlb/game-bvp?gamePk=... OR ?away=...&home=...&date=2026-04-13
+    // Optional: &awayLineup=Name1,Name2,...&homeLineup=... to supply lineup when
+    // MLB boxscore hasn't posted battingOrder yet (e.g. ESPN already has it).
+    // Add &refresh=1 to bypass caches.
     if (path === '/api/mlb/game-bvp') {
       let gamePk = url.searchParams.get('gamePk');
       if (!gamePk) {
@@ -520,7 +675,14 @@ const server = http.createServer(async (req, res) => {
         gamePk = await findGamePkByTeams(away, home, date);
         if (!gamePk) return sendError(res, `No game found for ${away} @ ${home}`, 404);
       }
-      const result = await getGameBvp(gamePk);
+      const refresh = url.searchParams.get('refresh') === '1';
+      const parseLineup = param => {
+        const v = url.searchParams.get(param);
+        return v ? v.split(',').map(s => s.trim()).filter(Boolean) : undefined;
+      };
+      const awayLineup = parseLineup('awayLineup');
+      const homeLineup = parseLineup('homeLineup');
+      const result = await getGameBvp(gamePk, { refresh, awayLineup, homeLineup });
       return sendJson(res, result);
     }
 
