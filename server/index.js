@@ -453,6 +453,19 @@ function summarizeBvP(pitches, batterId, pitcherId) {
 async function getGameBvp(gamePk, options = {}) {
   const lineups = await getGameLineups(gamePk, options);
 
+  // Resolve ESPN pitcher name overrides to MLB ids via roster lookup.
+  // This ensures we use the pitcher ESPN confirmed, not whatever MLB's live
+  // feed has — the two sources sometimes disagree when multiple pitchers are listed.
+  const pitcherOverrides = {};
+  for (const side of ['away', 'home']) {
+    const pitcherName = options[`${side}Pitcher`];
+    if (pitcherName && lineups[side]?.teamId) {
+      const rosterMap = await getTeamRosterMap(lineups[side].teamId);
+      const resolved = resolveRosterEntry(pitcherName, rosterMap);
+      if (resolved) pitcherOverrides[side] = { id: resolved.id, name: resolved.name };
+    }
+  }
+
   const matchups = [];
   let totalBatters = 0;
   let resolvedBatters = 0;
@@ -461,7 +474,7 @@ async function getGameBvp(gamePk, options = {}) {
   for (const [side, oppSide] of [['away', 'home'], ['home', 'away']]) {
     const team = lineups[side];
     const opponent = lineups[oppSide];
-    const pitcher = opponent.probablePitcher;
+    const pitcher = pitcherOverrides[oppSide] || opponent.probablePitcher;
 
     if (!pitcher) {
       matchups.push({
@@ -682,7 +695,9 @@ const server = http.createServer(async (req, res) => {
       };
       const awayLineup = parseLineup('awayLineup');
       const homeLineup = parseLineup('homeLineup');
-      const result = await getGameBvp(gamePk, { refresh, awayLineup, homeLineup });
+      const awayPitcher = url.searchParams.get('awayPitcher') || undefined;
+      const homePitcher = url.searchParams.get('homePitcher') || undefined;
+      const result = await getGameBvp(gamePk, { refresh, awayLineup, homeLineup, awayPitcher, homePitcher });
       return sendJson(res, result);
     }
 

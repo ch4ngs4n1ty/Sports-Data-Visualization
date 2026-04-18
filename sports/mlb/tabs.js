@@ -943,7 +943,9 @@ async function buildLowHrMatchupData(gameData) {
       + `&home=${encodeURIComponent(gameInfo.homeFull)}`
       + (gameDate ? `&date=${gameDate}` : '')
       + (awayNames ? `&awayLineup=${encodeURIComponent(awayNames)}` : '')
-      + (homeNames ? `&homeLineup=${encodeURIComponent(homeNames)}` : '');
+      + (homeNames ? `&homeLineup=${encodeURIComponent(homeNames)}` : '')
+      + (pitchers.away?.name ? `&awayPitcher=${encodeURIComponent(pitchers.away.name)}` : '')
+      + (pitchers.home?.name ? `&homePitcher=${encodeURIComponent(pitchers.home.name)}` : '');
     console.log('[Low HR] Fetching BvP from:', bvpUrl);
     const bvpResp = await fetch(bvpUrl);
     if (bvpResp.ok) {
@@ -1045,7 +1047,7 @@ async function buildLowHrMatchupData(gameData) {
     hitters.sort((a, b) => (b.rank_no_hr ?? -1) - (a.rank_no_hr ?? -1));
 
     result.matchups.push({
-      pitcher: bvpPitcherName || side.pitcher.name,
+      pitcher: side.pitcher.name || bvpPitcherName,
       pitcher_team: side.team,
       hr_per_9: side.hr9 != null ? Number(side.hr9.toFixed(3)) : null,
       hr_per_9_label: side.hr9 != null ? (side.hr9 <= 1.0 ? 'LOW' : 'ELEVATED') : 'N/A',
@@ -1253,6 +1255,8 @@ async function buildMlbEdgeFinderData(gameData, options = {}) {
     + (gameDate ? `&date=${gameDate}` : '')
     + (awayNames ? `&awayLineup=${encodeURIComponent(awayNames)}` : '')
     + (homeNames ? `&homeLineup=${encodeURIComponent(homeNames)}` : '')
+    + (pitchers.away?.name ? `&awayPitcher=${encodeURIComponent(pitchers.away.name)}` : '')
+    + (pitchers.home?.name ? `&homePitcher=${encodeURIComponent(pitchers.home.name)}` : '')
     + (options.refresh ? `&refresh=1` : '');
 
   let bvpData = null;
