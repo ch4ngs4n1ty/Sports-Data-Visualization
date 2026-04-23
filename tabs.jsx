@@ -257,6 +257,27 @@ function FormTab({ gameData }) {
   );
 }
 
+/* ── Hot-tier badge (shared by MLB + NBA edge finders) ── */
+// Tiers: 'elite' | 'hot' | 'neutral' | 'cold'
+const HOT_TIER_CFG = {
+  elite:   { label: '▲▲ ELITE',  color: 'var(--green)',  bg: 'rgba(0,255,136,0.1)',  border: 'rgba(0,255,136,0.3)'  },
+  hot:     { label: '▲ HOT',     color: 'var(--gold)',   bg: 'rgba(255,208,96,0.08)', border: 'rgba(255,208,96,0.25)' },
+  cold:    { label: '▼ COLD',    color: 'var(--muted)',  bg: 'transparent',           border: 'rgba(255,255,255,0.06)' },
+  neutral: { label: null },
+};
+
+function HotBadge({ tier }) {
+  const cfg = HOT_TIER_CFG[tier] || HOT_TIER_CFG.neutral;
+  if (!cfg.label) return null;
+  return (
+    <span style={{
+      fontSize: 9, fontFamily: 'Space Mono, monospace', fontWeight: 700,
+      letterSpacing: '0.12em', padding: '3px 8px', borderRadius: 2,
+      color: cfg.color, background: cfg.bg, border: `1px solid ${cfg.border}`,
+    }}>{cfg.label}</span>
+  );
+}
+
 /* ── EDGE FINDER TAB (MLB) ────────────────────────────── */
 // Stat sets for game-log charts
 const L5_STATS  = [
@@ -326,6 +347,7 @@ function EdgeFinderTab({ gameData }) {
               <span style={{ fontSize: 9, padding: '2px 7px', border: `1px solid ${b.teamColor}66`, color: b.teamColor, fontFamily: 'Space Mono, monospace', borderRadius: 2, letterSpacing: '0.08em' }}>{b.teamAbbr}</span>
               <span style={{ fontSize: 9, padding: '2px 7px', border: `1px solid ${b.teamColor}44`, color: b.teamColor, fontFamily: 'Space Mono, monospace', borderRadius: 2 }}>{b.position}</span>
               {b.order && <span style={{ fontSize: 9, color: 'var(--dim)', fontFamily: 'Space Mono, monospace' }}>#{b.order}</span>}
+              <HotBadge tier={b.hotTier} />
             </div>
             <div style={{ fontSize: 10, color: 'var(--muted)', fontFamily: 'Space Mono, monospace', letterSpacing: '0.05em' }}>vs {b.pitcher || 'TBD'}</div>
           </div>
@@ -473,6 +495,7 @@ function NbaEdgeFinderTab({ gameData }) {
               <span style={{ fontSize: 9, padding: '2px 7px', border: `1px solid ${p.teamColor}66`, color: p.teamColor, fontFamily: 'Space Mono, monospace', borderRadius: 2, letterSpacing: '0.08em' }}>{p.teamAbbr}</span>
               <span style={{ fontSize: 9, padding: '2px 7px', border: `1px solid ${p.teamColor}44`, color: p.teamColor, fontFamily: 'Space Mono, monospace', borderRadius: 2 }}>{p.pos}</span>
               {p.jersey && p.jersey !== '—' && <span style={{ fontSize: 9, color: 'var(--dim)', fontFamily: 'Space Mono, monospace' }}>#{p.jersey}</span>}
+              <HotBadge tier={p.hotTier} />
             </div>
             <div style={{ fontSize: 10, color: 'var(--muted)', fontFamily: 'Space Mono, monospace', letterSpacing: '0.05em' }}>
               vs {p.oppAbbr} · L5 {p.avgPts.toFixed(1)}/{p.avgReb.toFixed(1)}/{p.avgAst.toFixed(1)} · {(p.h2h || []).length}G vs {p.oppAbbr}

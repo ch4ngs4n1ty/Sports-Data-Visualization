@@ -406,19 +406,41 @@ async function buildMlbEdgeData(gameInfo, bvpData) {
       allBatters.push({ ...base, edgeStats, opsColor, MLB_EDGE_STATS });
     }
   }
-  allBatters.sort((a, b) => {
-    const aOps = a.bvp?.ops ?? -1, bOps = b.bvp?.ops ?? -1;
-    return bOps - aOps;
-  });
-
   // Fetch last-5 season game logs for every batter in parallel, then decorate
-  // each with weather via our backend. MLB Stats API is fast; the weather
-  // endpoint is heavily cached per-gamePk so duplicates across a lineup share.
+  // each with weather. gameLog is needed before we can compute hotScore.
   await Promise.all(allBatters.map(async b => {
     if (!b.id) { b.gameLog = []; return; }
     const log = await fetchPlayerGameLog(b.id, { count: 5 });
     b.gameLog = await attachWeatherToGameLog(log, b.teamAbbr);
   }));
+
+  // Compute hotScore per batter, then sort descending.
+  // Primary signal: BvP OPS vs TODAY's pitcher — how does this batter historically
+  //   perform against this specific arm?
+  // Secondary signal: recent hitting trend — L3 avg hits vs L5 avg hits.
+  // Streak bonus: consecutive games with ≥1 hit from the most recent game back.
+  allBatters.forEach(b => {
+    const bvpOps = b.bvp?.ops ?? 0;
+    const l5 = b.gameLog || [];
+    const hitVals = l5.map(g => g.hits || 0);
+    const l5Avg  = hitVals.length ? hitVals.reduce((s, v) => s + v, 0) / hitVals.length : 0;
+    const l3Avg  = hitVals.slice(0, 3).length ? hitVals.slice(0, 3).reduce((s, v) => s + v, 0) / hitVals.slice(0, 3).length : 0;
+    const trendRatio = l5Avg > 0 ? Math.min(l3Avg / l5Avg, 2.0) : 1.0;
+    // Hit streak: consecutive games with ≥1 hit, starting from latest
+    let hitStreak = 0;
+    for (const h of hitVals) { if (h > 0) hitStreak++; else break; }
+
+    // Weighted composite: BvP OPS dominates (60%), season form trending (40%), streak bonus
+    b.hotScore = (bvpOps * 10) * (0.6 + 0.4 * trendRatio) + hitStreak * 0.4;
+
+    // Tier badge
+    if (bvpOps >= 0.850 && hitStreak >= 3) b.hotTier = 'elite';
+    else if (bvpOps >= 0.700 || trendRatio >= 1.25) b.hotTier = 'hot';
+    else if (l5Avg < 0.4 && bvpOps < 0.400) b.hotTier = 'cold';
+    else b.hotTier = 'neutral';
+  });
+
+  allBatters.sort((a, b) => (b.hotScore ?? 0) - (a.hotScore ?? 0));
 
   return { batters: allBatters, bvpStatus: bvpData.status, MLB_EDGE_STATS };
 }
@@ -502,14 +524,46 @@ async function buildNbaEdgeData(gameInfo) {
     const log = await fetchNbaPlayerGameLog(p.id);
     p.l5  = log.slice(0, 5);
     p.h2h = log.filter(g => g.oppTeamId === p.oppTeamId).slice(0, 5);
-    p.avgPts = p.l5.length ? p.l5.reduce((s, g) => s + (g.pts || 0), 0) / p.l5.length : 0;
-    p.avgReb = p.l5.length ? p.l5.reduce((s, g) => s + (g.reb || 0), 0) / p.l5.length : 0;
-    p.avgAst = p.l5.length ? p.l5.reduce((s, g) => s + (g.ast || 0), 0) / p.l5.length : 0;
+    const avg = (arr, key) => arr.length ? arr.reduce((s, g) => s + (g[key] || 0), 0) / arr.length : 0;
+    p.avgPts = avg(p.l5, 'pts');
+    p.avgReb = avg(p.l5, 'reb');
+    p.avgAst = avg(p.l5, 'ast');
   }));
 
-  const sortByPts = list => list.slice().sort((a, b) => (b.avgPts || 0) - (a.avgPts || 0));
-  const away = sortByPts(all.filter(p => p.side === 'away'));
-  const home = sortByPts(all.filter(p => p.side === 'home'));
+  // Compute hotScore per player, then sort descending within each side.
+  // Primary signal: H2H avg PTS vs TODAY's opponent — does this player elevate
+  //   against this specific team, or fold?
+  // Secondary signal: recent trajectory — L3 avg PTS vs L5 avg PTS (trendRatio).
+  // Elevation bonus: when H2H avg > L5 avg the player genuinely beats this team.
+  all.forEach(p => {
+    const l5Pts  = p.avgPts;
+    const h2hPts = p.h2h.length ? p.h2h.reduce((s, g) => s + (g.pts || 0), 0) / p.h2h.length : 0;
+    const l3Pts  = p.l5.slice(0, 3).length
+      ? p.l5.slice(0, 3).reduce((s, g) => s + (g.pts || 0), 0) / p.l5.slice(0, 3).length : l5Pts;
+
+    const trendRatio    = l5Pts > 0 ? Math.min(l3Pts / l5Pts, 2.0) : 1.0;
+    const elevationBonus = h2hPts > l5Pts ? (h2hPts - l5Pts) * 0.5 : 0;
+
+    // Consecutive games scoring 20+ pts from most recent game back (pts streak)
+    let ptStreak = 0;
+    for (const g of p.l5) { if ((g.pts || 0) >= 20) ptStreak++; else break; }
+
+    // Score: H2H history (if exists) drives half; recent form (trended) drives half; bonus extras
+    p.hotScore = p.h2h.length
+      ? (h2hPts * 0.5 + l5Pts * 0.5) * trendRatio + elevationBonus + ptStreak * 0.3
+      : l5Pts * trendRatio + ptStreak * 0.3;
+
+    // Tier badge
+    const h2hElite = h2hPts > 0 && h2hPts >= l5Pts * 1.15 && h2hPts >= 20;
+    if ((ptStreak >= 3 && l5Pts >= 20) || h2hElite) p.hotTier = 'elite';
+    else if (trendRatio >= 1.15 || (h2hPts > 0 && h2hPts > l5Pts))  p.hotTier = 'hot';
+    else if (trendRatio <  0.80 || (p.l5.length >= 3 && l5Pts < 8))  p.hotTier = 'cold';
+    else p.hotTier = 'neutral';
+  });
+
+  const sortByHot = list => list.slice().sort((a, b) => (b.hotScore ?? 0) - (a.hotScore ?? 0));
+  const away = sortByHot(all.filter(p => p.side === 'away'));
+  const home = sortByHot(all.filter(p => p.side === 'home'));
 
   return { players: [...away, ...home], awayAbbr: gameInfo.awayAbbr, homeAbbr: gameInfo.homeAbbr };
 }
