@@ -21,8 +21,10 @@
   <script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js" crossorigin="anonymous"></script>
   <script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js" crossorigin="anonymous"></script>
 
-  <!-- Data layer (plain JS — loaded before components) -->
-  <script src="data-layer.js"></script>
+  <!-- Shared + sport-specific data layer -->
+  <script src="frontend/data/shared/core.js"></script>
+  <script src="frontend/data/mlb/index.js"></script>
+  <script src="frontend/data/nba/index.js"></script>
 
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
@@ -133,9 +135,13 @@
 <div id="root"></div>
 
 <!-- Component scripts (Babel-transpiled in the browser) -->
-<script type="text/babel" src="ui-atoms.jsx"></script>
-<script type="text/babel" src="tabs.jsx"></script>
-<script type="text/babel" src="screens-v2.jsx"></script>
+<script type="text/babel" src="frontend/shared/ui-atoms.jsx"></script>
+<script type="text/babel" src="frontend/shared/tabs/common-tabs.jsx"></script>
+<script type="text/babel" src="frontend/sports/mlb/tabs.jsx"></script>
+<script type="text/babel" src="frontend/sports/nba/tabs.jsx"></script>
+<script type="text/babel" src="frontend/shared/screens/home-screen.jsx"></script>
+<script type="text/babel" src="frontend/shared/screens/games-screen.jsx"></script>
+<script type="text/babel" src="frontend/shared/screens/game-detail-screen.jsx"></script>
 
 <script type="text/babel">
 /* ── TWEAK DEFAULTS ──────────────────────────────────── */
