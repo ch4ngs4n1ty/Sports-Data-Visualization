@@ -18,6 +18,7 @@ const TABS_NBA = [
   { id: 'h2h', label: 'HEAD-TO-HEAD' },
   { id: 'form', label: 'LAST 5' },
   { id: 'roster', label: 'ROSTERS' },
+  { id: 'lineups', label: 'LINEUPS' },
   { id: 'edges', label: 'EDGE FINDER' },
   { id: 'ai', label: '◆ AI PLAYS' },
 ];
@@ -62,19 +63,22 @@ function GameDetailScreen({ game, onBack }) {
         const h2h = await fetchH2H(game);
         setStepIdx(4);
 
-        let mlbEdgeData = null, pitchingData = null, nbaEdgeData = null;
+        let mlbEdgeData = null, pitchingData = null, nbaEdgeData = null, nbaLineupData = null;
         if (game.sportKey === 'mlb') {
           const starterData = await fetchMlbStarters(game);
           const bvpData = await fetchGameBvp(game, starterData.lineups, starterData.pitchers);
           mlbEdgeData = await buildMlbEdgeData(game, bvpData);
           pitchingData = { pitchers: starterData.pitchers };
         } else if (game.sportKey === 'nba') {
-          nbaEdgeData = await buildNbaEdgeData(game);
+          [nbaEdgeData, nbaLineupData] = await Promise.all([
+            buildNbaEdgeData(game),
+            buildNbaLineupData(game, awayRoster, homeRoster),
+          ]);
         }
         setStepIdx(5);
 
         if (!cancelled) {
-          setGameData({ gameInfo: game, awayForm, homeForm, injuries, awayRoster, homeRoster, h2h, mlbEdgeData, pitchingData, nbaEdgeData });
+          setGameData({ gameInfo: game, awayForm, homeForm, injuries, awayRoster, homeRoster, h2h, mlbEdgeData, pitchingData, nbaEdgeData, nbaLineupData });
         }
       } catch (e) {
         console.error(e);
@@ -141,6 +145,7 @@ function GameDetailScreen({ game, onBack }) {
             {tab === 'h2h' && <H2HTab gameData={gameData} />}
             {tab === 'form' && <FormTab gameData={gameData} />}
             {tab === 'roster' && <RosterTab gameData={gameData} />}
+            {tab === 'lineups' && <NbaLineupTab gameData={gameData} />}
             {tab === 'edges' && (game.sportKey === 'nba' ? <NbaEdgeFinderTab gameData={gameData} /> : <EdgeFinderTab gameData={gameData} />)}
             {tab === 'pitching' && <PitchingEdgeTab gameData={gameData} />}
             {tab === 'ai' && <AIPlaysTab gameData={gameData} />}

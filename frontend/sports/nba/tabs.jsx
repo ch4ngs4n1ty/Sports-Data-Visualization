@@ -126,4 +126,173 @@ function NbaEdgeFinderTab({ gameData }) {
   );
 }
 
-Object.assign(window, { NbaEdgeFinderTab });
+/* ============================================================
+   NBA LINEUP TAB
+   Side-by-side starter matchups (PG/SG/SF/PF/C) with season vs
+   H2H averages for MIN/PTS/REB/AST/STL/BLK/FG%/3P%/FT%.
+   ============================================================ */
+
+const NBA_LINEUP_STATS = [
+  { key: 'min', label: 'MIN', fmt: v => v.toFixed(1) },
+  { key: 'pts', label: 'PTS', fmt: v => v.toFixed(1) },
+  { key: 'reb', label: 'REB', fmt: v => v.toFixed(1) },
+  { key: 'ast', label: 'AST', fmt: v => v.toFixed(1) },
+  { key: 'stl', label: 'STL', fmt: v => v.toFixed(1) },
+  { key: 'blk', label: 'BLK', fmt: v => v.toFixed(1) },
+  { key: 'to',  label: 'TO',  fmt: v => v.toFixed(1), lowerIsBetter: true },
+  { key: 'fgPct', label: 'FG%', fmt: v => `${(v * 100).toFixed(1)}%` },
+  { key: 'tpPct', label: '3P%', fmt: v => `${(v * 100).toFixed(1)}%` },
+  { key: 'ftPct', label: 'FT%', fmt: v => `${(v * 100).toFixed(1)}%` },
+];
+
+function _nbaPickEdge(awayVal, homeVal, lowerIsBetter) {
+  if (awayVal == null || homeVal == null) return 'tie';
+  const diff = awayVal - homeVal;
+  if (Math.abs(diff) < 0.05) return 'tie';
+  const awayBetter = lowerIsBetter ? diff < 0 : diff > 0;
+  return awayBetter ? 'away' : 'home';
+}
+
+function NbaPlayerColumn({ player, accent, align }) {
+  if (!player) {
+    return (
+      <div style={{ flex: 1, padding: 12, opacity: 0.4, textAlign: align, fontFamily: 'Space Mono, monospace', fontSize: 10, color: 'var(--dim)', letterSpacing: '0.1em' }}>
+        NO STARTER
+      </div>
+    );
+  }
+  return (
+    <div style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: align === 'right' ? 'flex-end' : 'flex-start', gap: 4 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexDirection: align === 'right' ? 'row-reverse' : 'row' }}>
+        <PlayerCard player={{ name: player.name, headshot: player.headshot, pos: player.pos }} size="sm" accent={accent} />
+        <div style={{ textAlign: align }}>
+          <div style={{ fontSize: 13, fontFamily: 'Space Mono, monospace', color: 'var(--text)', fontWeight: 700 }}>{player.name}</div>
+          <div style={{ fontSize: 9, color: 'var(--muted)', fontFamily: 'Space Mono, monospace', letterSpacing: '0.08em' }}>
+            {player.pos}{player.jersey && player.jersey !== '—' ? ` · #${player.jersey}` : ''}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function NbaStatRow({ label, awayVal, homeVal, fmt, lowerIsBetter, awayColor, homeColor }) {
+  const winner = _nbaPickEdge(awayVal, homeVal, lowerIsBetter);
+  const colA = winner === 'away' ? awayColor : winner === 'home' ? 'var(--dim)' : 'var(--muted)';
+  const colH = winner === 'home' ? homeColor : winner === 'away' ? 'var(--dim)' : 'var(--muted)';
+  // Bar widths normalized: bigger value gets full bar, smaller is proportional.
+  const max = Math.max(awayVal || 0, homeVal || 0, 0.001);
+  const wA = ((awayVal || 0) / max) * 100;
+  const wH = ((homeVal || 0) / max) * 100;
+  return (
+    <div style={{ display: 'grid', gridTemplateColumns: '1fr 60px 1fr', alignItems: 'center', gap: 12, padding: '6px 0' }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, justifyContent: 'flex-end' }}>
+        <div style={{ flex: 1, height: 4, background: 'rgba(255,255,255,0.04)', borderRadius: 1, position: 'relative', overflow: 'hidden' }}>
+          <div style={{ position: 'absolute', right: 0, top: 0, bottom: 0, width: `${wA}%`, background: colA, opacity: winner === 'away' ? 0.85 : 0.35 }} />
+        </div>
+        <span style={{ fontSize: 13, fontFamily: 'Space Mono, monospace', fontWeight: 700, color: colA, minWidth: 56, textAlign: 'right' }}>
+          {awayVal == null ? '—' : fmt(awayVal)}
+        </span>
+      </div>
+      <div style={{ textAlign: 'center', fontSize: 9, fontFamily: 'Space Mono, monospace', color: 'var(--dim)', letterSpacing: '0.18em' }}>{label}</div>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+        <span style={{ fontSize: 13, fontFamily: 'Space Mono, monospace', fontWeight: 700, color: colH, minWidth: 56 }}>
+          {homeVal == null ? '—' : fmt(homeVal)}
+        </span>
+        <div style={{ flex: 1, height: 4, background: 'rgba(255,255,255,0.04)', borderRadius: 1, position: 'relative', overflow: 'hidden' }}>
+          <div style={{ position: 'absolute', left: 0, top: 0, bottom: 0, width: `${wH}%`, background: colH, opacity: winner === 'home' ? 0.85 : 0.35 }} />
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function NbaMatchupRow({ matchup, awayAbbr, homeAbbr, awayColor, homeColor }) {
+  const [mode, setMode] = React.useState('season'); // 'season' | 'h2h' | 'l5'
+  const a = matchup.away;
+  const h = matchup.home;
+  const aStats = a ? a[mode] : null;
+  const hStats = h ? h[mode] : null;
+  const aGames = a ? (mode === 'h2h' ? a.h2hCount : a[mode]?.games) : 0;
+  const hGames = h ? (mode === 'h2h' ? h.h2hCount : h[mode]?.games) : 0;
+
+  return (
+    <HudCard style={{ padding: 18 }} accent={'var(--cyan)'}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 14, gap: 14, flexWrap: 'wrap' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+          <span style={{ fontSize: 11, fontFamily: 'Orbitron, monospace', fontWeight: 700, color: 'var(--cyan)', letterSpacing: '0.18em', padding: '4px 10px', border: '1px solid rgba(0,212,255,0.3)', borderRadius: 2 }}>
+            {matchup.position}
+          </span>
+          <span style={{ fontSize: 9, color: 'var(--dim)', fontFamily: 'Space Mono, monospace', letterSpacing: '0.15em' }}>
+            POSITION MATCHUP
+          </span>
+        </div>
+        <div style={{ display: 'flex', gap: 4 }}>
+          {[['season', 'SEASON'], ['l5', 'L5'], ['h2h', `H2H`]].map(([v, l]) => (
+            <button key={v} onClick={() => setMode(v)}
+              style={{ padding: '3px 10px', background: mode === v ? 'rgba(0,212,255,0.1)' : 'transparent',
+                border: `1px solid ${mode === v ? 'rgba(0,212,255,0.3)' : 'rgba(255,255,255,0.06)'}`,
+                color: mode === v ? 'var(--cyan)' : 'var(--dim)', fontFamily: 'Space Mono, monospace',
+                fontSize: 9, cursor: 'pointer', borderRadius: 2, letterSpacing: '0.1em' }}>{l}</button>
+          ))}
+        </div>
+      </div>
+
+      <div style={{ display: 'flex', alignItems: 'center', gap: 14, marginBottom: 12 }}>
+        <NbaPlayerColumn player={a} accent={awayColor} align="left" />
+        <div style={{ fontFamily: 'Orbitron, monospace', fontSize: 11, color: 'var(--dim)', letterSpacing: '0.15em' }}>VS</div>
+        <NbaPlayerColumn player={h} accent={homeColor} align="right" />
+      </div>
+
+      <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 9, fontFamily: 'Space Mono, monospace', color: 'var(--muted)', letterSpacing: '0.1em', marginBottom: 8, padding: '6px 0', borderTop: '1px solid rgba(255,255,255,0.05)', borderBottom: '1px solid rgba(255,255,255,0.05)' }}>
+        <span>{awayAbbr} · {aGames || 0} GAMES{mode === 'h2h' ? ` VS ${homeAbbr}` : ''}</span>
+        <span style={{ color: 'var(--dim)' }}>
+          {mode === 'season' ? 'SEASON AVERAGES' : mode === 'l5' ? 'LAST 5 AVERAGES' : `HEAD-TO-HEAD AVERAGES`}
+        </span>
+        <span>{homeAbbr} · {hGames || 0} GAMES{mode === 'h2h' ? ` VS ${awayAbbr}` : ''}</span>
+      </div>
+
+      {(!aStats || !aStats.games) && (!hStats || !hStats.games) ? (
+        <div style={{ textAlign: 'center', padding: '20px 0', fontSize: 10, color: 'var(--dim)', fontFamily: 'Space Mono, monospace', letterSpacing: '0.1em' }}>
+          {mode === 'h2h' ? 'NO HEAD-TO-HEAD GAMES THIS SEASON' : 'NO GAMES PLAYED'}
+        </div>
+      ) : (
+        <div>
+          {NBA_LINEUP_STATS.map(s => (
+            <NbaStatRow key={s.key} label={s.label}
+              awayVal={aStats?.[s.key] ?? null}
+              homeVal={hStats?.[s.key] ?? null}
+              fmt={s.fmt} lowerIsBetter={s.lowerIsBetter}
+              awayColor={awayColor} homeColor={homeColor} />
+          ))}
+        </div>
+      )}
+    </HudCard>
+  );
+}
+
+function NbaLineupTab({ gameData }) {
+  const { gameInfo, nbaLineupData } = gameData || {};
+  if (!nbaLineupData) {
+    return <div style={emptyMsg}>Lineup data loading or unavailable.</div>;
+  }
+  const awayColor = '#00d4ff';
+  const homeColor = '#ffd060';
+
+  return (
+    <div style={{ padding: '20px 0' }}>
+      <SectionHeader label="STARTING LINEUPS · POSITION MATCHUPS"
+        sub={`${gameInfo.awayAbbr} vs ${gameInfo.homeAbbr} · most-played player at each position · season / L5 / head-to-head averages`} />
+
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+        {nbaLineupData.matchups.map(m => (
+          <NbaMatchupRow key={m.position} matchup={m}
+            awayAbbr={gameInfo.awayAbbr} homeAbbr={gameInfo.homeAbbr}
+            awayColor={awayColor} homeColor={homeColor} />
+        ))}
+      </div>
+    </div>
+  );
+}
+
+Object.assign(window, { NbaEdgeFinderTab, NbaLineupTab });

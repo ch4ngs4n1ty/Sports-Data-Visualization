@@ -10,11 +10,25 @@ async function fetchNbaPlayerGameLog(playerId, { season } = {}) {
   if (!data) return [];
 
   const names = (data.names || []).map(n => String(n).toLowerCase());
+  // Try a couple of known label variants for the FG/3P/FT pairs
+  const findIdx = (...candidates) => {
+    for (const c of candidates) { const i = names.indexOf(c); if (i >= 0) return i; }
+    return -1;
+  };
   const idx = {
-    min: names.indexOf('minutes'),
-    reb: names.indexOf('totalrebounds'),
-    ast: names.indexOf('assists'),
-    pts: names.indexOf('points'),
+    min: findIdx('minutes'),
+    reb: findIdx('totalrebounds', 'rebounds'),
+    ast: findIdx('assists'),
+    pts: findIdx('points'),
+    stl: findIdx('steals'),
+    blk: findIdx('blocks'),
+    to:  findIdx('turnovers'),
+    fgm: findIdx('fieldgoalsmade'),
+    fga: findIdx('fieldgoalsattempted'),
+    tpm: findIdx('threepointfieldgoalsmade'),
+    tpa: findIdx('threepointfieldgoalsattempted'),
+    ftm: findIdx('freethrowsmade'),
+    fta: findIdx('freethrowsattempted'),
   };
 
   const events = data.events || {};
@@ -26,7 +40,7 @@ async function fetchNbaPlayerGameLog(playerId, { season } = {}) {
       for (const ev of (cat.events || [])) {
         const meta = events[ev.eventId] || {};
         const stats = ev.stats || [];
-        const num = i => { if (i < 0) return 0; const v = parseInt(stats[i], 10); return Number.isNaN(v) ? 0 : v; };
+        const num = i => { if (i < 0) return 0; const v = parseFloat(stats[i]); return Number.isNaN(v) ? 0 : v; };
         out.push({
           eventId: ev.eventId,
           rawDate: meta.gameDate || '',
@@ -38,6 +52,15 @@ async function fetchNbaPlayerGameLog(playerId, { season } = {}) {
           pts: num(idx.pts),
           reb: num(idx.reb),
           ast: num(idx.ast),
+          stl: num(idx.stl),
+          blk: num(idx.blk),
+          to:  num(idx.to),
+          fgm: num(idx.fgm),
+          fga: num(idx.fga),
+          tpm: num(idx.tpm),
+          tpa: num(idx.tpa),
+          ftm: num(idx.ftm),
+          fta: num(idx.fta),
           result: meta.gameResult || null,
           score: meta.score || null,
         });
@@ -111,4 +134,123 @@ async function buildNbaEdgeData(gameInfo) {
   return { players: [...away, ...home], awayAbbr: gameInfo.awayAbbr, homeAbbr: gameInfo.homeAbbr };
 }
 
-Object.assign(window, { fetchNbaPlayerGameLog, buildNbaEdgeData });
+/* ============================================================
+   NBA LINEUP MATCHUPS
+   Pick the most-likely starter at each position (PG/SG/SF/PF/C)
+   and pair them across teams. For each pair compute season
+   averages AND head-to-head averages (games where both faced
+   the opposing team) for MIN/PTS/REB/AST/STL/BLK/FG%/3P%/FT%.
+   ============================================================ */
+
+const NBA_LINEUP_POSITIONS = ['PG', 'SG', 'SF', 'PF', 'C'];
+
+function _avgGames(games, key) {
+  if (!games?.length) return 0;
+  const sum = games.reduce((s, g) => s + (Number(g[key]) || 0), 0);
+  return sum / games.length;
+}
+
+function _pctSafe(num, den) {
+  if (!den) return 0;
+  return num / den;
+}
+
+// Aggregate a list of games into season-style averages for a player
+function _aggregatePlayerGames(games) {
+  if (!games?.length) return null;
+  const sumKey = key => games.reduce((s, g) => s + (Number(g[key]) || 0), 0);
+  const fgm = sumKey('fgm'), fga = sumKey('fga');
+  const tpm = sumKey('tpm'), tpa = sumKey('tpa');
+  const ftm = sumKey('ftm'), fta = sumKey('fta');
+  return {
+    games: games.length,
+    min: _avgGames(games, 'min'),
+    pts: _avgGames(games, 'pts'),
+    reb: _avgGames(games, 'reb'),
+    ast: _avgGames(games, 'ast'),
+    stl: _avgGames(games, 'stl'),
+    blk: _avgGames(games, 'blk'),
+    to:  _avgGames(games, 'to'),
+    fgPct: _pctSafe(fgm, fga),
+    tpPct: _pctSafe(tpm, tpa),
+    ftPct: _pctSafe(ftm, fta),
+  };
+}
+
+// Pick the most-played player at a given position from a roster, given that
+// player's gamelog for sorting. Falls back to looser matches (G/F) when no
+// exact PG/SG/SF/PF/C match is available.
+function _pickStarterByPosition(playersWithLogs, position, takenIds) {
+  const exactMatch = playersWithLogs
+    .filter(p => !takenIds.has(p.id))
+    .filter(p => (p.pos || '').toUpperCase() === position)
+    .sort((a, b) => (b.season?.min || 0) - (a.season?.min || 0));
+  if (exactMatch[0]) return exactMatch[0];
+
+  // Fallbacks for ambiguous "G" / "F" / "G-F" rosters
+  const looseGroup = position === 'PG' || position === 'SG' ? ['G']
+    : position === 'SF' || position === 'PF' ? ['F']
+    : [];
+  if (looseGroup.length) {
+    const loose = playersWithLogs
+      .filter(p => !takenIds.has(p.id))
+      .filter(p => looseGroup.includes((p.pos || '').toUpperCase()))
+      .sort((a, b) => (b.season?.min || 0) - (a.season?.min || 0));
+    if (loose[0]) return loose[0];
+  }
+  return null;
+}
+
+async function buildNbaLineupData(gameInfo, awayRoster, homeRoster) {
+  if (gameInfo?.sportKey !== 'nba') return null;
+
+  const isActive = p => !/^(out|suspended|injured_reserve)/i.test(p.status || '');
+  const TOP_N = 12;
+  const awayPick = (awayRoster || []).filter(isActive).slice(0, TOP_N);
+  const homePick = (homeRoster || []).filter(isActive).slice(0, TOP_N);
+
+  const enrich = async (players, oppTeamId) => {
+    return Promise.all(players.map(async p => {
+      const log = await fetchNbaPlayerGameLog(p.id);
+      const h2hGames = log.filter(g => g.oppTeamId === String(oppTeamId));
+      return {
+        id: p.id,
+        name: p.name,
+        pos: p.pos,
+        jersey: p.jersey,
+        headshot: p.headshot,
+        status: p.status,
+        season: _aggregatePlayerGames(log),
+        h2h: _aggregatePlayerGames(h2hGames),
+        h2hCount: h2hGames.length,
+        l5: _aggregatePlayerGames(log.slice(0, 5)),
+      };
+    }));
+  };
+
+  const [awayEnriched, homeEnriched] = await Promise.all([
+    enrich(awayPick, gameInfo.homeTeamId),
+    enrich(homePick, gameInfo.awayTeamId),
+  ]);
+
+  const awayTaken = new Set();
+  const homeTaken = new Set();
+  const matchups = [];
+  for (const pos of NBA_LINEUP_POSITIONS) {
+    const a = _pickStarterByPosition(awayEnriched, pos, awayTaken);
+    const h = _pickStarterByPosition(homeEnriched, pos, homeTaken);
+    if (a) awayTaken.add(a.id);
+    if (h) homeTaken.add(h.id);
+    matchups.push({ position: pos, away: a || null, home: h || null });
+  }
+
+  return {
+    matchups,
+    awayAbbr: gameInfo.awayAbbr,
+    homeAbbr: gameInfo.homeAbbr,
+    awayTeamId: gameInfo.awayTeamId,
+    homeTeamId: gameInfo.homeTeamId,
+  };
+}
+
+Object.assign(window, { fetchNbaPlayerGameLog, buildNbaEdgeData, buildNbaLineupData });
