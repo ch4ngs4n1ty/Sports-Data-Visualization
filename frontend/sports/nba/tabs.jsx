@@ -271,8 +271,147 @@ function NbaMatchupRow({ matchup, awayAbbr, homeAbbr, awayColor, homeColor }) {
   );
 }
 
+/* ============================================================
+   NBA INJURY REPORT
+   Sits above the position matchups. Shows player face cards
+   tagged Out / Doubtful / Questionable / Day-to-Day with the
+   ESPN injury comment and estimated return date.
+   ============================================================ */
+
+function _normalizeInjuryStatus(status) {
+  const s = String(status || '').toLowerCase().trim();
+  if (s === 'out' || s.includes('out for season') || s.includes('injured reserve') || s.includes('suspended')) return 'OUT';
+  if (s === 'doubtful' || s.includes('doubt')) return 'DOUBTFUL';
+  if (s === 'questionable' || s.includes('quest')) return 'QUESTIONABLE';
+  if (s === 'day-to-day' || s.includes('day to day') || s === 'probable') return 'DAY-TO-DAY';
+  return (status || 'UNKNOWN').toString().toUpperCase();
+}
+
+function _injurySeverity(normalized) {
+  const order = { 'OUT': 0, 'DOUBTFUL': 1, 'QUESTIONABLE': 2, 'DAY-TO-DAY': 3 };
+  return order[normalized] ?? 4;
+}
+
+function _injuryColor(normalized) {
+  if (normalized === 'OUT') return 'var(--orange)';
+  if (normalized === 'DOUBTFUL') return '#ff9558';
+  if (normalized === 'QUESTIONABLE') return 'var(--gold)';
+  if (normalized === 'DAY-TO-DAY') return 'var(--cyan)';
+  return 'var(--muted)';
+}
+
+function NbaInjuryCard({ injury, accent }) {
+  const norm = _normalizeInjuryStatus(injury.status);
+  const color = _injuryColor(norm);
+
+  // Prefer the long comment for context; fall back to short.
+  const comment = injury.longComment || injury.shortComment || injury.detail || '';
+  const bodyPart = injury.location || injury.type || injury.detail || injury.desc || '';
+
+  return (
+    <HudCard style={{ padding: 14 }} accent={accent}>
+      <div style={{ display: 'flex', alignItems: 'flex-start', gap: 14 }}>
+        <PlayerCard player={{ name: injury.name, headshot: injury.headshot, pos: injury.pos }} size="sm" accent={accent} />
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', marginBottom: 6 }}>
+            <span style={{ fontSize: 13, fontFamily: 'Space Mono, monospace', color: 'var(--text)', fontWeight: 700 }}>
+              {injury.name}
+            </span>
+            {injury.pos && (
+              <span style={{ fontSize: 9, color: 'var(--dim)', fontFamily: 'Space Mono, monospace', letterSpacing: '0.08em' }}>
+                {injury.pos}
+              </span>
+            )}
+            <span style={{ fontSize: 9, fontFamily: 'Orbitron, monospace', fontWeight: 700, color, letterSpacing: '0.18em',
+              padding: '3px 8px', border: `1px solid ${color}55`, background: `${color}14`, borderRadius: 2 }}>
+              {norm}
+            </span>
+          </div>
+
+          {bodyPart && (
+            <div style={{ fontSize: 10, fontFamily: 'Space Mono, monospace', color: 'var(--muted)', letterSpacing: '0.05em', marginBottom: 4, textTransform: 'uppercase' }}>
+              {bodyPart}
+            </div>
+          )}
+
+          {comment && (
+            <div style={{ fontSize: 11, fontFamily: 'Space Mono, monospace', color: 'var(--text)', lineHeight: 1.5, marginBottom: 6 }}>
+              {comment}
+            </div>
+          )}
+
+          <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
+            {injury.returnDate && (
+              <div style={{ fontSize: 9, fontFamily: 'Space Mono, monospace', color: 'var(--dim)', letterSpacing: '0.08em' }}>
+                <span style={{ color: 'var(--dim)' }}>EST. RETURN ·</span>{' '}
+                <span style={{ color: 'var(--cyan)' }}>{injury.returnDate}</span>
+              </div>
+            )}
+            {injury.reportedDate && (
+              <div style={{ fontSize: 9, fontFamily: 'Space Mono, monospace', color: 'var(--dim)', letterSpacing: '0.08em' }}>
+                <span style={{ color: 'var(--dim)' }}>REPORTED ·</span>{' '}
+                <span style={{ color: 'var(--muted)' }}>{injury.reportedDate}</span>
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+    </HudCard>
+  );
+}
+
+function NbaInjuryReport({ injuries, awayAbbr, homeAbbr, awayColor, homeColor }) {
+  const sortBySeverity = list => (list || [])
+    .slice()
+    .sort((a, b) => _injurySeverity(_normalizeInjuryStatus(a.status)) - _injurySeverity(_normalizeInjuryStatus(b.status)));
+
+  const away = sortBySeverity(injuries?.away);
+  const home = sortBySeverity(injuries?.home);
+
+  if (!away.length && !home.length) {
+    return (
+      <div style={{ marginBottom: 24 }}>
+        <SectionHeader label="INJURY REPORT" sub="No injuries reported for either team" />
+      </div>
+    );
+  }
+
+  const TeamColumn = ({ list, abbr, color }) => (
+    <div style={{ flex: 1, minWidth: 280 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10 }}>
+        <span style={{ fontSize: 11, fontFamily: 'Orbitron, monospace', fontWeight: 700, color, letterSpacing: '0.18em' }}>{abbr}</span>
+        <span style={{ fontSize: 9, color: 'var(--dim)', fontFamily: 'Space Mono, monospace', letterSpacing: '0.1em' }}>
+          {list.length} {list.length === 1 ? 'PLAYER' : 'PLAYERS'}
+        </span>
+      </div>
+      {list.length ? (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+          {list.map((inj, i) => (
+            <NbaInjuryCard key={inj.athleteId || `${inj.name}-${i}`} injury={inj} accent={color} />
+          ))}
+        </div>
+      ) : (
+        <div style={{ fontSize: 10, color: 'var(--dim)', fontFamily: 'Space Mono, monospace', padding: '12px 0', letterSpacing: '0.1em' }}>
+          NO INJURIES REPORTED
+        </div>
+      )}
+    </div>
+  );
+
+  return (
+    <div style={{ marginBottom: 24 }}>
+      <SectionHeader label="INJURY REPORT"
+        sub={`Status, body part, ESPN comment, and estimated return · ${away.length + home.length} total`} />
+      <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap' }}>
+        <TeamColumn list={away} abbr={awayAbbr} color={awayColor} />
+        <TeamColumn list={home} abbr={homeAbbr} color={homeColor} />
+      </div>
+    </div>
+  );
+}
+
 function NbaLineupTab({ gameData }) {
-  const { gameInfo, nbaLineupData } = gameData || {};
+  const { gameInfo, nbaLineupData, injuries } = gameData || {};
   if (!nbaLineupData) {
     return <div style={emptyMsg}>Lineup data loading or unavailable.</div>;
   }
@@ -281,6 +420,10 @@ function NbaLineupTab({ gameData }) {
 
   return (
     <div style={{ padding: '20px 0' }}>
+      <NbaInjuryReport injuries={injuries}
+        awayAbbr={gameInfo.awayAbbr} homeAbbr={gameInfo.homeAbbr}
+        awayColor={awayColor} homeColor={homeColor} />
+
       <SectionHeader label="STARTING LINEUPS · POSITION MATCHUPS"
         sub={`${gameInfo.awayAbbr} vs ${gameInfo.homeAbbr} · most-played player at each position · season / L5 / head-to-head averages`} />
 

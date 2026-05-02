@@ -233,6 +233,17 @@ async function fetchInjuries(gameInfo) {
     const t = data.injuries.find(team => String(team.id) === String(teamId));
     return (t?.injuries || []).map(inj => {
       const athleteId = inj.athlete?.id || null;
+      const details = inj.details || {};
+      // ESPN sometimes provides a returnDate string (YYYY-MM-DD) or a free-form
+      // string like "January 5". Keep both raw and humanized forms.
+      const returnRaw = details.returnDate || inj.athlete?.injuries?.[0]?.details?.returnDate || null;
+      let returnDate = null;
+      if (returnRaw) {
+        const d = new Date(returnRaw);
+        returnDate = Number.isNaN(d.getTime())
+          ? returnRaw
+          : d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+      }
       return {
         name: inj.athlete?.displayName || '—',
         status: inj.status || 'Unknown',
@@ -240,6 +251,16 @@ async function fetchInjuries(gameInfo) {
         athleteId,
         headshot: athleteId ? `https://a.espncdn.com/i/headshots/${sp.league}/players/full/${athleteId}.png` : null,
         desc: (inj.shortComment || '').match(/\(([^)]+)\)/)?.[1] || '',
+        // Full report fields
+        shortComment: inj.shortComment || '',
+        longComment: inj.longComment || '',
+        type: details.type || '',
+        location: details.location || '',
+        detail: details.detail || '',
+        side: details.side || '',
+        fantasyStatus: details.fantasyStatus?.description || '',
+        returnDate,
+        reportedDate: inj.date ? new Date(inj.date).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) : null,
       };
     });
   };
