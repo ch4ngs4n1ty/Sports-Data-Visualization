@@ -27,12 +27,77 @@ function MlbReadyRow({ r }) {
   );
 }
 
+/* ── Hot-play signal ─────────────────────────────────────
+   The "go here first" indicator. Answers, without opening the game:
+   is there a batter or starter in a run worth shopping props on?
+   Backed by /api/mlb/slate-signals (last-10 batter form + last-5
+   starter form). Triage only — the per-game models remain the truth. */
+const SIGNAL_TIERS = {
+  hot:  { color: 'var(--green)',  glyph: '🔥', label: 'HOT PLAY' },
+  warm: { color: 'var(--gold)',   glyph: '▲',  label: 'LEAN'     },
+  note: { color: 'var(--cyan)',   glyph: '•',  label: 'LOOK'     },
+};
+
+function SignalBadge({ sig }) {
+  const t = SIGNAL_TIERS[sig?.tier];
+  if (!t || !sig.top) return null;
+  const top = sig.top;
+  // A vulnerable starter is an opportunity too, but it points the other way —
+  // label it so the user doesn't read it as "back this arm".
+  const fade = top.direction === 'fade';
+  const color = fade ? 'var(--orange)' : t.color;
+  const extra = sig.count - 1;
+
+  return (
+    <div
+      title={`${top.name} — ${top.why}${top.confirmed ? '' : ' (lineup not posted; projected)'}`}
+      style={{
+        display: 'flex', alignItems: 'center', gap: 'var(--s2)',
+        marginTop: 'var(--s3)', padding: '7px 9px',
+        borderRadius: 'var(--r-sm)',
+        background: color + '14',
+        border: `1px solid ${color}44`,
+      }}>
+      <span aria-hidden="true" style={{ fontSize: 12, lineHeight: 1, flexShrink: 0 }}>
+        {fade ? '⚠' : t.glyph}
+      </span>
+      <div style={{ minWidth: 0, flex: 1 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+          <span className="piq-num" style={{ fontSize: 'var(--fs-micro)', color,
+            letterSpacing: '0.12em', fontWeight: 700 }}>
+            {fade ? 'FADE SP' : t.label}
+          </span>
+          {!top.confirmed && (
+            <span style={{ fontSize: 'var(--fs-micro)', color: 'var(--faint)',
+              fontFamily: 'Space Mono, monospace' }} title="Lineup not posted yet — projected">PROJ</span>
+          )}
+        </div>
+        <div style={{ fontSize: 'var(--fs-xs)', fontFamily: 'Space Mono, monospace',
+          color: 'var(--text)', whiteSpace: 'nowrap', overflow: 'hidden',
+          textOverflow: 'ellipsis' }}>
+          {top.name} <span style={{ color: 'var(--muted)' }}>· {top.stat}</span>
+        </div>
+      </div>
+      {extra > 0 && (
+        <span title={`${extra} more signal${extra === 1 ? '' : 's'} in this game`}
+          style={{ fontSize: 'var(--fs-micro)', fontFamily: 'Space Mono, monospace',
+            color: 'var(--muted)', flexShrink: 0 }}>+{extra}</span>
+      )}
+    </div>
+  );
+}
+
 /* ── One game card ──────────────────────────────────────── */
-function GameCard({ g, onSelect, readiness, formatTime }) {
+function GameCard({ g, onSelect, readiness, signals, formatTime }) {
   const isLive  = g.statusState === 'in';
   const isFinal = g.statusState === 'post';
   const showScore = isLive || isFinal;
-  const accent = isLive ? 'var(--green)' : isFinal ? 'var(--dim)' : 'var(--cyan)';
+  // A hot signal claims the card accent on pre-game cards — that glow is the
+  // whole point of the feature: spot the game to research from across the grid.
+  const hasHot = !isLive && !isFinal && signals?.tier === 'hot';
+  const accent = isLive ? 'var(--green)' : isFinal ? 'var(--dim)'
+    : hasHot ? (signals.top?.direction === 'fade' ? 'var(--orange)' : 'var(--green)')
+    : 'var(--cyan)';
 
   // Winner gets full-strength type; loser is dimmed. Reads instantly at a glance.
   const awayWon = showScore && g.awayScore > g.homeScore;
@@ -80,6 +145,7 @@ function GameCard({ g, onSelect, readiness, formatTime }) {
       </div>
 
       {g.sportKey === 'mlb' && !isLive && !isFinal && <MlbReadyRow r={readiness} />}
+      {g.sportKey === 'mlb' && !isLive && !isFinal && <SignalBadge sig={signals} />}
 
       {/* footer: odds + CTA */}
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 'var(--s2)',
@@ -102,12 +168,15 @@ function GamesScreen({ onSelectGame, onBack }) {
   const [date, setDate] = React.useState(new Date().toLocaleDateString('en-CA', { timeZone: 'America/New_York' }));
   const [filter, setFilter] = React.useState('all');
   const [mlbReadiness, setMlbReadiness] = React.useState([]);
+  const [mlbSignals, setMlbSignals] = React.useState([]);
+  const [hotOnly, setHotOnly] = React.useState(false);
 
   React.useEffect(() => {
     // Mirror prewarm here in case the user lands on Games via deep link.
     prewarmBackend();
     setLoading(true);
     setMlbReadiness([]);
+    setMlbSignals([]);
     fetchAllGames(date).then(g => { setGames(g); setLoading(false); });
 
     // Slate readiness (SP + lineups) for MLB cards. fetchMlbSlateReadiness
@@ -120,11 +189,37 @@ function GamesScreen({ onSelectGame, onBack }) {
       .catch(() => {});
     loadReadiness();
     const pollId = setInterval(loadReadiness, 120000);
-    return () => { cancelled = true; clearInterval(pollId); };
+
+    // Hot-play signals. Recent-form driven, so they move far slower than
+    // lineups — the backend caches for 10 min and we refresh on that cadence
+    // rather than every 2 min with readiness.
+    const loadSignals = () => fetchMlbSlateSignals(date)
+      .then(s => { if (!cancelled) setMlbSignals(s); })
+      .catch(() => {});
+    loadSignals();
+    const sigPollId = setInterval(loadSignals, 600000);
+
+    return () => { cancelled = true; clearInterval(pollId); clearInterval(sigPollId); };
   }, [date]);
 
   const sports = ['all', ...new Set(games.map(g => g.sportKey))];
-  const displayed = filter === 'all' ? games : games.filter(g => g.sportKey === filter);
+
+  // Signals only exist for MLB, and only pre-game. Resolved once here so both
+  // the filter and the cards read the same value.
+  const signalFor = g => (g.sportKey === 'mlb' && g.statusState === 'pre')
+    ? findMlbSignals(mlbSignals, g.awayFull, g.homeFull)
+    : null;
+  const hotCount = games.filter(g => {
+    const s = signalFor(g);
+    return s && (s.tier === 'hot' || s.tier === 'warm');
+  }).length;
+
+  const bySport0 = filter === 'all' ? games : games.filter(g => g.sportKey === filter);
+  // "Signals only" is the real research-time saver: collapse a 15-game slate
+  // down to the handful that actually have something to shop.
+  const displayed = hotOnly
+    ? bySport0.filter(g => { const s = signalFor(g); return s && (s.tier === 'hot' || s.tier === 'warm'); })
+    : bySport0;
   const bySport = {};
   displayed.forEach(g => { (bySport[g.sportKey] = bySport[g.sportKey] || []).push(g); });
   const formatTime = iso => new Date(iso).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', timeZoneName: 'short' });
@@ -156,6 +251,23 @@ function GamesScreen({ onSelectGame, onBack }) {
                 {liveCount} LIVE
               </Chip>
             )}
+            {hotCount > 0 && (
+              <button
+                onClick={() => setHotOnly(v => !v)}
+                aria-pressed={hotOnly}
+                title="Show only games with a hot batter or notable starter"
+                style={{
+                  display: 'inline-flex', alignItems: 'center', gap: 5,
+                  fontSize: 'var(--fs-micro)', fontFamily: 'Space Mono, monospace',
+                  fontWeight: 700, letterSpacing: '0.12em',
+                  color: hotOnly ? 'var(--bg)' : 'var(--green)',
+                  background: hotOnly ? 'var(--green)' : 'rgba(0,255,136,0.11)',
+                  border: '1px solid var(--green)',
+                  padding: '3px 9px', borderRadius: 99, cursor: 'pointer',
+                }}>
+                🔥 {hotCount} WITH PLAYS
+              </button>
+            )}
           </div>
         </div>
 
@@ -180,8 +292,11 @@ function GamesScreen({ onSelectGame, onBack }) {
       {/* ── Slate ────────────────────────────────────────── */}
       {loading ? <Loader text="FETCHING SCHEDULE" /> : (
         Object.keys(bySport).length === 0
-          ? <EmptyState title={`NO GAMES ON ${dateLabel}`}
-              hint="Try another date. NCAAB is off-season in spring, and some leagues have dark days mid-week." />
+          ? (hotOnly
+              ? <EmptyState title="NO SIGNALS IN THIS FILTER"
+                  hint="No game here has a hot batter or notable starter right now. Turn off “WITH PLAYS” to see the full slate." />
+              : <EmptyState title={`NO GAMES ON ${dateLabel}`}
+                  hint="Try another date. NCAAB is off-season in spring, and some leagues have dark days mid-week." />)
           : Object.entries(bySport).map(([sportKey, sportGames]) => (
             <section key={sportKey} style={{ marginBottom: 'var(--s6)' }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--s3)', marginBottom: 'var(--s3)' }}>
@@ -196,7 +311,8 @@ function GamesScreen({ onSelectGame, onBack }) {
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))', gap: 'var(--s3)' }}>
                 {sportGames.map((g, i) => (
                   <GameCard key={g.eventId || i} g={g} onSelect={onSelectGame} formatTime={formatTime}
-                    readiness={findMlbReadiness(mlbReadiness, g.awayFull, g.homeFull)} />
+                    readiness={findMlbReadiness(mlbReadiness, g.awayFull, g.homeFull)}
+                    signals={signalFor(g)} />
                 ))}
               </div>
             </section>

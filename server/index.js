@@ -19,6 +19,7 @@ const {
   getBatterPropModel,
   getPitcherPropModel,
 } = require('./mlb/service');
+const { getSlateSignals } = require('./mlb/slate-signals');
 const {
   getNbaStartingLineups,
   findGameLineup: findNbaGameLineup,
@@ -89,7 +90,22 @@ const server = http.createServer(async (req, res) => {
     if (path === '/api/mlb/games') {
       const date = url.searchParams.get('date') || undefined;
       const games = await getGames(date);
-      return sendJson(res, { games });
+      // `_lineups` is internal fuel for the slate-signal scorer; keep the
+      // public shape of this endpoint exactly as it was.
+      return sendJson(res, { games: games.map(({ _lineups, ...g }) => g) });
+    }
+
+    // GET /api/mlb/slate-signals?date=YYYY-MM-DD
+    //   "Where is there a play?" for the WHOLE slate in one call, so the games
+    //   list can badge each card (hot batter / hot or vulnerable starter)
+    //   before the user opens it. Triage only — the per-game prop models
+    //   remain the source of truth once a game is opened.
+    if (path === '/api/mlb/slate-signals') {
+      const date = url.searchParams.get('date') || undefined;
+      const games = await getGames(date);
+      const resolvedDate = date || (games[0]?.startTime || '').slice(0, 10) || undefined;
+      const signals = await getSlateSignals(resolvedDate, games);
+      return sendJson(res, { date: resolvedDate, signals });
     }
 
     // GET /api/mlb/lineups?gamePk=... OR ?away=...&home=...&date=YYYY-MM-DD
