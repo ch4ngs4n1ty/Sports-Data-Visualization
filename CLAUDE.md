@@ -22,7 +22,7 @@ playiq/
 │   │   ├── tabs/common-tabs.jsx                — Sport-agnostic tabs: OverviewTab, H2HTab, FormTab, RosterTab, AIPlaysTab
 │   │   └── screens/
 │   │       ├── home-screen.jsx                 — HomeScreen (sport picker)
-│   │       ├── games-screen.jsx                — GamesScreen (today's games; MLB cards show a research-readiness strip: SP + LINEUP pills + ● READY, from /api/mlb/games readiness flags)
+│   │       ├── games-screen.jsx                — GamesScreen (today's games; MLB cards show a research-readiness strip: SP + LINEUP pills + ● READY, from /api/mlb/games readiness flags, plus a `SignalBadge` hot-play indicator — 🔥 HOT PLAY / ▲ LEAN / • LOOK, or ⚠ FADE SP for a vulnerable starter — from /api/mlb/slate-signals; a "🔥 N WITH PLAYS" toolbar toggle filters the slate down to games that have one)
 │   │       └── game-detail-screen.jsx          — GameDetailScreen + TABS_MLB / TABS_NBA / TABS_OTHER + Phase 1 / Phase 2 loading
 │   └── sports/
 │       ├── mlb/tabs.jsx                        — MLB-specific tabs: MlbDataLoader + useMlbLoadGate (baseball pitch-loop loader with progress bar; on data arrival the bat connects and the ball leaves the park — keyframes injected at runtime, not in index.html), EdgeFinderTab (incl. PROP PROJECTION MODEL board: transparent Log5 P(Hits/RBI/K≥line)), PitchingEdgeTab (incl. PITCHER PROJECTION MODEL board: P(K/Outs/ER/HR≥line) + per-start bar charts), MlbLineupFieldTab (3D CSS-perspective diamond: each starter's card at their fielding position; field rotateX + cards counter-rotated so text stays crisp — no WebGL), LowHrModelTab, HighContactTab
@@ -34,6 +34,7 @@ playiq/
 │   ├── shared/{cache.js,http.js}               — In-memory cache + fetch helpers
 │   ├── index.js                                — Node HTTP server (also loads + scores the F5 model)
 │   ├── mlb/service.js                          — MLB Stats API + Baseball Savant: games, lineups, BvP, weather, high-contact report (pitcher stats + arsenal + splits + bullpen + scoring, each sub-score carries a `methodology` entry: source + exact endpoint + inputs + formula for verifiability), low-HR model, F5 money-line model (buildF5Features + scoreF5 zero-dep XGBoost tree-walker; folded into the high-contact report as `f5`), batter-prop model (`getBatterPropModel`: transparent Log5 + Binomial/Poisson, served at `/api/mlb/prop-model` — no ML, computed live), pitcher-prop model (`getPitcherPropModel`: P(K/Outs/ER/HR ≥ line) via Log5 K-matchup + Binomial/Normal/Poisson + per-start log, served at `/api/mlb/pitcher-props`)
+│   ├── mlb/slate-signals.js                    — Slate-wide "is there a play here?" triage (`getSlateSignals`, served at `/api/mlb/slate-signals`). Scores every pre-game matchup's batters (last-10 form, ONE roster-hydrate call per team) and probable starters (last-5 starts) into 0-100 heat + a `hot`/`warm`/`note` tier, so the games list can badge cards before the user opens one. Hitters are scored only if they're in the posted lineup (else `confirmed:false` and discounted 25%); a starter with a ≥6.00 ERA surfaces as `direction:'fade'`. Transparent additive scoring — NOT ML, and every signal carries a `why` string.
 │   ├── data/{f5_model.json,f5_feature_spec.json}  — F5 XGBoost model + feature contract (committed by CI; see ml/)
 │   ├── nba/{service.js,positional-defense.js,positions.js}  — NBA endpoints (lineups, def-vs-position)
 │   ├── package.json
@@ -192,6 +193,7 @@ For any legacy code that calls `window.claude.complete(prompt)`, `data-layer.js`
 - Key endpoints (consumed by `data-layer.js`):
   - `GET /api/mlb/game-bvp?away=&home=&date=&awayLineup=&homeLineup=&awayPitcher=&homePitcher=` — per-batter BvP vs. starter
   - `GET /api/mlb/weather?gamePk=…` — MLB park weather / roof / wind
+  - `GET /api/mlb/slate-signals?date=YYYY-MM-DD` — hot-play triage for the WHOLE slate in one call: `{ date, signals: [{ gamePk, away, home, tier, count, top, signals[] }] }`. Each signal carries `{ kind:'batter'|'pitcher', name, team, side, score, direction:'back'|'fade', stat, why, confirmed, detail }`. Cached 10 min (team form 30 min, pitcher logs 6 h), concurrency-limited to 4 games at a time.
 - Internal caches: 2-min for live MLB, 15-min for historical BvP (max 500 entries, LRU eviction)
 
 **Rule: maintain the backend's current shape.** Add new endpoints rather than mutating existing ones, and keep it dependency-free.

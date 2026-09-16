@@ -155,16 +155,48 @@ async function fetchMlbSlateReadiness(date, attempt = 0) {
   }
 }
 
+// Slate-wide "is there a play here?" signals — one backend call returns the
+// top hot batter / hot or vulnerable starter per game, so the games list can
+// badge cards before the user opens anything. Same cold-start retry shape as
+// readiness above; degrades to [] so the cards simply render without badges.
+async function fetchMlbSlateSignals(date, attempt = 0) {
+  const BACKOFF = [1500, 3000, 6000, 12000, 18000];
+  try {
+    const r = await fetch(`${API_BASE}/api/mlb/slate-signals${date ? `?date=${encodeURIComponent(date)}` : ''}`);
+    if (!r.ok) throw new Error('status ' + r.status);
+    const d = await r.json();
+    return d.signals || [];
+  } catch (e) {
+    if (attempt < BACKOFF.length) {
+      await new Promise(res => setTimeout(res, BACKOFF[attempt]));
+      return fetchMlbSlateSignals(date, attempt + 1);
+    }
+    return [];
+  }
+}
+
 function _mlbNameNorm(s) { return String(s || '').toLowerCase().replace(/[^a-z]/g, ''); }
 
-// Match an ESPN card (by full team names) to its MLB readiness entry.
-function findMlbReadiness(list, awayFull, homeFull) {
+// Match an ESPN card (by full team names) to its entry in an MLB slate list.
+// Both the readiness and signals payloads key off `away`/`home` names, so the
+// matching lives here once.
+function _findMlbSlateEntry(list, awayFull, homeFull) {
   const aq = _mlbNameNorm(awayFull), hq = _mlbNameNorm(homeFull);
   for (const g of list || []) {
     const ga = _mlbNameNorm(g.away), gh = _mlbNameNorm(g.home);
-    if ((ga.includes(aq) || aq.includes(ga)) && (gh.includes(hq) || hq.includes(gh))) return g.readiness || null;
+    if ((ga.includes(aq) || aq.includes(ga)) && (gh.includes(hq) || hq.includes(gh))) return g;
   }
   return null;
+}
+
+function findMlbReadiness(list, awayFull, homeFull) {
+  return _findMlbSlateEntry(list, awayFull, homeFull)?.readiness || null;
+}
+
+// Returns the whole signal entry ({ top, tier, count, signals }) for a card.
+function findMlbSignals(list, awayFull, homeFull) {
+  const e = _findMlbSlateEntry(list, awayFull, homeFull);
+  return e && e.top ? e : null;
 }
 
 async function fetchWeather(gamePk) {
@@ -337,6 +369,7 @@ Object.assign(window, {
   fetchMlbPitcherProps,
   fetchMlbLineups,
   fetchMlbSlateReadiness, findMlbReadiness,
+  fetchMlbSlateSignals, findMlbSignals,
   fetchPlayerGameLog, attachWeatherToGameLog,
   buildMlbEdgeData, fetchMlbStarters, MLB_TEAM_ABBR,
 });

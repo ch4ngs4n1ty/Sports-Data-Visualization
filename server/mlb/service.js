@@ -57,6 +57,14 @@ async function getGames(dateOverride) {
           awayLineup: awayLU, homeLineup: homeLU, lineups: awayLU && homeLU,
           researchReady: awaySP && homeSP && awayLU && homeLU,
         },
+        // Posted batting-order player IDs. Non-enumerable-by-convention (the
+        // `_` prefix) and stripped by the /api/mlb/games responder — this is
+        // internal fuel for the slate-signal scorer, which must know WHO is
+        // actually starting before it trusts a hot-streak line.
+        _lineups: {
+          awayPlayers: (lu.awayPlayers || []).map(p => p.id).filter(Boolean),
+          homePlayers: (lu.homePlayers || []).map(p => p.id).filter(Boolean),
+        },
       });
     }
   }
