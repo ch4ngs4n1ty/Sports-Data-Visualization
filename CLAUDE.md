@@ -18,7 +18,7 @@ playiq/
 │   │   ├── nba/index.js                        — NBA-only helpers: fetchHoopsPlayerGameLog (shared w/ WNBA), buildNbaEdgeData (incl. per-player `proj` distribution), lineup + positional-defense fetchers, threshold projection model (nbaThresholdProbability + buckets)
 │   │   └── wnba/index.js                       — WNBA: buildWnbaEdgeData + buildWnbaLineupData (starters from ESPN boxscore once live; top-5-by-minutes projection pre-game). Reuses the basketball gamelog parser + the (sport-agnostic) threshold model; NO Rotowire lineups / defense-vs-position (NBA-only backends), so boards run without a matchup adjustment. `NbaEdgeFinderTab` is reused for WNBA (gated on `gameInfo.sportKey === 'wnba'`); the LINEUPS tab instead dispatches to `WnbaCourtLineupTab` (3D court view) rather than `NbaLineupTab`
 │   ├── shared/
-│   │   ├── ui-atoms.jsx                        — Primitive UI components (HudCard, PlayerCard, Sparkline, OpsGauge, WeatherPill, TabLoader, etc.)
+│   │   ├── ui-atoms.jsx                        — Primitive UI components (HudCard, PlayerCard, Sparkline, OpsGauge, WeatherPill, TabLoader, etc.). `GameLogChart` renders bars in ARRAY ORDER (callers decide chronology — hoops passes `nbaOldestFirst()` so time runs left→right) and labels each bar with the opponent's **team logo** when the game object carries `oppLogo`, falling back to the `vs/@ABBR` text when it doesn't (MLB logs currently fall back)
 │   │   ├── tabs/common-tabs.jsx                — Sport-agnostic tabs: OverviewTab, H2HTab, FormTab, RosterTab, AIPlaysTab
 │   │   └── screens/
 │   │       ├── home-screen.jsx                 — HomeScreen (sport picker)

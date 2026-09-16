@@ -312,10 +312,17 @@ const defaultStatColorFor = (v, sk) => {
   return v === 0 ? 'var(--orange)' : v === 1 ? 'var(--cyan)' : 'var(--green)';
 };
 
+// Chart axis text sat on `--muted` (2.85:1) and `--dim` (1.58:1) against the
+// card background — both below the WCAG AA 4.5:1 floor, which is what made the
+// labels read as unreadable grey. These clear AA while staying subordinate to
+// `--text`. Worth promoting into `:root` and repointing `--muted`/`--dim`.
+const GLC_LABEL  = '#8ba3c0';   // 7.04:1
+const GLC_SUBTLE = '#6d86a6';   // 4.88:1
+
 function GameLogChart({ games, stats, defaultStat, emptyLabel = 'NO GAMES', accent = 'var(--cyan)', chartHeight = 130, maxBarW = 64, colorFor = defaultStatColorFor }) {
   const [statKey, setStatKey] = React.useState(defaultStat || stats[0].key);
   if (!games?.length) {
-    return <div style={{ fontSize: 10, color: 'var(--dim)', fontFamily: 'Space Mono, monospace', padding: '16px 0', letterSpacing: '0.1em' }}>{emptyLabel}</div>;
+    return <div style={{ fontSize: 10.5, color: GLC_SUBTLE, fontFamily: 'Space Mono, monospace', padding: '16px 0', letterSpacing: '0.1em' }}>{emptyLabel}</div>;
   }
 
   const vals = games.map(g => Number(g[statKey] || 0));
@@ -336,13 +343,13 @@ function GameLogChart({ games, stats, defaultStat, emptyLabel = 'NO GAMES', acce
   return (
     <div>
       <div style={{ display: 'flex', gap: 6, marginBottom: 14, flexWrap: 'wrap' }}>
-        <span style={{ fontSize: 9, color: 'var(--dim)', fontFamily: 'Space Mono, monospace', letterSpacing: '0.14em', alignSelf: 'center', marginRight: 4 }}>STAT</span>
+        <span style={{ fontSize: 10, color: GLC_SUBTLE, fontFamily: 'Space Mono, monospace', letterSpacing: '0.14em', alignSelf: 'center', marginRight: 4 }}>STAT</span>
         {stats.map(s => (
           <button key={s.key} onClick={() => setStatKey(s.key)}
             style={{ padding: '5px 11px', background: statKey === s.key ? `${accent}18` : 'transparent',
               border: `1px solid ${statKey === s.key ? accent : 'rgba(255,255,255,0.06)'}`,
-              color: statKey === s.key ? accent : 'var(--muted)', fontFamily: 'Space Mono, monospace',
-              fontSize: 10, cursor: 'pointer', borderRadius: 2, letterSpacing: '0.08em', fontWeight: 700 }}>
+              color: statKey === s.key ? accent : GLC_LABEL, fontFamily: 'Space Mono, monospace',
+              fontSize: 10.5, cursor: 'pointer', borderRadius: 2, letterSpacing: '0.08em', fontWeight: 700 }}>
             {s.label}
           </button>
         ))}
@@ -371,10 +378,25 @@ function GameLogChart({ games, stats, defaultStat, emptyLabel = 'NO GAMES', acce
       <div style={{ display: 'flex', gap: 16, marginTop: 8, padding: '0 4px' }}>
         {games.map((g, i) => (
           <Cell key={i}>
-            <div style={{ fontFamily: 'Space Mono, monospace', fontSize: 10, color: 'var(--muted)', textAlign: 'center', letterSpacing: '0.05em' }}>
-              {g.home ? 'vs' : '@'}{g.opp || '?'}
-            </div>
-            <div style={{ fontFamily: 'Space Mono, monospace', fontSize: 9, color: 'var(--dim)', textAlign: 'center', marginTop: -4 }}>
+            {/* Opponent as a logo when the game carries one, text abbr otherwise
+                (MLB logs don't set `oppLogo`, so they keep the old label).
+                Away games are dimmed slightly — that's the only remaining
+                home/away cue once the "vs"/"@" prefix is gone, so the title
+                attribute spells it out for anyone who needs it. */}
+            {g.oppLogo ? (
+              <div title={`${g.home ? 'vs' : '@'} ${g.opp || ''}`.trim()}
+                style={{ height: 22, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                <img src={g.oppLogo} alt={`${g.home ? 'vs' : '@'} ${g.opp || ''}`.trim()}
+                  style={{ height: 22, width: 22, objectFit: 'contain', opacity: g.home ? 1 : 0.72,
+                    filter: g.home ? 'none' : 'saturate(0.85)' }}
+                  onError={e => { e.target.style.display = 'none'; }} />
+              </div>
+            ) : (
+              <div style={{ fontFamily: 'Space Mono, monospace', fontSize: 11, color: GLC_LABEL, textAlign: 'center', letterSpacing: '0.05em', height: 22, lineHeight: '22px' }}>
+                {g.home ? 'vs' : '@'}{g.opp || '?'}
+              </div>
+            )}
+            <div style={{ fontFamily: 'Space Mono, monospace', fontSize: 10, color: GLC_SUBTLE, textAlign: 'center', marginTop: -2 }}>
               {g.date}
             </div>
           </Cell>
@@ -391,9 +413,9 @@ function GameLogChart({ games, stats, defaultStat, emptyLabel = 'NO GAMES', acce
                 {g.weather ? (
                   <>
                     <div style={{ fontSize: 11, color: 'var(--text)', fontWeight: 700 }}>{g.weather.temp != null ? `${g.weather.temp}°` : '—'}</div>
-                    <div style={{ fontSize: 8, color: 'var(--dim)', marginTop: 2 }}>{g.weather.wind || '—'}</div>
+                    <div style={{ fontSize: 9.5, color: GLC_SUBTLE, marginTop: 2 }}>{g.weather.wind || '—'}</div>
                   </>
-                ) : <div style={{ fontSize: 9, color: 'var(--dim)' }}>—</div>}
+                ) : <div style={{ fontSize: 10, color: GLC_SUBTLE }}>—</div>}
               </div>
             </Cell>
           ))}
@@ -403,7 +425,7 @@ function GameLogChart({ games, stats, defaultStat, emptyLabel = 'NO GAMES', acce
       <div style={{ display: 'flex', gap: 28, marginTop: 16, paddingTop: 12, borderTop: '1px solid rgba(255,255,255,0.04)', flexWrap: 'wrap' }}>
         {[['AVG', avg.toFixed(1)], ['TOTAL', total], ['HIGH', high], ['LOW', low]].map(([l, v]) => (
           <div key={l}>
-            <div style={{ fontSize: 8, color: 'var(--dim)', fontFamily: 'Space Mono, monospace', letterSpacing: '0.14em', marginBottom: 2 }}>{l}</div>
+            <div style={{ fontSize: 10, color: GLC_SUBTLE, fontFamily: 'Space Mono, monospace', letterSpacing: '0.14em', marginBottom: 3 }}>{l}</div>
             <div style={{ fontSize: 16, fontFamily: 'Orbitron, monospace',
               color: l === 'HIGH' ? 'var(--green)' : l === 'LOW' ? 'var(--orange)' : accent, fontWeight: 700 }}>{v}</div>
           </div>

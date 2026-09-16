@@ -49,6 +49,13 @@ async function fetchHoopsPlayerGameLog(playerId, { season, league = 'nba', sport
           date: meta.gameDate ? new Date(meta.gameDate).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) : '',
           opp: meta.opponent?.abbreviation || '?',
           oppTeamId: meta.opponent?.id ? String(meta.opponent.id) : null,
+          // Charts show the opponent as a logo instead of a text abbreviation.
+          // Prefer our own 500-dark variant (ESPN's `opponent.logo` is the
+          // light-background /500/ art, which muddies on the near-black UI);
+          // keep ESPN's as the fallback so an unknown abbr still renders.
+          oppLogo: meta.opponent?.abbreviation
+            ? teamLogoUrl(league, meta.opponent.abbreviation, meta.opponent.id)
+            : (meta.opponent?.logo || null),
           home: meta.atVs === 'vs',
           min: num(idx.min),
           pts: num(idx.pts),

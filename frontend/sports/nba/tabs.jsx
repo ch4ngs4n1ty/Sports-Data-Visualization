@@ -9,11 +9,30 @@ const NBA_STATS = [
   { key: 'ast', label: 'AST' },
 ];
 
+// Readability tiers for the Edge Finder.
+// `--muted` (#4a6080) only reaches 2.85:1 against the card background and
+// `--dim` (#2a3a50) a mere 1.58:1 — both fail WCAG AA for body text, which is
+// the washed-out grey that makes these panels hard to read. These two hit AA
+// (7.0:1 and 4.9:1) while staying clearly subordinate to `--text`.
+// They are local constants rather than new CSS variables because the real fix
+// — raising `--muted` in the `:root` block — lives in index.html, which the
+// `design` lane owns. Promote them there when that lane is free.
+const NBA_TXT_2 = '#8ba3c0';   // secondary body copy  — 7.04:1
+const NBA_TXT_3 = '#6d86a6';   // micro labels / notes — 4.88:1
+
+// Game logs arrive most-recent-first (that's what `h2h[0].date` / the L5
+// averages rely on), but a bar chart reads as a timeline, so the eye expects
+// time to run left→right. Reverse a COPY at the point of charting only —
+// mutating or re-sorting the source array would silently relabel "last:".
+const nbaOldestFirst = games => (games || []).slice().reverse();
+
 const nbaStatColorFor = (v, sk) => {
   if (sk === 'pts') return v >= 30 ? 'var(--green)' : v >= 20 ? 'var(--gold)' : v >= 10 ? 'var(--cyan)' : 'var(--orange)';
-  if (sk === 'reb') return v >= 12 ? 'var(--green)' : v >= 8 ? 'var(--gold)' : v >= 4 ? 'var(--cyan)' : 'var(--muted)';
-  if (sk === 'ast') return v >= 10 ? 'var(--green)' : v >= 6 ? 'var(--gold)' : v >= 3 ? 'var(--cyan)' : 'var(--muted)';
-  return 'var(--muted)';
+  // NB: this colors BOTH the number above the bar and the bar fill, so the
+  // floor case has to stay legible — `--muted` washed out at 2.85:1.
+  if (sk === 'reb') return v >= 12 ? 'var(--green)' : v >= 8 ? 'var(--gold)' : v >= 4 ? 'var(--cyan)' : NBA_TXT_2;
+  if (sk === 'ast') return v >= 10 ? 'var(--green)' : v >= 6 ? 'var(--gold)' : v >= 3 ? 'var(--cyan)' : NBA_TXT_2;
+  return NBA_TXT_2;
 };
 
 function NbaEdgeFinderTab({ gameData }) {
@@ -51,25 +70,25 @@ function NbaEdgeFinderTab({ gameData }) {
     const { p, r } = entry;
     const c = nbaProbColor(r.prob);
     const pct = Math.round(r.prob * 100);
-    const confColor = r.conf === 'HIGH' ? '#00ff88' : r.conf === 'MED' ? '#ffd060' : 'var(--muted)';
+    const confColor = r.conf === 'HIGH' ? '#00ff88' : r.conf === 'MED' ? '#ffd060' : NBA_TXT_3;
     return (
       <div style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '9px 10px', borderRadius: 3,
         background: idx % 2 ? 'transparent' : 'rgba(255,255,255,0.02)', flexWrap: 'wrap' }}>
         <span style={{ width: 20, textAlign: 'center', fontSize: 14, fontFamily: 'Orbitron, monospace', fontWeight: 900,
-          color: idx === 0 ? '#00ff88' : idx <= 2 ? 'var(--cyan)' : 'var(--muted)' }}>{idx + 1}</span>
+          color: idx === 0 ? '#00ff88' : idx <= 2 ? 'var(--cyan)' : NBA_TXT_2 }}>{idx + 1}</span>
         <img src={p.headshot} alt={p.name} style={{ width: 30, height: 30, borderRadius: '50%', objectFit: 'cover', border: `1px solid ${p.teamColor}55` }}
           onError={e => e.target.style.display = 'none'} />
         <div style={{ flex: 1, minWidth: 150 }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 7, flexWrap: 'wrap' }}>
             <span style={{ fontSize: 13, fontFamily: 'Space Mono, monospace', color: 'var(--text)', fontWeight: 700 }}>{p.name}</span>
-            <span style={{ fontSize: 9.5, padding: '1px 6px', border: `1px solid ${p.teamColor}66`, color: p.teamColor, fontFamily: 'Space Mono, monospace', borderRadius: 2, letterSpacing: '0.08em' }}>{p.teamAbbr} {p.pos}</span>
-            {p.isStarter && <span style={{ fontSize: 9.5, color: 'var(--green)', fontFamily: 'Orbitron, monospace', fontWeight: 700, letterSpacing: '0.12em' }}>★</span>}
+            <span style={{ fontSize: 10.5, padding: '1px 6px', border: `1px solid ${p.teamColor}66`, color: p.teamColor, fontFamily: 'Space Mono, monospace', borderRadius: 2, letterSpacing: '0.08em' }}>{p.teamAbbr} {p.pos}</span>
+            {p.isStarter && <span style={{ fontSize: 10.5, color: 'var(--green)', fontFamily: 'Orbitron, monospace', fontWeight: 700, letterSpacing: '0.12em' }}>★</span>}
           </div>
-          <div style={{ fontSize: 10, color: 'var(--muted)', fontFamily: 'Space Mono, monospace', marginTop: 2 }}>
+          <div style={{ fontSize: 11, color: NBA_TXT_2, fontFamily: 'Space Mono, monospace', marginTop: 3, lineHeight: 1.5 }}>
             proj <span style={{ color: 'var(--text)', fontWeight: 700 }}>{r.proj.toFixed(1)}</span>
             {' · '}{r.hasMatchup && r.defRank != null
               ? <span style={{ color: nbaDefenseRankColor(r.defRank) === 'red' ? '#ff8a55' : nbaDefenseRankColor(r.defRank) === 'green' ? '#5ff5a5' : '#ffd060' }}>vs #{r.defRank}/{r.total} D</span>
-              : <span style={{ color: 'var(--muted)' }}>no matchup adj</span>}
+              : <span style={{ color: NBA_TXT_3 }}>no matchup adj</span>}
             {' · '}<span style={{ color: confColor }}>{r.conf}</span>
           </div>
         </div>
@@ -97,28 +116,28 @@ function NbaEdgeFinderTab({ gameData }) {
           <div style={{ flex: 1, minWidth: 180 }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6, flexWrap: 'wrap' }}>
               <span style={{ fontSize: 15, fontFamily: 'Space Mono, monospace', color: 'var(--text)', fontWeight: 700 }}>{p.name}</span>
-              <span style={{ fontSize: 10, padding: '2px 7px', border: `1px solid ${p.teamColor}66`, color: p.teamColor, fontFamily: 'Space Mono, monospace', borderRadius: 2, letterSpacing: '0.08em' }}>{p.teamAbbr}</span>
-              <span style={{ fontSize: 10, padding: '2px 7px', border: `1px solid ${p.teamColor}44`, color: p.teamColor, fontFamily: 'Space Mono, monospace', borderRadius: 2 }}>{p.pos}</span>
-              {p.jersey && p.jersey !== '—' && <span style={{ fontSize: 10, color: 'var(--muted)', fontFamily: 'Space Mono, monospace' }}>#{p.jersey}</span>}
+              <span style={{ fontSize: 10.5, padding: '2px 7px', border: `1px solid ${p.teamColor}66`, color: p.teamColor, fontFamily: 'Space Mono, monospace', borderRadius: 2, letterSpacing: '0.08em' }}>{p.teamAbbr}</span>
+              <span style={{ fontSize: 10.5, padding: '2px 7px', border: `1px solid ${p.teamColor}44`, color: p.teamColor, fontFamily: 'Space Mono, monospace', borderRadius: 2 }}>{p.pos}</span>
+              {p.jersey && p.jersey !== '—' && <span style={{ fontSize: 10.5, color: NBA_TXT_2, fontFamily: 'Space Mono, monospace' }}>#{p.jersey}</span>}
               {p.isStarter && (
                 <span style={{ fontSize: 10, padding: '2px 7px', background: 'rgba(0,255,136,0.12)', border: '1px solid rgba(0,255,136,0.35)', color: 'var(--green)', fontFamily: 'Orbitron, monospace', fontWeight: 700, borderRadius: 2, letterSpacing: '0.15em' }}>★ STARTER</span>
               )}
               <HotBadge tier={p.hotTier} />
             </div>
-            <div style={{ fontSize: 10, color: 'var(--muted)', fontFamily: 'Space Mono, monospace', letterSpacing: '0.05em' }}>
+            <div style={{ fontSize: 11, color: NBA_TXT_2, fontFamily: 'Space Mono, monospace', letterSpacing: '0.03em', lineHeight: 1.5 }}>
               vs {p.oppAbbr} · L5 {p.avgPts.toFixed(1)}/{p.avgReb.toFixed(1)}/{p.avgAst.toFixed(1)} · {(p.h2h || []).length}G vs {p.oppAbbr}
             </div>
           </div>
           <div style={{ display: 'flex', gap: 14 }}>
             {[['PTS', p.avgPts], ['REB', p.avgReb], ['AST', p.avgAst]].map(([l, v]) => (
               <div key={l} style={{ textAlign: 'center' }}>
-                <div style={{ fontSize: 9.5, color: 'var(--muted)', fontFamily: 'Space Mono, monospace', letterSpacing: '0.16em', marginBottom: 2 }}>{l}</div>
+                <div style={{ fontSize: 10.5, color: NBA_TXT_3, fontFamily: 'Space Mono, monospace', letterSpacing: '0.16em', marginBottom: 3 }}>{l}</div>
                 <div style={{ fontSize: 18, fontFamily: 'Orbitron, monospace', fontWeight: 700, color: p.teamColor }}>{v.toFixed(1)}</div>
               </div>
             ))}
           </div>
           <div style={{ display: 'flex', alignItems: 'center', gap: 8, paddingLeft: 10, borderLeft: '1px solid rgba(255,255,255,0.06)' }}>
-            <span style={{ fontSize: 10, color: 'var(--muted)', fontFamily: 'Space Mono, monospace', letterSpacing: '0.15em' }}>
+            <span style={{ fontSize: 10.5, color: NBA_TXT_2, fontFamily: 'Space Mono, monospace', letterSpacing: '0.15em' }}>
               {open ? 'HIDE' : 'EXPAND'}
             </span>
             <span style={{ fontSize: 14, color: p.teamColor, fontFamily: 'Orbitron, monospace', transition: 'transform 0.2s',
@@ -130,30 +149,38 @@ function NbaEdgeFinderTab({ gameData }) {
           <div style={{ marginTop: 18, animation: 'fadeUp 0.25s ease' }}>
             <div style={{ paddingTop: 14, borderTop: '1px solid rgba(255,255,255,0.05)' }}>
               <div style={{ display: 'flex', alignItems: 'baseline', gap: 10, marginBottom: 10, flexWrap: 'wrap' }}>
-                <span style={{ fontSize: 10, fontFamily: 'Space Mono, monospace', color: p.teamColor, letterSpacing: '0.22em' }}>
+                <span style={{ fontSize: 10.5, fontFamily: 'Space Mono, monospace', color: p.teamColor, letterSpacing: '0.22em' }}>
                   HEAD-TO-HEAD vs {p.oppAbbr}
                 </span>
-                <span style={{ fontSize: 10, color: 'var(--muted)', fontFamily: 'Space Mono, monospace' }}>
+                <span style={{ fontSize: 10.5, color: NBA_TXT_2, fontFamily: 'Space Mono, monospace' }}>
                   {hasH2H ? `${p.h2h.length}G · last: ${p.h2h[0].date}` : 'NO GAMES'}
+                </span>
+                <span style={{ fontSize: 10, color: NBA_TXT_3, fontFamily: 'Space Mono, monospace', letterSpacing: '0.1em' }}>
+                  OLDEST → MOST RECENT
                 </span>
               </div>
               {hasH2H ? (
-                <GameLogChart games={p.h2h} stats={NBA_STATS} defaultStat="pts" emptyLabel={`NO GAMES VS ${p.oppAbbr} THIS SEASON`} accent={p.teamColor} colorFor={nbaStatColorFor} />
+                <GameLogChart games={nbaOldestFirst(p.h2h)} stats={NBA_STATS} defaultStat="pts" emptyLabel={`NO GAMES VS ${p.oppAbbr} THIS SEASON`} accent={p.teamColor} colorFor={nbaStatColorFor} />
               ) : (
-                <div style={{ fontSize: 10, color: 'var(--muted)', fontFamily: 'Space Mono, monospace', padding: '16px 0', letterSpacing: '0.1em' }}>
+                <div style={{ fontSize: 10.5, color: NBA_TXT_3, fontFamily: 'Space Mono, monospace', padding: '16px 0', letterSpacing: '0.1em' }}>
                   NO GAMES VS {p.oppAbbr} THIS SEASON
                 </div>
               )}
             </div>
 
             <div style={{ paddingTop: 18, marginTop: 18, borderTop: '1px solid rgba(255,255,255,0.05)' }}>
-              <div style={{ fontSize: 10, fontFamily: 'Space Mono, monospace', color: p.teamColor, letterSpacing: '0.22em', marginBottom: 10 }}>
-                LAST 5 GAMES (SEASON)
+              <div style={{ display: 'flex', alignItems: 'baseline', gap: 10, flexWrap: 'wrap', marginBottom: 10 }}>
+                <span style={{ fontSize: 10.5, fontFamily: 'Space Mono, monospace', color: p.teamColor, letterSpacing: '0.22em' }}>
+                  LAST 5 GAMES (SEASON)
+                </span>
+                <span style={{ fontSize: 10, color: NBA_TXT_3, fontFamily: 'Space Mono, monospace', letterSpacing: '0.1em' }}>
+                  OLDEST → MOST RECENT
+                </span>
               </div>
               {hasL5 ? (
-                <GameLogChart games={p.l5} stats={NBA_STATS} defaultStat="pts" emptyLabel="NO RECENT GAMES" accent={p.teamColor} colorFor={nbaStatColorFor} />
+                <GameLogChart games={nbaOldestFirst(p.l5)} stats={NBA_STATS} defaultStat="pts" emptyLabel="NO RECENT GAMES" accent={p.teamColor} colorFor={nbaStatColorFor} />
               ) : (
-                <div style={{ fontSize: 10, color: 'var(--muted)', fontFamily: 'Space Mono, monospace', padding: '16px 0', letterSpacing: '0.1em' }}>
+                <div style={{ fontSize: 10.5, color: NBA_TXT_3, fontFamily: 'Space Mono, monospace', padding: '16px 0', letterSpacing: '0.1em' }}>
                   NO RECENT GAMES
                 </div>
               )}
@@ -168,15 +195,16 @@ function NbaEdgeFinderTab({ gameData }) {
     <div style={{ padding: '20px 0' }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 18, flexWrap: 'wrap' }}>
         <div>
-          <SectionHeader label="NBA EDGE FINDER" sub="H2H vs opposing team · Last 5 season games · PTS / REB / AST" />
+          <SectionHeader label={`${gameInfo.sportKey === 'wnba' ? 'WNBA' : 'NBA'} EDGE FINDER`}
+            sub="H2H vs opposing team · Last 5 season games · PTS / REB / AST" />
         </div>
         <div style={{ marginLeft: 'auto', display: 'flex', gap: 6 }}>
           {[['all', 'BOTH'], ['away', gameInfo.awayAbbr], ['home', gameInfo.homeAbbr]].map(([v, l]) => (
             <button key={v} onClick={() => setFilter(v)}
-              style={{ padding: '4px 12px', background: filter === v ? 'rgba(0,212,255,0.1)' : 'transparent',
+              style={{ padding: '5px 13px', background: filter === v ? 'rgba(0,212,255,0.1)' : 'transparent',
                 border: `1px solid ${filter === v ? 'rgba(0,212,255,0.3)' : 'rgba(255,255,255,0.06)'}`,
-                color: filter === v ? 'var(--cyan)' : 'var(--muted)', fontFamily: 'Space Mono, monospace',
-                fontSize: 10, cursor: 'pointer', borderRadius: 2, letterSpacing: '0.08em' }}>{l}</button>
+                color: filter === v ? 'var(--cyan)' : NBA_TXT_2, fontFamily: 'Space Mono, monospace',
+                fontSize: 10.5, cursor: 'pointer', borderRadius: 2, letterSpacing: '0.08em' }}>{l}</button>
           ))}
         </div>
       </div>
@@ -187,11 +215,11 @@ function NbaEdgeFinderTab({ gameData }) {
           <span style={{ fontSize: 12, fontFamily: 'Orbitron, monospace', fontWeight: 900, color: '#00ff88', letterSpacing: '0.14em' }}>
             ◆ PROJECTION MODEL
           </span>
-          <span style={{ fontSize: 10, fontFamily: 'Space Mono, monospace', color: 'var(--muted)', letterSpacing: '0.1em' }}>
+          <span style={{ fontSize: 10.5, fontFamily: 'Space Mono, monospace', color: NBA_TXT_2, letterSpacing: '0.1em' }}>
             LIKELIHOOD TO HIT THRESHOLD · ranked
           </span>
           {!nbaDefenseEdge && (
-            <span style={{ marginLeft: 'auto', fontSize: 10, fontFamily: 'Space Mono, monospace', color: 'var(--muted)' }}>
+            <span style={{ marginLeft: 'auto', fontSize: 10.5, fontFamily: 'Space Mono, monospace', color: NBA_TXT_3 }}>
               matchup adj loading…
             </span>
           )}
@@ -204,8 +232,8 @@ function NbaEdgeFinderTab({ gameData }) {
               <button key={s} onClick={() => selectStat(s)}
                 style={{ padding: '5px 13px', background: modelStat === s ? 'rgba(0,255,136,0.12)' : 'transparent',
                   border: `1px solid ${modelStat === s ? 'rgba(0,255,136,0.4)' : 'rgba(255,255,255,0.08)'}`,
-                  color: modelStat === s ? '#00ff88' : 'var(--muted)', fontFamily: 'Orbitron, monospace', fontWeight: 700,
-                  fontSize: 10, cursor: 'pointer', borderRadius: 2, letterSpacing: '0.1em' }}>{NBA_STAT_LABELS[s]}</button>
+                  color: modelStat === s ? '#00ff88' : NBA_TXT_2, fontFamily: 'Orbitron, monospace', fontWeight: 700,
+                  fontSize: 10.5, cursor: 'pointer', borderRadius: 2, letterSpacing: '0.1em' }}>{NBA_STAT_LABELS[s]}</button>
             ))}
           </div>
           <div style={{ width: 1, height: 22, background: 'rgba(255,255,255,0.08)' }} />
@@ -214,8 +242,8 @@ function NbaEdgeFinderTab({ gameData }) {
               <button key={line} onClick={() => setModelLine(line)}
                 style={{ padding: '5px 12px', background: modelLine === line ? 'rgba(0,212,255,0.12)' : 'transparent',
                   border: `1px solid ${modelLine === line ? 'rgba(0,212,255,0.4)' : 'rgba(255,255,255,0.08)'}`,
-                  color: modelLine === line ? 'var(--cyan)' : 'var(--muted)', fontFamily: 'Space Mono, monospace',
-                  fontSize: 10, cursor: 'pointer', borderRadius: 2, letterSpacing: '0.06em' }}>{line}+</button>
+                  color: modelLine === line ? 'var(--cyan)' : NBA_TXT_2, fontFamily: 'Space Mono, monospace',
+                  fontSize: 10.5, cursor: 'pointer', borderRadius: 2, letterSpacing: '0.06em' }}>{line}+</button>
             ))}
           </div>
           <span style={{ marginLeft: 'auto', fontSize: 13, fontFamily: 'Orbitron, monospace', fontWeight: 700, color: 'var(--text)', letterSpacing: '0.08em' }}>
@@ -229,12 +257,12 @@ function NbaEdgeFinderTab({ gameData }) {
             {modelBoard.slice(0, 10).map((entry, i) => <ModelRow key={entry.p.id || i} entry={entry} idx={i} />)}
           </div>
         ) : (
-          <div style={{ fontSize: 10, color: 'var(--muted)', fontFamily: 'Space Mono, monospace', padding: '12px 0' }}>
+          <div style={{ fontSize: 11, color: NBA_TXT_2, fontFamily: 'Space Mono, monospace', padding: '12px 0' }}>
             No players with game-log data yet.
           </div>
         )}
 
-        <div style={{ fontSize: 10, color: 'var(--muted)', fontFamily: 'Space Mono, monospace', marginTop: 12, lineHeight: 1.6, letterSpacing: '0.04em' }}>
+        <div style={{ fontSize: 11.5, color: NBA_TXT_2, fontFamily: 'Space Mono, monospace', marginTop: 14, lineHeight: 1.75, letterSpacing: '0.02em', maxWidth: 760 }}>
           Normal model fit to each player's game log, mean shifted by last-5 form and opponent defense-vs-position rank.
           Confidence reflects sample size + role stability. Estimates only — not a betting guarantee.
         </div>
