@@ -13,6 +13,7 @@ function HomeScreen({ onSelectSport }) {
     { key: 'mlb',    label: 'MLB',   full: 'Major League Baseball',                     active: true,  season: 'Spring 2026',   accent: 'var(--cyan)',   depth: '9 analysis tabs' },
     { key: 'nba',    label: 'NBA',   full: 'National Basketball Association',           active: true,  season: 'Season 2025-26', accent: 'var(--orange)', depth: '7 analysis tabs' },
     { key: 'wnba',   label: 'WNBA',  full: "Women's National Basketball Association",   active: true,  season: 'Season 2026',    accent: 'var(--violet)', depth: '6 analysis tabs' },
+    { key: 'nfl',    label: 'NFL',   full: 'National Football League',                  active: true,  season: 'Season 2026',    accent: 'var(--green)',  depth: '6 analysis tabs' },
     { key: 'nhl',    label: 'NHL',   full: 'National Hockey League',                    active: true,  season: 'Season 2025-26', accent: 'var(--gold)',   depth: '5 analysis tabs' },
     { key: 'ncaamb', label: 'NCAAB', full: 'College Basketball',                        active: false, season: 'Off-season',     accent: 'var(--dim)',    depth: '—' },
   ];

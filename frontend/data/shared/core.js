@@ -25,6 +25,7 @@ const SPORTS_CONFIG = [
   { key: 'mlb', sport: 'baseball', league: 'mlb', label: 'MLB' },
   { key: 'nba', sport: 'basketball', league: 'nba', label: 'NBA' },
   { key: 'wnba', sport: 'basketball', league: 'wnba', label: 'WNBA' },
+  { key: 'nfl', sport: 'football', league: 'nfl', label: 'NFL' },
   { key: 'nhl', sport: 'hockey', league: 'nhl', label: 'NHL' },
   { key: 'ncaamb', sport: 'basketball', league: 'mens-college-basketball', label: 'NCAAB' },
 ];
@@ -107,6 +108,27 @@ async function fetchAllGames(date) {
       });
     }
   }
+
+  // NFL plays ~3 days a week, so a date-keyed query returns nothing on most
+  // days and the league would simply vanish from the slate. When the requested
+  // date has no NFL games, fall back to the rest of the current week's
+  // schedule so there is always something to research. These are tagged
+  // `weekFallback` so the games screen can label them as upcoming rather than
+  // pretending they're today's games.
+  if (!allGames.some(g => g.sportKey === 'nfl') && typeof fetchNflWeek === 'function') {
+    try {
+      const wk = await fetchNflWeek();
+      for (const g of wk) {
+        // Filter on STATUS, not on a date comparison. Kickoff times are UTC
+        // while the app's "today" is ET, so a Thursday 8:15pm ET game is
+        // 00:15Z the next UTC day and a midnight-boundary check would call it
+        // upcoming the morning after it finished. ESPN's own status has no
+        // such ambiguity: anything not yet final is still worth showing.
+        if (g.statusState !== 'post') allGames.push({ ...g, weekFallback: true });
+      }
+    } catch { /* NFL fallback is best-effort; never break the whole slate */ }
+  }
+
   return allGames;
 }
 
