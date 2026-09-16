@@ -88,6 +88,8 @@ function SignalBadge({ sig }) {
 }
 
 /* ── One game card ──────────────────────────────────────── */
+const weekdayOf = iso => new Date(iso).toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
+
 function GameCard({ g, onSelect, readiness, signals, formatTime }) {
   const isLive  = g.statusState === 'in';
   const isFinal = g.statusState === 'post';
@@ -130,7 +132,12 @@ function GameCard({ g, onSelect, readiness, signals, formatTime }) {
         <span style={{ fontSize: 'var(--fs-xs)', fontFamily: 'Space Mono, monospace',
           color: isLive ? 'var(--green)' : 'var(--muted)', fontWeight: isLive ? 700 : 400,
           whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-          {isFinal ? 'FINAL' : isLive ? g.statusDetail : formatTime(g.date)}
+          {isFinal ? 'FINAL' : isLive ? g.statusDetail
+            /* A weekFallback game is NOT today (NFL plays ~3 days a week, so
+               the slate shows the rest of the week). Showing a bare time would
+               read as "today at 1:00 PM" — prefix the weekday. */
+            : g.weekFallback ? `${weekdayOf(g.date)} · ${formatTime(g.date)}`
+            : formatTime(g.date)}
         </span>
       </div>
 

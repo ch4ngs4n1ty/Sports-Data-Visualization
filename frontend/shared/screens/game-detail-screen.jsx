@@ -40,6 +40,17 @@ const TABS_WNBA = [
   { id: 'ai', label: '◆ AI PLAYS' },
 ];
 
+// NFL: the five sport-agnostic tabs plus a season MATCHUP board. No edge /
+// props tabs yet — those are a separate per-sport analytical build.
+const TABS_NFL = [
+  { id: 'overview', label: 'OVERVIEW' },
+  { id: 'h2h', label: 'HEAD-TO-HEAD' },
+  { id: 'form', label: 'LAST 5' },
+  { id: 'roster', label: 'ROSTERS' },
+  { id: 'matchup', label: '⬢ MATCHUP' },
+  { id: 'ai', label: '◆ AI PLAYS' },
+];
+
 const TABS_OTHER = [
   { id: 'overview', label: 'OVERVIEW' },
   { id: 'h2h', label: 'HEAD-TO-HEAD' },
@@ -56,6 +67,7 @@ function GameDetailScreen({ game, onBack }) {
   const tabs = game.sportKey === 'mlb' ? TABS_MLB
     : game.sportKey === 'nba' ? TABS_NBA
     : game.sportKey === 'wnba' ? TABS_WNBA
+    : game.sportKey === 'nfl' ? TABS_NFL
     : TABS_OTHER;
 
   React.useEffect(() => { sessionStorage.setItem('piq_tab', tab); }, [tab]);
@@ -80,9 +92,15 @@ function GameDetailScreen({ game, onBack }) {
           fetchRoster(game.sportKey, game.homeTeamId),
         ]);
         setStepIdx(2);
+        // Football box scores are split into stat groups (passing/rushing/
+        // receiving), so the shared enricher — which reads statistics[0] —
+        // would only ever see passing. NFL gets its own parser.
+        const enrichForm = game.sportKey === 'nfl'
+          ? (sk, teamId, games) => enrichNflFormWithPlayerStats(teamId, games)
+          : enrichFormWithPlayerStats;
         const [awayForm, homeForm] = await Promise.all([
-          enrichFormWithPlayerStats(game.sportKey, game.awayTeamId, awayFormRaw),
-          enrichFormWithPlayerStats(game.sportKey, game.homeTeamId, homeFormRaw),
+          enrichForm(game.sportKey, game.awayTeamId, awayFormRaw),
+          enrichForm(game.sportKey, game.homeTeamId, homeFormRaw),
         ]);
         setStepIdx(3);
         const h2h = await fetchH2H(game);
@@ -96,6 +114,8 @@ function GameDetailScreen({ game, onBack }) {
           ? { nbaEdgeData: true, nbaLineupData: true, nbaDefenseEdge: true, nbaDefenseTable: true }
           : game.sportKey === 'wnba'
           ? { nbaEdgeData: true, nbaLineupData: true }
+          : game.sportKey === 'nfl'
+          ? { nflProfiles: true }
           : {};
         const baseData = { gameInfo: game, awayForm, homeForm, injuries, awayRoster, homeRoster, h2h, _loading: initLoading };
         setGameData(baseData);
@@ -170,6 +190,15 @@ function GameDetailScreen({ game, onBack }) {
             if (!cancelled) setGameData(prev => prev && { ...prev, nbaLineupData, _loading: { ...prev._loading, nbaLineupData: false } });
           }).catch(() => {
             if (!cancelled) setGameData(prev => prev && { ...prev, _loading: { ...prev._loading, nbaLineupData: false } });
+          });
+        } else if (game.sportKey === 'nfl') {
+          Promise.all([
+            fetchNflTeamProfile(game.awayTeamId),
+            fetchNflTeamProfile(game.homeTeamId),
+          ]).then(([away, home]) => {
+            if (!cancelled) setGameData(prev => prev && { ...prev, nflProfiles: { away, home }, _loading: { ...prev._loading, nflProfiles: false } });
+          }).catch(() => {
+            if (!cancelled) setGameData(prev => prev && { ...prev, _loading: { ...prev._loading, nflProfiles: false } });
           });
         }
         // Phase 2 step indicator hides when load() returns; any tab waiting
@@ -286,6 +315,7 @@ function GameDetailScreen({ game, onBack }) {
               ? <WnbaCourtLineupTab gameData={gameData} />
               : <NbaLineupTab gameData={gameData} />)}
             {tab === 'def-vs-pos' && <NbaDefenseVsPositionTab gameData={gameData} />}
+            {tab === 'matchup' && <NflMatchupTab gameData={gameData} />}
             {tab === 'edges' && ((game.sportKey === 'nba' || game.sportKey === 'wnba')
               ? <NbaEdgeFinderTab gameData={gameData} />
               : <EdgeFinderTab gameData={gameData} />)}

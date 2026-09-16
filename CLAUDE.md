@@ -16,6 +16,7 @@ playiq/
 │   │   ├── shared/core.js                      — ESPN helpers, SPORTS_CONFIG, fetchAllGames, fetchTeamForm, fetchH2H, fetchInjuries, fetchRoster, Claude API, AI plays
 │   │   ├── mlb/index.js                        — MLB-only helpers: fetchGameBvp, fetchHighContactReport, fetchWeather, fetchMlbStarters, fetchPlayerGameLog, buildMlbEdgeData
 │   │   ├── nba/index.js                        — NBA-only helpers: fetchHoopsPlayerGameLog (shared w/ WNBA), buildNbaEdgeData (incl. per-player `proj` distribution), lineup + positional-defense fetchers, threshold projection model (nbaThresholdProbability + buckets)
+│   │   ├── nfl/index.js                        — NFL-only helpers: fetchNflCurrentWeek + fetchNflWeek (WEEKLY slate — a date-keyed query is empty ~4 days a week), enrichNflFormWithPlayerStats (football box scores are split into stat GROUPS, so the shared statistics[0] reader sees passing only), fetchNflTeamProfile (offense from results.stats, defense from results.opponent)
 │   │   └── wnba/index.js                       — WNBA: buildWnbaEdgeData + buildWnbaLineupData (starters from ESPN boxscore once live; top-5-by-minutes projection pre-game). Reuses the basketball gamelog parser + the (sport-agnostic) threshold model; NO Rotowire lineups / defense-vs-position (NBA-only backends), so boards run without a matchup adjustment. `NbaEdgeFinderTab` is reused for WNBA (gated on `gameInfo.sportKey === 'wnba'`); the LINEUPS tab instead dispatches to `WnbaCourtLineupTab` (3D court view) rather than `NbaLineupTab`
 │   ├── shared/
 │   │   ├── ui-atoms.jsx                        — Primitive UI components (HudCard, PlayerCard, Sparkline, OpsGauge, WeatherPill, TabLoader, etc.). `GameLogChart` renders bars in ARRAY ORDER (callers decide chronology — hoops passes `nbaOldestFirst()` so time runs left→right) and labels each bar with the opponent's **team logo** when the game object carries `oppLogo`, falling back to the `vs/@ABBR` text when it doesn't (MLB logs currently fall back)
@@ -26,6 +27,7 @@ playiq/
 │   │       └── game-detail-screen.jsx          — GameDetailScreen + TABS_MLB / TABS_NBA / TABS_OTHER + Phase 1 / Phase 2 loading
 │   └── sports/
 │       ├── mlb/tabs.jsx                        — MLB-specific tabs: MlbDataLoader + useMlbLoadGate (baseball pitch-loop loader with progress bar; on data arrival the bat connects and the ball leaves the park — keyframes injected at runtime, not in index.html), EdgeFinderTab (incl. PROP PROJECTION MODEL board: transparent Log5 P(Hits/RBI/K≥line)), PitchingEdgeTab (incl. PITCHER PROJECTION MODEL board: P(K/Outs/ER/HR≥line) + per-start bar charts), MlbLineupFieldTab (3D CSS-perspective diamond: each starter's card at their fielding position; field rotateX + cards counter-rotated so text stays crisp — no WebGL), LowHrModelTab, HighContactTab
+│       ├── nfl/tabs.jsx                        — NFL-specific tabs: NflMatchupTab (season OFFENSE/DEFENSE comparison board; brighter value = better side, direction-aware so "fewer yards allowed" wins). First NFL cut — deliberately NO props/edge model yet.
 │       └── nba/tabs.jsx                        — NBA-specific tabs: NbaEdgeFinderTab (incl. PROJECTION MODEL board: P(stat≥line) per player), NbaLineupTab, NbaDefenseVsPositionTab, WnbaCourtLineupTab (WNBA LINEUPS tab: 3D CSS-perspective court, both fives placed at the spot they play — court plane rotateX + cards counter-rotated so text stays crisp, no WebGL; same technique as `MlbLineupFieldTab`. Slots are resolved interior-first with a G/F/C preference chain, because WNBA positions are coarse and small-ball fives would otherwise strand a guard at the rim)
 ├── manifest.json                               — PWA manifest
 ├── icon.svg                                    — PWA icon
@@ -200,6 +202,41 @@ For any legacy code that calls `window.claude.complete(prompt)`, `data-layer.js`
 
 ---
 
+## NFL
+
+Added Sep 2026. NFL is the first non-daily sport in the app, and that drove
+every design decision worth knowing about:
+
+- **Weekly cadence.** `fetchAllGames(date)` queries every sport by date, but NFL
+  plays ~3 days a week, so on most days it would simply vanish from the slate.
+  When the requested date has no NFL games, `fetchAllGames` folds in the rest of
+  the current week via `fetchNflWeek()` and tags each game `weekFallback: true`.
+  `GameCard` reads that flag and prefixes the kickoff time with the weekday
+  ("Thu, Sep 17 · 8:15 PM EDT") — without it a Sunday game shown on Wednesday
+  reads as if it were today.
+- **The week number comes from ESPN**, not from arithmetic on a season-start
+  date (which drifts yearly and breaks when the playoff week counter restarts).
+- **Football box scores are split into stat groups** (`passing`, `rushing`,
+  `receiving`, …), each with its own `labels` array. The shared
+  `enrichFormWithPlayerStats` reads `statistics[0]`, which for NFL is passing
+  only, so NFL uses `enrichNflFormWithPlayerStats` instead. It also attaches
+  `cats` to each form game — **without `cats`, `FormTab` falls back to
+  basketball keys (pts/reb/ast) and every card renders blank.**
+- **Team statistics endpoint gotchas** (verified against a live payload, not
+  guessed): there is **no `rank` field**; `totalYards` lives under `rushing`,
+  not `passing`; third-down and turnover stats live under `miscellaneous`. The
+  only defensive data is `results.opponent`, which mirrors the whole stat tree
+  with what opponents did against the team (this is where points-allowed lives).
+
+`fetchRoster` and `fetchH2H` needed no changes — the grouped-roster shape and
+`seasontype=[2,3]` already covered football.
+
+**Scope:** the MATCHUP tab plus the five sport-agnostic tabs. There is no NFL
+props model, edge finder, or ML — those are per-sport analytical builds on the
+scale of the MLB/NBA tabs and should be scoped deliberately, not half-built.
+
+---
+
 ## Machine Learning (F5 money-line model)
 
 The only ML model in the app. Predicts the **first-5-innings money line** (3-way: home/tie/away leads after 5), shown atop the MLB **High Contact** tab via `F5MoneyLineCard`.
@@ -241,6 +278,16 @@ The only ML model in the app. Predicts the **first-5-innings money line** (3-way
 1. Append to `SPORTS_CONFIG` in `data-layer.js`
 2. Add it to the `sports` array in `HomeScreen` with `active: true`
 3. Fetch/rendering code in tabs is sport-agnostic for overview/form/h2h/roster; sport-specific tabs (`EdgeFinderTab`, `PitchingEdgeTab`) are gated by `game.sportKey === 'mlb'`
+4. Add the league to the `pro` allowlist in `teamLogoUrl` or logos silently 404
+5. **Check `FormTab`'s stat keys.** It defaults to MLB keys for `mlb` and
+   basketball keys (pts/reb/ast) for *everything else*. If the new sport's
+   leaders aren't PTS/REB/AST, attach a `cats: [{key,label}]` array to each form
+   game (see `enrichNflFormWithPlayerStats`) — otherwise the tab renders empty
+   cards with no error
+6. **Verify the ESPN payload before writing against it.** Field placement varies
+   by sport in ways that are not guessable (NFL keeps `totalYards` under
+   `rushing` and publishes no `rank`), and a wrong key fails silently as a blank
+   value rather than an exception
 
 ### Improve AI play quality
 - Tune the prompt in `generateAIPlays()` — the schema is `[{play, confidence, reason, type}]`
