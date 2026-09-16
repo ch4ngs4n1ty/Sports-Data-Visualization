@@ -9,28 +9,90 @@ function MlbReadyRow({ r }) {
   if (!r) return null;
   const pill = (label, full, partial) => {
     const state = full ? 'full' : partial ? 'partial' : 'none';
-    const c = state === 'full' ? '#00ff88' : state === 'partial' ? '#ffd060' : 'var(--dim)';
+    const c = state === 'full' ? 'var(--green)' : state === 'partial' ? 'var(--gold)' : 'var(--dim)';
     const glyph = state === 'full' ? '✓' : state === 'partial' ? '◐' : '○';
-    return (
-      <span title={`${label}: ${state === 'full' ? 'both set' : state === 'partial' ? 'one side set' : 'not set yet'}`}
-        style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: 8.5, fontFamily: 'Space Mono, monospace',
-          color: c, letterSpacing: '0.08em', padding: '2px 7px', borderRadius: 2,
-          background: state === 'none' ? 'transparent' : `${c}14`,
-          border: `1px solid ${state === 'none' ? 'rgba(255,255,255,0.06)' : c + '44'}` }}>
-        {glyph} {label}
-      </span>
-    );
+    const title = `${label}: ${state === 'full' ? 'both set' : state === 'partial' ? 'one side set' : 'not set yet'}`;
+    return <Chip color={c} strong={state !== 'none'} title={title}>{glyph} {label}</Chip>;
   };
   return (
-    <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 12, flexWrap: 'wrap' }}>
+    <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--s2)', marginTop: 'var(--s3)', flexWrap: 'wrap' }}>
       {pill('SP', r.pitchers, r.awayPitcher || r.homePitcher)}
       {pill('LINEUP', r.lineups, r.awayLineup || r.homeLineup)}
       {r.researchReady && (
-        <span style={{ marginLeft: 'auto', fontSize: 8.5, fontFamily: 'Orbitron, monospace', fontWeight: 700, letterSpacing: '0.1em',
-          color: '#00ff88', padding: '2px 8px', borderRadius: 2, background: 'rgba(0,255,136,0.12)',
-          border: '1px solid rgba(0,255,136,0.4)', boxShadow: '0 0 10px rgba(0,255,136,0.25)' }}>● READY</span>
+        <Chip color="var(--green)" strong style={{ marginLeft: 'auto', boxShadow: '0 0 14px rgba(0,255,136,0.28)' }}>
+          ● READY
+        </Chip>
       )}
     </div>
+  );
+}
+
+/* ── One game card ──────────────────────────────────────── */
+function GameCard({ g, onSelect, readiness, formatTime }) {
+  const isLive  = g.statusState === 'in';
+  const isFinal = g.statusState === 'post';
+  const showScore = isLive || isFinal;
+  const accent = isLive ? 'var(--green)' : isFinal ? 'var(--dim)' : 'var(--cyan)';
+
+  // Winner gets full-strength type; loser is dimmed. Reads instantly at a glance.
+  const awayWon = showScore && g.awayScore > g.homeScore;
+  const homeWon = showScore && g.homeScore > g.awayScore;
+
+  const Side = ({ abbr, logo, score, won, align }) => (
+    <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--s3)', minWidth: 0,
+      flexDirection: align === 'right' ? 'row-reverse' : 'row' }}>
+      <img src={logo} alt="" loading="lazy"
+        style={{ width: 34, height: 34, objectFit: 'contain', flexShrink: 0,
+          filter: showScore && !won ? 'grayscale(0.5) opacity(0.65)' : 'none' }}
+        onError={e => { e.target.style.visibility = 'hidden'; }} />
+      <div style={{ minWidth: 0, textAlign: align === 'right' ? 'right' : 'left' }}>
+        <div className="piq-num" style={{ fontSize: 'var(--fs-md)',
+          color: showScore && !won ? 'var(--muted)' : 'var(--text)', letterSpacing: '0.03em' }}>{abbr}</div>
+        {showScore && (
+          <div className="piq-num" style={{ fontSize: 26, fontWeight: 900, lineHeight: 1.1,
+            color: won ? 'var(--green)' : 'var(--muted)' }}>{score}</div>
+        )}
+      </div>
+    </div>
+  );
+
+  return (
+    <HudCard onClick={() => onSelect(g)} accent={accent} style={{ padding: 'var(--s4)' }}>
+      {/* header row */}
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+        gap: 'var(--s2)', marginBottom: 'var(--s4)' }}>
+        <StatusBadge status={isFinal ? 'Final' : isLive ? 'In Progress' : 'Scheduled'} />
+        <span style={{ fontSize: 'var(--fs-xs)', fontFamily: 'Space Mono, monospace',
+          color: isLive ? 'var(--green)' : 'var(--muted)', fontWeight: isLive ? 700 : 400,
+          whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+          {isFinal ? 'FINAL' : isLive ? g.statusDetail : formatTime(g.date)}
+        </span>
+      </div>
+
+      {/* matchup */}
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr auto 1fr', gap: 'var(--s2)',
+        alignItems: 'center', marginBottom: 'var(--s3)' }}>
+        <Side abbr={g.awayAbbr} logo={g.awayLogo} score={g.awayScore} won={awayWon} align="left" />
+        <span className="piq-label" style={{ fontSize: 'var(--fs-micro)', letterSpacing: '0.1em' }}>
+          {showScore ? '·' : 'AT'}
+        </span>
+        <Side abbr={g.homeAbbr} logo={g.homeLogo} score={g.homeScore} won={homeWon} align="right" />
+      </div>
+
+      {g.sportKey === 'mlb' && !isLive && !isFinal && <MlbReadyRow r={readiness} />}
+
+      {/* footer: odds + CTA */}
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 'var(--s2)',
+        marginTop: 'var(--s3)', paddingTop: 'var(--s3)', borderTop: '1px solid var(--line)' }}>
+        <div style={{ display: 'flex', gap: 5, flexWrap: 'wrap', minWidth: 0 }}>
+          {g.spread    && <Chip color="var(--muted)">{g.spread}</Chip>}
+          {g.overUnder && <Chip color="var(--muted)">O/U {g.overUnder}</Chip>}
+          {!g.spread && !g.overUnder && <span style={{ fontSize: 'var(--fs-micro)', color: 'var(--faint)', fontFamily: 'Space Mono, monospace' }}>NO LINE</span>}
+        </div>
+        <span style={{ fontSize: 'var(--fs-micro)', fontFamily: 'Space Mono, monospace', fontWeight: 700,
+          color: 'var(--cyan)', letterSpacing: '0.12em', whiteSpace: 'nowrap' }}>ANALYZE →</span>
+      </div>
+    </HudCard>
   );
 }
 
@@ -67,103 +129,96 @@ function GamesScreen({ onSelectGame, onBack }) {
   displayed.forEach(g => { (bySport[g.sportKey] = bySport[g.sportKey] || []).push(g); });
   const formatTime = iso => new Date(iso).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', timeZoneName: 'short' });
 
+  const liveCount = displayed.filter(g => g.statusState === 'in').length;
+
+  // Friendly date label — "TODAY" beats reading an ISO string.
+  const todayStr = new Date().toLocaleDateString('en-CA', { timeZone: 'America/New_York' });
+  const dateLabel = date === todayStr
+    ? 'TODAY'
+    : new Date(date + 'T12:00:00').toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' }).toUpperCase();
+
   return (
-    <div style={{ maxWidth: 1100, margin: '0 auto', padding: '24px' }}>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 20, flexWrap: 'wrap' }}>
-        <button onClick={onBack} style={backBtnStyle}>← SPORTS</button>
-        <div style={{ flex: 1, fontSize: 9, fontFamily: 'Space Mono, monospace', color: 'var(--muted)', letterSpacing: '0.2em' }}>TODAY'S GAMES</div>
-        <input type="date" value={date} onChange={e => setDate(e.target.value)}
-          style={{ background: 'var(--card)', border: '1px solid rgba(0,212,255,0.2)', color: 'var(--cyan)', fontFamily: 'Space Mono, monospace', fontSize: 11, padding: '6px 10px', borderRadius: 2, outline: 'none' }} />
+    <div style={{ maxWidth: 'var(--maxw)', margin: '0 auto', padding: 'var(--s5)' }}>
+      {/* ── Toolbar ──────────────────────────────────────── */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--s3)', marginBottom: 'var(--s5)', flexWrap: 'wrap' }}>
+        <button onClick={onBack} className="piq-btn piq-btn-ghost">← SPORTS</button>
+
+        <div style={{ flex: 1, minWidth: 140 }}>
+          <h1 className="piq-num" style={{ fontSize: 'var(--fs-xl)', color: 'var(--text)', letterSpacing: '0.04em', margin: 0, lineHeight: 1.1 }}>
+            {dateLabel}
+          </h1>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--s2)', marginTop: 5, flexWrap: 'wrap' }}>
+            <span className="piq-label">{displayed.length} game{displayed.length === 1 ? '' : 's'}</span>
+            {liveCount > 0 && (
+              <Chip color="var(--green)" strong>
+                <span style={{ width: 6, height: 6, borderRadius: '50%', background: 'var(--green)',
+                  boxShadow: '0 0 7px var(--green)', animation: 'livePulse 1.4s ease-in-out infinite' }} />
+                {liveCount} LIVE
+              </Chip>
+            )}
+          </div>
+        </div>
+
+        <label className="sr-only" htmlFor="piq-date">Schedule date</label>
+        <input id="piq-date" type="date" className="piq-input" value={date}
+          onChange={e => setDate(e.target.value)}
+          style={{ width: 'auto', color: 'var(--cyan)', fontWeight: 700 }} />
       </div>
 
+      {/* ── Sport filter ─────────────────────────────────── */}
       {!loading && sports.length > 1 && (
-        <div style={{ display: 'flex', gap: 6, marginBottom: 20, overflowX: 'auto', paddingBottom: 4 }}>
+        <div className="piq-seg" role="group" aria-label="Filter by sport"
+          style={{ marginBottom: 'var(--s5)', maxWidth: '100%', overflowX: 'auto' }}>
           {sports.map(s => (
-            <button key={s} onClick={() => setFilter(s)}
-              style={{ padding: '6px 14px', background: filter===s ? 'rgba(0,212,255,0.1)' : 'transparent',
-                border: `1px solid ${filter===s ? 'rgba(0,212,255,0.3)' : 'rgba(255,255,255,0.06)'}`,
-                color: filter===s ? 'var(--cyan)' : 'var(--muted)', fontFamily: 'Space Mono, monospace',
-                fontSize: 10, cursor: 'pointer', borderRadius: 2, whiteSpace: 'nowrap', letterSpacing: '0.08em' }}>
-              {s === 'all' ? 'ALL SPORTS' : s.toUpperCase()}
+            <button key={s} onClick={() => setFilter(s)} aria-pressed={filter === s}>
+              {s === 'all' ? `ALL · ${games.length}` : `${s.toUpperCase()} · ${games.filter(g => g.sportKey === s).length}`}
             </button>
           ))}
         </div>
       )}
 
+      {/* ── Slate ────────────────────────────────────────── */}
       {loading ? <Loader text="FETCHING SCHEDULE" /> : (
         Object.keys(bySport).length === 0
-          ? <div style={{ padding: '40px', textAlign: 'center', fontFamily: 'Space Mono, monospace', color: 'var(--dim)', fontSize: 11 }}>NO GAMES FOUND FOR {date}</div>
+          ? <EmptyState title={`NO GAMES ON ${dateLabel}`}
+              hint="Try another date. NCAAB is off-season in spring, and some leagues have dark days mid-week." />
           : Object.entries(bySport).map(([sportKey, sportGames]) => (
-            <div key={sportKey} style={{ marginBottom: 28 }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 12 }}>
-                <span style={{ fontFamily: 'Orbitron, monospace', fontSize: 11, fontWeight: 700, color: 'var(--cyan)', letterSpacing: '0.15em' }}>{sportKey.toUpperCase()}</span>
-                <div style={{ flex: 1, height: 1, background: 'rgba(0,212,255,0.1)' }} />
-                <span style={{ fontSize: 9, color: 'var(--dim)', fontFamily: 'Space Mono, monospace' }}>{sportGames.length} GAMES</span>
+            <section key={sportKey} style={{ marginBottom: 'var(--s6)' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--s3)', marginBottom: 'var(--s3)' }}>
+                <h2 className="piq-num" style={{ fontSize: 'var(--fs-sm)', color: 'var(--cyan)', letterSpacing: '0.16em', margin: 0 }}>
+                  {sportKey.toUpperCase()}
+                </h2>
+                <div aria-hidden="true" style={{ flex: 1, height: 1,
+                  background: 'linear-gradient(90deg, var(--line-accent), transparent)' }} />
+                <span className="piq-label">{sportGames.length} games</span>
               </div>
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(290px, 1fr))', gap: 10 }}>
-                {sportGames.map((g, i) => {
-                  const isLive = g.statusState === 'in';
-                  const isFinal = g.statusState === 'post';
-                  const showScore = isLive || isFinal;
-                  return (
-                    <HudCard key={i} onClick={() => onSelectGame(g)} accent={isLive ? 'var(--green)' : 'var(--cyan)'}
-                      style={{ padding: '14px 16px', cursor: 'pointer' }}>
-                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
-                        <StatusBadge status={isFinal ? 'Final' : isLive ? 'In Progress' : 'Scheduled'} />
-                        <span style={{ fontSize: 9, fontFamily: 'Space Mono, monospace', color: 'var(--muted)' }}>
-                          {isFinal ? 'FINAL' : isLive ? g.statusDetail : formatTime(g.date)}
-                        </span>
-                      </div>
-                      <div style={{ display: 'grid', gridTemplateColumns: '1fr auto 1fr', gap: 8, alignItems: 'center', marginBottom: 12 }}>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                          <img src={g.awayLogo} alt={g.awayAbbr} style={{ width: 28, height: 28, objectFit: 'contain' }} onError={e => e.target.style.display='none'} />
-                          <div>
-                            <div style={{ fontFamily: 'Orbitron, monospace', fontSize: 14, fontWeight: 700, color: 'var(--text)' }}>{g.awayAbbr}</div>
-                            {showScore && <div style={{ fontFamily: 'Orbitron, monospace', fontSize: 22, fontWeight: 900, color: g.awayScore > g.homeScore ? 'var(--green)' : 'var(--text)', lineHeight: 1 }}>{g.awayScore}</div>}
-                          </div>
-                        </div>
-                        <div style={{ fontFamily: 'Orbitron, monospace', fontSize: 13, color: 'var(--dim)', fontWeight: 700, textAlign: 'center' }}>
-                          {showScore ? '—' : 'VS'}
-                        </div>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: 8, justifyContent: 'flex-end', flexDirection: 'row-reverse' }}>
-                          <img src={g.homeLogo} alt={g.homeAbbr} style={{ width: 28, height: 28, objectFit: 'contain' }} onError={e => e.target.style.display='none'} />
-                          <div style={{ textAlign: 'right' }}>
-                            <div style={{ fontFamily: 'Orbitron, monospace', fontSize: 14, fontWeight: 700, color: 'var(--text)' }}>{g.homeAbbr}</div>
-                            {showScore && <div style={{ fontFamily: 'Orbitron, monospace', fontSize: 22, fontWeight: 900, color: g.homeScore > g.awayScore ? 'var(--green)' : 'var(--text)', lineHeight: 1 }}>{g.homeScore}</div>}
-                          </div>
-                        </div>
-                      </div>
-                      {g.sportKey === 'mlb' && !isLive && !isFinal && (
-                        <MlbReadyRow r={findMlbReadiness(mlbReadiness, g.awayFull, g.homeFull)} />
-                      )}
-                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', paddingTop: 10, borderTop: '1px solid rgba(255,255,255,0.04)' }}>
-                        <div style={{ display: 'flex', gap: 6 }}>
-                          {g.spread && <span style={{ fontSize: 9, fontFamily: 'Space Mono, monospace', color: 'var(--muted)', padding: '2px 6px', border: '1px solid rgba(255,255,255,0.06)', borderRadius: 2 }}>{g.spread}</span>}
-                          {g.overUnder && <span style={{ fontSize: 9, fontFamily: 'Space Mono, monospace', color: 'var(--muted)', padding: '2px 6px', border: '1px solid rgba(255,255,255,0.06)', borderRadius: 2 }}>O/U {g.overUnder}</span>}
-                        </div>
-                        <span style={{ fontSize: 9, fontFamily: 'Space Mono, monospace', color: 'var(--cyan)', letterSpacing: '0.1em' }}>ANALYZE →</span>
-                      </div>
-                    </HudCard>
-                  );
-                })}
+
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))', gap: 'var(--s3)' }}>
+                {sportGames.map((g, i) => (
+                  <GameCard key={g.eventId || i} g={g} onSelect={onSelectGame} formatTime={formatTime}
+                    readiness={findMlbReadiness(mlbReadiness, g.awayFull, g.homeFull)} />
+                ))}
               </div>
-            </div>
+            </section>
           ))
       )}
     </div>
   );
 }
 
+/* Kept for backwards compatibility — GameDetailScreen imports this style
+   for its own back button. New code should use the .piq-btn class instead. */
 const backBtnStyle = {
-  background: 'transparent',
-  border: '1px solid rgba(0,212,255,0.2)',
+  background: 'var(--surface)',
+  border: '1px solid var(--line-strong)',
   color: 'var(--cyan)',
   fontFamily: 'Space Mono, monospace',
-  fontSize: 10,
+  fontSize: 'var(--fs-xs)',
+  fontWeight: 700,
   letterSpacing: '0.12em',
-  padding: '7px 14px',
+  padding: '8px 16px',
   cursor: 'pointer',
-  borderRadius: 2,
+  borderRadius: 'var(--r-sm)',
   flexShrink: 0,
 };
 

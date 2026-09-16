@@ -188,55 +188,95 @@ function GameDetailScreen({ game, onBack }) {
   // step 3 once core data is ready; extras unlock individual tabs as they land.
   const steps = ['LOADING GAME', 'TEAM STATS', 'FORM + PLAYERS', 'HEAD-TO-HEAD'];
 
+  // Roving arrow-key navigation across the tab bar (WAI-ARIA tabs pattern).
+  const tabRefs = React.useRef({});
+  const onTabKeyDown = e => {
+    const idx = tabs.findIndex(t => t.id === tab);
+    let next = null;
+    if (e.key === 'ArrowRight') next = tabs[(idx + 1) % tabs.length];
+    if (e.key === 'ArrowLeft')  next = tabs[(idx - 1 + tabs.length) % tabs.length];
+    if (e.key === 'Home')       next = tabs[0];
+    if (e.key === 'End')        next = tabs[tabs.length - 1];
+    if (!next) return;
+    e.preventDefault();
+    setTab(next.id);
+    tabRefs.current[next.id]?.focus();
+    tabRefs.current[next.id]?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+  };
+
+  const isLive = game.statusState === 'in';
+  const statusLabel = isLive ? 'In Progress' : game.statusState === 'post' ? 'Final' : 'Scheduled';
+
+  const TeamMark = ({ logo, abbr }) => (
+    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 'var(--s2)', minWidth: 0 }}>
+      <img src={logo} alt="" loading="lazy" style={{ width: 34, height: 34, objectFit: 'contain', flexShrink: 0 }}
+        onError={e => { e.target.style.visibility = 'hidden'; }} />
+      <span className="piq-num" style={{ fontSize: 'clamp(18px, 2.6vw, 28px)', color: 'var(--text)', letterSpacing: '0.03em' }}>{abbr}</span>
+    </span>
+  );
+
   return (
-    <div style={{ maxWidth: 1100, margin: '0 auto', padding: '0 24px 40px' }}>
-      <div style={{ padding: '20px 0 16px', borderBottom: '1px solid rgba(255,255,255,0.06)', marginBottom: 0 }}>
-        <div style={{ display: 'flex', alignItems: 'flex-start', gap: 16, flexWrap: 'wrap' }}>
-          <button onClick={onBack} style={backBtnStyle}>← GAMES</button>
-          <div style={{ flex: 1, minWidth: 200 }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap', marginBottom: 6 }}>
-              <img src={game.awayLogo} alt={game.awayAbbr} style={{ width: 32, height: 32, objectFit: 'contain' }} onError={e => e.target.style.display='none'} />
-              <span style={{ fontFamily: 'Orbitron, monospace', fontSize: 'clamp(16px,2.5vw,26px)', fontWeight: 700, color: 'var(--text)', letterSpacing: '0.04em' }}>{game.awayAbbr}</span>
-              <span style={{ fontFamily: 'Space Mono, monospace', fontSize: 14, color: 'var(--dim)' }}>@</span>
-              <span style={{ fontFamily: 'Orbitron, monospace', fontSize: 'clamp(16px,2.5vw,26px)', fontWeight: 700, color: 'var(--text)', letterSpacing: '0.04em' }}>{game.homeAbbr}</span>
-              <img src={game.homeLogo} alt={game.homeAbbr} style={{ width: 32, height: 32, objectFit: 'contain' }} onError={e => e.target.style.display='none'} />
-              <StatusBadge status={game.statusState==='in' ? 'In Progress' : game.statusState==='post' ? 'Final' : 'Scheduled'} />
+    <div style={{ maxWidth: 'var(--maxw)', margin: '0 auto', padding: '0 var(--s5) var(--s7)' }}>
+      {/* ── Game header ──────────────────────────────────── */}
+      <header style={{ padding: 'var(--s5) 0 var(--s4)' }}>
+        <button onClick={onBack} className="piq-btn piq-btn-ghost" style={{ marginBottom: 'var(--s4)' }}>← GAMES</button>
+
+        <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--s5)', flexWrap: 'wrap' }}>
+          <div style={{ flex: 1, minWidth: 240 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--s3)', flexWrap: 'wrap', marginBottom: 'var(--s2)' }}>
+              <TeamMark logo={game.awayLogo} abbr={game.awayAbbr} />
+              <span className="piq-label" style={{ fontSize: 'var(--fs-xs)' }}>AT</span>
+              <TeamMark logo={game.homeLogo} abbr={game.homeAbbr} />
+              <StatusBadge status={statusLabel} />
             </div>
-            <div style={{ fontSize: 10, color: 'var(--muted)', fontFamily: 'Space Mono, monospace' }}>{game.awayFull} · {game.homeFull}{game.venue ? ` · ${game.venue}` : ''}</div>
+            <div style={{ fontSize: 'var(--fs-xs)', color: 'var(--muted)', fontFamily: 'Space Mono, monospace', lineHeight: 1.6 }}>
+              {game.awayFull} · {game.homeFull}{game.venue ? ` · ${game.venue}` : ''}
+            </div>
           </div>
           <OddsStrip game={game} />
         </div>
-      </div>
+      </header>
 
       {loading ? (
-        <div style={{ padding: '40px 0' }}>
+        <div style={{ padding: 'var(--s6) 0' }}>
           <Loader text={steps[stepIdx] || 'LOADING'} />
-          <div style={{ display: 'flex', justifyContent: 'center', gap: 8, marginTop: 16, flexWrap: 'wrap' }}>
+          <ol style={{ display: 'flex', justifyContent: 'center', gap: 'var(--s2)', marginTop: 'var(--s4)',
+            flexWrap: 'wrap', listStyle: 'none', padding: 0 }}>
             {steps.map((s, i) => (
-              <div key={i} style={{ fontSize: 9, fontFamily: 'Space Mono, monospace', letterSpacing: '0.1em', padding: '3px 10px', borderRadius: 2,
-                background: i < stepIdx ? 'rgba(0,255,136,0.1)' : i === stepIdx ? 'rgba(0,212,255,0.1)' : 'transparent',
-                border: `1px solid ${i < stepIdx ? 'rgba(0,255,136,0.25)' : i === stepIdx ? 'rgba(0,212,255,0.3)' : 'rgba(255,255,255,0.06)'}`,
-                color: i < stepIdx ? 'var(--green)' : i === stepIdx ? 'var(--cyan)' : 'var(--dim)' }}>
-                {i < stepIdx ? '✓' : i === stepIdx ? '●' : '○'} {s}
-              </div>
+              <li key={i}>
+                <Chip color={i < stepIdx ? 'var(--green)' : i === stepIdx ? 'var(--cyan)' : 'var(--dim)'}
+                  strong={i <= stepIdx}>
+                  {i < stepIdx ? '✓' : i === stepIdx ? '●' : '○'} {s}
+                </Chip>
+              </li>
             ))}
-          </div>
+          </ol>
         </div>
       ) : (
         <>
-          <div style={{ display: 'flex', gap: 0, overflowX: 'auto', borderBottom: '1px solid rgba(255,255,255,0.06)', marginBottom: 0 }}>
+          {/* Sticky so the user keeps their bearings inside long tabs like
+              Edge Finder / High Contact. Offset by the 56px top nav. */}
+          <div className="piq-tabs" role="tablist" aria-label="Game analysis sections"
+            onKeyDown={onTabKeyDown}
+            style={{ position: 'sticky', top: 'var(--nav-h)', zIndex: 100,
+              background: 'rgba(5,8,15,0.9)', backdropFilter: 'blur(14px)',
+              WebkitBackdropFilter: 'blur(14px)', marginBottom: 'var(--s2)' }}>
             {tabs.map(t => (
-              <button key={t.id} onClick={() => setTab(t.id)}
-                style={{ padding: '14px 18px', background: 'transparent', border: 'none', borderBottom: `2px solid ${tab===t.id ? 'var(--cyan)' : 'transparent'}`,
-                  color: tab===t.id ? 'var(--cyan)' : 'var(--muted)', fontFamily: 'Space Mono, monospace',
-                  fontSize: 10, cursor: 'pointer', whiteSpace: 'nowrap', letterSpacing: '0.1em',
-                  transition: 'all 0.2s', marginBottom: -1 }}>
+              <button key={t.id}
+                ref={el => { tabRefs.current[t.id] = el; }}
+                className="piq-tab"
+                role="tab"
+                id={`tab-${t.id}`}
+                aria-selected={tab === t.id}
+                aria-controls="tabpanel"
+                tabIndex={tab === t.id ? 0 : -1}
+                onClick={() => setTab(t.id)}>
                 {t.label}
               </button>
             ))}
           </div>
 
-          <div style={{ minHeight: 400 }}>
+          <div id="tabpanel" role="tabpanel" aria-labelledby={`tab-${tab}`} tabIndex={-1} style={{ minHeight: 400 }}>
             {tab === 'overview' && <OverviewTab gameData={gameData} />}
             {tab === 'h2h' && <H2HTab gameData={gameData} />}
             {tab === 'form' && <FormTab gameData={gameData} />}

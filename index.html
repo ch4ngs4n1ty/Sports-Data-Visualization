@@ -36,111 +36,412 @@
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
+    /* ══════════════════════════════════════════════════════════
+       DESIGN TOKENS
+       The legacy names (--bg/--card/--cyan/--text/--muted/--dim)
+       are kept so the ~2,600 lines of sport-specific tabs pick up
+       the new palette without being touched. Values are retuned
+       for contrast: --muted is now 7.6:1 and --dim 4.75:1 on
+       --card (both were failing WCAG AA before).
+       ══════════════════════════════════════════════════════════ */
     :root {
-      --bg:      #05080f;
-      --surface: #090d1a;
-      --card:    #0d1524;
-      --cyan:    #00d4ff;
-      --green:   #00ff88;
-      --orange:  #ff6b35;
-      --gold:    #ffd060;
-      --text:    #c0d4e8;
-      --muted:   #4a6080;
-      --dim:     #2a3a50;
+      /* ── Surfaces (ascending elevation) ── */
+      --bg:        #05080f;
+      --surface:   #0a1020;
+      --card:      #0e1626;
+      --card-hi:   #142038;
+      --raised:    #18243c;
+
+      /* ── Accents ── */
+      --cyan:      #00d4ff;
+      --green:     #00ff88;
+      --orange:    #ff6b35;
+      --gold:      #ffd060;
+      --violet:    #a855f7;
+
+      /* ── Text ramp ── */
+      --text:      #dce9f7;   /* primary        ~15:1  */
+      --muted:     #93aac6;   /* secondary      ~7.6:1 */
+      --dim:       #6b87a8;   /* tertiary/label ~4.75:1 */
+      --faint:     #40587a;   /* decorative only, never text */
+
+      /* ── Lines & tints ── */
+      --line:        rgba(147, 170, 198, 0.10);
+      --line-strong: rgba(147, 170, 198, 0.20);
+      --line-accent: rgba(0, 212, 255, 0.28);
+      --tint-cyan:   rgba(0, 212, 255, 0.07);
+      --tint-green:  rgba(0, 255, 136, 0.08);
+      --tint-orange: rgba(255, 107, 53, 0.08);
+      --tint-gold:   rgba(255, 208, 96, 0.08);
+
+      /* ── Spacing scale (4px base) ── */
+      --s1: 4px;  --s2: 8px;  --s3: 12px; --s4: 16px;
+      --s5: 24px; --s6: 32px; --s7: 48px; --s8: 64px;
+
+      /* ── Type scale ── */
+      --fs-micro: 11px;  /* was 8–9px: uppercase tracking labels */
+      --fs-xs:    12px;  /* was 9–10px: meta, captions           */
+      --fs-sm:    13px;  /* was 11px:   body                     */
+      --fs-md:    15px;  /* emphasis body                        */
+      --fs-lg:    18px;
+      --fs-xl:    24px;
+
+      /* ── Radius ── */
+      --r-xs: 3px; --r-sm: 5px; --r-md: 8px; --r-lg: 12px;
+
+      /* ── Motion (snappy by preference) ── */
+      --dur-1: 120ms;   /* charts, bars            */
+      --dur-2: 150ms;   /* cards, hovers           */
+      --dur-3: 220ms;   /* screen transitions      */
+      --ease:  cubic-bezier(0.16, 1, 0.3, 1);
+
+      /* ── Elevation ── */
+      --sh-1: 0 1px 2px rgba(0,0,0,0.4);
+      --sh-2: 0 4px 16px rgba(0,0,0,0.45);
+      --sh-3: 0 12px 40px rgba(0,0,0,0.55);
+
+      /* ── Layout ── */
+      --maxw: 1180px;
+      --nav-h: 56px;
+
+      --scanlines-opacity: 1;
+      --grid-line: rgba(0, 212, 255, 0.028);
     }
 
-    html, body { height: 100%; background: var(--bg); color: var(--text); font-family: 'Space Mono', monospace; overflow-x: hidden; }
+    html, body {
+      height: 100%;
+      background: var(--bg);
+      color: var(--text);
+      font-family: 'Space Mono', monospace;
+      font-size: var(--fs-sm);
+      line-height: 1.5;
+      overflow-x: hidden;
+      -webkit-font-smoothing: antialiased;
+      text-rendering: optimizeLegibility;
+    }
 
-    /* Scanlines */
+    /* Scanlines — lighter than before so they read as texture, not noise */
     body::after {
       content: ''; position: fixed; inset: 0; pointer-events: none; z-index: 9999;
-      background: repeating-linear-gradient(0deg, transparent, transparent 3px, rgba(0,0,0,0.035) 3px, rgba(0,0,0,0.035) 4px);
+      opacity: var(--scanlines-opacity);
+      background: repeating-linear-gradient(0deg, transparent, transparent 3px, rgba(0,0,0,0.028) 3px, rgba(0,0,0,0.028) 4px);
+      transition: opacity var(--dur-2) ease;
     }
 
-    /* Grid bg */
+    /* Grid backdrop + top glow. The mask fades the grid toward the bottom so
+       the page gains depth instead of reading as flat graph paper. */
     body::before {
       content: ''; position: fixed; inset: 0; pointer-events: none; z-index: 0;
-      background-image: linear-gradient(rgba(0,212,255,0.022) 1px, transparent 1px), linear-gradient(90deg, rgba(0,212,255,0.022) 1px, transparent 1px);
-      background-size: 48px 48px;
+      background-image:
+        radial-gradient(1100px 520px at 50% -12%, rgba(0,212,255,0.09), transparent 70%),
+        linear-gradient(var(--grid-line) 1px, transparent 1px),
+        linear-gradient(90deg, var(--grid-line) 1px, transparent 1px);
+      background-size: 100% 100%, 48px 48px, 48px 48px;
+      -webkit-mask-image: linear-gradient(180deg, #000 0%, #000 42%, transparent 92%);
+      mask-image: linear-gradient(180deg, #000 0%, #000 42%, transparent 92%);
     }
 
     #root { position: relative; z-index: 1; min-height: 100vh; }
 
     /* Scrollbar */
-    ::-webkit-scrollbar { width: 4px; height: 4px; }
-    ::-webkit-scrollbar-track { background: var(--bg); }
-    ::-webkit-scrollbar-thumb { background: rgba(0,212,255,0.18); border-radius: 2px; }
+    ::-webkit-scrollbar { width: 8px; height: 8px; }
+    ::-webkit-scrollbar-track { background: transparent; }
+    ::-webkit-scrollbar-thumb { background: rgba(0,212,255,0.16); border-radius: 99px; border: 2px solid transparent; background-clip: padding-box; }
+    ::-webkit-scrollbar-thumb:hover { background: rgba(0,212,255,0.32); background-clip: padding-box; }
 
-    /* Keyframes */
-    @keyframes livePulse   { 0%,100%{opacity:1;transform:scale(1)} 50%{opacity:.4;transform:scale(.8)} }
-    @keyframes fadeUp      { from{opacity:0;transform:translateY(10px)} to{opacity:1;transform:translateY(0)} }
-    @keyframes glowPulse   { 0%,100%{text-shadow:0 0 10px rgba(0,212,255,.35)} 50%{text-shadow:0 0 28px rgba(0,212,255,.75),0 0 56px rgba(0,212,255,.2)} }
-    @keyframes shimmer     { 0%{left:-100%} 100%{left:200%} }
+    /* ── Keyframes ─────────────────────────────────────────── */
+    @keyframes livePulse     { 0%,100%{opacity:1;transform:scale(1)} 50%{opacity:.4;transform:scale(.8)} }
+    @keyframes fadeUp        { from{opacity:0;transform:translateY(8px)} to{opacity:1;transform:translateY(0)} }
+    @keyframes glowPulse     { 0%,100%{text-shadow:0 0 10px rgba(0,212,255,.35)} 50%{text-shadow:0 0 26px rgba(0,212,255,.7),0 0 52px rgba(0,212,255,.18)} }
+    @keyframes shimmer       { 0%{left:-100%} 100%{left:200%} }
     @keyframes skeletonPulse { 0%,100%{opacity:0.4} 50%{opacity:0.7} }
 
-    .screen-enter { animation: fadeUp 0.28s ease; }
+    .screen-enter { animation: fadeUp var(--dur-3) var(--ease); }
 
-    /* Top nav */
+    /* ══════════════════════════════════════════════════════════
+       ACCESSIBILITY PRIMITIVES
+       ══════════════════════════════════════════════════════════ */
+    :where(button, a, input, textarea, select, [tabindex]):focus-visible {
+      outline: 2px solid var(--cyan);
+      outline-offset: 2px;
+      border-radius: var(--r-xs);
+    }
+    :where(button, a, input, textarea, select):focus { outline: none; }
+
+    .sr-only {
+      position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
+      overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0;
+    }
+
+    .skip-link {
+      position: absolute; left: var(--s3); top: -60px; z-index: 500;
+      background: var(--raised); color: var(--cyan); padding: var(--s2) var(--s4);
+      border: 1px solid var(--line-accent); border-radius: var(--r-sm);
+      font-size: var(--fs-xs); letter-spacing: 0.12em; text-decoration: none;
+      transition: top var(--dur-2) var(--ease);
+    }
+    .skip-link:focus { top: var(--s2); }
+
+    @media (prefers-reduced-motion: reduce) {
+      *, *::before, *::after {
+        animation-duration: 0.01ms !important;
+        animation-iteration-count: 1 !important;
+        transition-duration: 0.01ms !important;
+      }
+    }
+
+    /* ══════════════════════════════════════════════════════════
+       TOP NAV
+       ══════════════════════════════════════════════════════════ */
     .topnav {
       position: sticky; top: 0; z-index: 200;
-      height: 52px; display: flex; align-items: center; gap: 16px; padding: 0 24px;
-      background: rgba(5,8,15,0.94); backdrop-filter: blur(16px);
-      border-bottom: 1px solid rgba(0,212,255,0.07);
+      min-height: var(--nav-h);
+      display: flex; align-items: center; gap: var(--s4);
+      padding: 0 var(--s5);
+      background: rgba(5,8,15,0.86);
+      backdrop-filter: blur(18px) saturate(140%);
+      -webkit-backdrop-filter: blur(18px) saturate(140%);
+      border-bottom: 1px solid var(--line);
+    }
+    /* Accent hairline under the nav */
+    .topnav::after {
+      content: ''; position: absolute; left: 0; right: 0; bottom: -1px; height: 1px;
+      background: linear-gradient(90deg, transparent, rgba(0,212,255,0.45), transparent);
+    }
+
+    .brand {
+      display: flex; align-items: center; gap: var(--s2);
+      background: none; border: none; cursor: pointer; padding: var(--s1) 0;
+      flex-shrink: 0;
+    }
+    .brand-mark {
+      width: 22px; height: 22px; flex-shrink: 0;
+      display: grid; place-items: center;
+      border: 1.5px solid var(--cyan); border-radius: var(--r-xs);
+      color: var(--cyan); font-family: 'Orbitron', monospace; font-weight: 900;
+      font-size: 12px; line-height: 1;
+      box-shadow: 0 0 14px rgba(0,212,255,0.28), inset 0 0 10px rgba(0,212,255,0.12);
     }
     .logo {
-      font-family: 'Orbitron', monospace; font-weight: 900; font-size: 18px;
-      color: var(--cyan); letter-spacing: 0.1em; cursor: pointer;
-      animation: glowPulse 3.5s ease-in-out infinite; user-select: none;
-      text-decoration: none;
+      font-family: 'Orbitron', monospace; font-weight: 900; font-size: var(--fs-lg);
+      color: var(--cyan); letter-spacing: 0.1em; user-select: none; line-height: 1;
+      animation: glowPulse 3.5s ease-in-out infinite;
     }
-    .logo span { color: rgba(0,212,255,0.35); }
-    .nav-sep  { width: 1px; height: 20px; background: rgba(0,212,255,0.1); }
-    .nav-bc   { flex: 1; font-size: 10px; color: var(--muted); letter-spacing: 0.18em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-    .nav-status { display: flex; align-items: center; gap: 6px; font-size: 9px; color: var(--dim); letter-spacing: 0.12em; flex-shrink: 0; }
-    .nav-dot { width: 5px; height: 5px; border-radius: 50%; background: var(--green); box-shadow: 0 0 6px var(--green); animation: livePulse 2.2s ease-in-out infinite; }
+    .logo span { color: rgba(0,212,255,0.38); }
 
-    /* API key row */
-    .api-row { display: flex; align-items: center; gap: 6px; flex-shrink: 0; }
+    .nav-sep { width: 1px; height: 20px; background: var(--line-strong); flex-shrink: 0; }
+
+    /* Breadcrumb — clickable trail instead of a dead string */
+    .nav-bc { flex: 1; display: flex; align-items: center; gap: var(--s2); min-width: 0; overflow: hidden; }
+    .bc-item {
+      background: none; border: none; padding: 2px 0; cursor: default;
+      font-family: 'Space Mono', monospace; font-size: var(--fs-xs);
+      color: var(--dim); letter-spacing: 0.14em; white-space: nowrap;
+      text-overflow: ellipsis; overflow: hidden; transition: color var(--dur-2) ease;
+    }
+    .bc-item.link { cursor: pointer; }
+    .bc-item.link:hover { color: var(--cyan); }
+    .bc-item.current { color: var(--text); font-weight: 700; }
+    .bc-sep { color: var(--faint); font-size: var(--fs-xs); flex-shrink: 0; }
+
+    .nav-status {
+      display: flex; align-items: center; gap: var(--s2);
+      font-size: var(--fs-micro); color: var(--dim); letter-spacing: 0.1em;
+      flex-shrink: 0; padding: var(--s1) var(--s3);
+      border: 1px solid var(--line); border-radius: 99px; background: var(--surface);
+      max-width: 230px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    }
+    .nav-dot {
+      width: 6px; height: 6px; border-radius: 50%; background: var(--green);
+      box-shadow: 0 0 8px var(--green); animation: livePulse 2.2s ease-in-out infinite;
+      flex-shrink: 0;
+    }
+
+    /* ── API key ─────────────────────────────────────────────── */
+    .api-row { display: flex; align-items: center; gap: var(--s2); flex-shrink: 0; position: relative; }
     .api-row input {
-      background: rgba(0,212,255,0.04); border: 1px solid rgba(0,212,255,0.15);
-      color: var(--text); font-family: 'Space Mono', monospace; font-size: 10px;
-      padding: 5px 10px; border-radius: 2px; width: 180px; letter-spacing: 0.05em;
+      background: var(--surface); border: 1px solid var(--line-strong);
+      color: var(--text); font-family: 'Space Mono', monospace; font-size: var(--fs-xs);
+      padding: var(--s2) var(--s3); border-radius: var(--r-sm); width: 210px;
+      letter-spacing: 0.04em; transition: border-color var(--dur-2) ease, box-shadow var(--dur-2) ease;
     }
-    .api-row input::placeholder { color: var(--dim); }
-    .api-row input:focus { border-color: rgba(0,212,255,0.4); outline: none; }
-    .api-row button {
-      background: rgba(0,212,255,0.08); border: 1px solid rgba(0,212,255,0.25);
-      color: var(--cyan); font-family: 'Space Mono', monospace; font-size: 9px;
-      padding: 5px 10px; letter-spacing: 0.12em; cursor: pointer; border-radius: 2px;
-      transition: all 0.15s;
+    .api-row input::placeholder { color: var(--faint); }
+    .api-row input:focus {
+      border-color: var(--line-accent);
+      box-shadow: 0 0 0 3px rgba(0,212,255,0.10);
     }
-    .api-row button:hover { background: rgba(0,212,255,0.15); border-color: rgba(0,212,255,0.4); }
-    .api-row .saved { font-size: 9px; color: var(--green); font-family: 'Space Mono', monospace; letterSpacing: 0.1em; }
+    .api-row .saved {
+      font-size: var(--fs-micro); color: var(--green); letter-spacing: 0.1em;
+      white-space: nowrap; animation: fadeUp var(--dur-2) var(--ease);
+    }
 
-    /* Date input */
-    input[type="date"]::-webkit-calendar-picker-indicator { filter: invert(.5) sepia(1) saturate(5) hue-rotate(170deg); cursor: pointer; }
+    /* Mobile: the key input collapses behind a toggle so the nav never overflows */
+    .api-toggle { display: none; }
+    .api-popover { display: contents; }
+
+    /* ══════════════════════════════════════════════════════════
+       BUTTONS
+       ══════════════════════════════════════════════════════════ */
+    .piq-btn {
+      display: inline-flex; align-items: center; justify-content: center; gap: var(--s2);
+      font-family: 'Space Mono', monospace; font-size: var(--fs-xs); font-weight: 700;
+      letter-spacing: 0.12em; padding: var(--s2) var(--s4);
+      background: var(--surface); color: var(--muted);
+      border: 1px solid var(--line-strong); border-radius: var(--r-sm);
+      cursor: pointer; white-space: nowrap;
+      transition: color var(--dur-2) ease, border-color var(--dur-2) ease,
+                  background var(--dur-2) ease, transform var(--dur-2) var(--ease);
+    }
+    .piq-btn:hover { color: var(--text); border-color: var(--line-accent); background: var(--card-hi); }
+    .piq-btn:active { transform: translateY(1px); }
+
+    .piq-btn-primary {
+      color: var(--cyan); background: var(--tint-cyan); border-color: var(--line-accent);
+    }
+    .piq-btn-primary:hover {
+      color: var(--bg); background: var(--cyan); border-color: var(--cyan);
+      box-shadow: 0 0 24px rgba(0,212,255,0.35);
+    }
+    .piq-btn:disabled { opacity: 0.45; cursor: not-allowed; transform: none; }
+
+    .piq-btn-ghost { background: transparent; border-color: var(--line); }
+
+    /* Segmented control — used for away/home + stat switchers */
+    .piq-seg {
+      display: inline-flex; padding: 3px; gap: 3px;
+      background: var(--surface); border: 1px solid var(--line); border-radius: var(--r-md);
+    }
+    .piq-seg button {
+      font-family: 'Space Mono', monospace; font-size: var(--fs-xs); font-weight: 700;
+      letter-spacing: 0.1em; padding: var(--s2) var(--s4);
+      background: transparent; color: var(--dim); border: none;
+      border-radius: var(--r-sm); cursor: pointer; white-space: nowrap;
+      transition: color var(--dur-2) ease, background var(--dur-2) ease;
+    }
+    .piq-seg button:hover { color: var(--text); }
+    .piq-seg button[aria-pressed="true"], .piq-seg button.on {
+      background: var(--tint-cyan); color: var(--cyan);
+      box-shadow: inset 0 0 0 1px var(--line-accent);
+    }
+
+    /* ══════════════════════════════════════════════════════════
+       TABS
+       ══════════════════════════════════════════════════════════ */
+    .piq-tabs {
+      display: flex; gap: var(--s1); overflow-x: auto; scrollbar-width: none;
+      border-bottom: 1px solid var(--line);
+      /* Fade the overflowing edge so it's obvious there is more to scroll */
+      -webkit-mask-image: linear-gradient(90deg, #000 0, #000 calc(100% - 36px), transparent 100%);
+      mask-image: linear-gradient(90deg, #000 0, #000 calc(100% - 36px), transparent 100%);
+    }
+    .piq-tabs::-webkit-scrollbar { display: none; }
+    .piq-tab {
+      position: relative; padding: var(--s3) var(--s4) var(--s3);
+      background: transparent; border: none; cursor: pointer; white-space: nowrap;
+      font-family: 'Space Mono', monospace; font-size: var(--fs-xs); font-weight: 700;
+      letter-spacing: 0.1em; color: var(--dim);
+      transition: color var(--dur-2) ease;
+      border-radius: var(--r-sm) var(--r-sm) 0 0;
+    }
+    .piq-tab:hover { color: var(--text); background: rgba(147,170,198,0.04); }
+    .piq-tab::after {
+      content: ''; position: absolute; left: var(--s3); right: var(--s3); bottom: -1px;
+      height: 2px; background: var(--cyan); border-radius: 2px 2px 0 0;
+      transform: scaleX(0); transform-origin: center;
+      transition: transform var(--dur-2) var(--ease);
+    }
+    .piq-tab[aria-selected="true"] { color: var(--cyan); }
+    .piq-tab[aria-selected="true"]::after { transform: scaleX(1); box-shadow: 0 0 12px rgba(0,212,255,0.6); }
+
+    /* ══════════════════════════════════════════════════════════
+       FORM CONTROLS
+       ══════════════════════════════════════════════════════════ */
+    .piq-input, .piq-textarea {
+      background: var(--card); border: 1px solid var(--line-strong); color: var(--text);
+      font-family: 'Space Mono', monospace; font-size: var(--fs-sm);
+      padding: var(--s2) var(--s3); border-radius: var(--r-sm); width: 100%;
+      transition: border-color var(--dur-2) ease, box-shadow var(--dur-2) ease;
+    }
+    .piq-input:focus, .piq-textarea:focus {
+      border-color: var(--line-accent); box-shadow: 0 0 0 3px rgba(0,212,255,0.10);
+    }
+    .piq-textarea { min-height: 96px; resize: vertical; line-height: 1.6; }
+    .piq-input::placeholder, .piq-textarea::placeholder { color: var(--faint); }
+
+    input[type="date"]::-webkit-calendar-picker-indicator { filter: invert(.6) sepia(1) saturate(6) hue-rotate(170deg); cursor: pointer; }
     input[type="date"] { color-scheme: dark; }
-    textarea:focus, input:focus { outline: none; }
 
-    /* Tweaks panel */
-    .tweaks {
-      position: fixed; bottom: 20px; right: 20px; width: 230px; z-index: 300;
-      background: rgba(9,13,26,0.97); border: 1px solid rgba(0,212,255,0.2);
-      border-radius: 4px; padding: 16px; backdrop-filter: blur(20px);
-      display: none; font-family: 'Space Mono', monospace;
+    /* ══════════════════════════════════════════════════════════
+       TYPE HELPERS
+       ══════════════════════════════════════════════════════════ */
+    .piq-label {
+      font-family: 'Space Mono', monospace; font-size: var(--fs-micro);
+      color: var(--dim); letter-spacing: 0.16em; text-transform: uppercase;
     }
-    .tweaks.open { display: block; animation: fadeUp .18s ease; }
-    .tw-title { font-size: 9px; color: var(--cyan); letter-spacing: 0.22em; margin-bottom: 14px; }
-    .tw-row   { margin-bottom: 12px; }
-    .tw-lbl   { font-size: 9px; color: var(--dim); letter-spacing: 0.1em; margin-bottom: 5px; }
-    .tw-opts  { display: flex; gap: 6px; flex-wrap: wrap; }
-    .tw-btn   { font-size: 9px; font-family: 'Space Mono', monospace; padding: 4px 9px; border-radius: 2px;
-                cursor: pointer; border: 1px solid rgba(0,212,255,0.15); background: transparent;
-                color: var(--muted); transition: all .15s; }
-    .tw-btn.on{ border-color: var(--cyan); color: var(--cyan); background: rgba(0,212,255,0.08); }
+    .piq-num { font-family: 'Orbitron', monospace; font-weight: 700; font-variant-numeric: tabular-nums; }
+
+    /* ══════════════════════════════════════════════════════════
+       TWEAKS PANEL
+       ══════════════════════════════════════════════════════════ */
+    .tweaks {
+      position: fixed; bottom: var(--s5); right: var(--s5); width: 244px; z-index: 300;
+      background: rgba(10,16,32,0.97); border: 1px solid var(--line-accent);
+      border-radius: var(--r-md); padding: var(--s4); backdrop-filter: blur(20px);
+      box-shadow: var(--sh-3); display: none; font-family: 'Space Mono', monospace;
+    }
+    .tweaks.open { display: block; animation: fadeUp var(--dur-2) var(--ease); }
+    .tw-title { font-size: var(--fs-micro); color: var(--cyan); letter-spacing: 0.22em; margin-bottom: var(--s4); }
+    .tw-row   { margin-bottom: var(--s3); }
+    .tw-lbl   { font-size: var(--fs-micro); color: var(--dim); letter-spacing: 0.1em; margin-bottom: var(--s2); }
+    .tw-opts  { display: flex; gap: var(--s1); flex-wrap: wrap; }
+    .tw-btn   {
+      font-size: var(--fs-micro); font-family: 'Space Mono', monospace;
+      padding: var(--s1) var(--s2); border-radius: var(--r-xs); cursor: pointer;
+      border: 1px solid var(--line); background: transparent; color: var(--dim);
+      transition: all var(--dur-2) ease;
+    }
+    .tw-btn:hover { color: var(--text); border-color: var(--line-strong); }
+    .tw-btn.on { border-color: var(--cyan); color: var(--cyan); background: var(--tint-cyan); }
+
+    /* ══════════════════════════════════════════════════════════
+       RESPONSIVE
+       ══════════════════════════════════════════════════════════ */
+    @media (max-width: 900px) {
+      .nav-status { display: none; }
+    }
+
+    @media (max-width: 720px) {
+      :root { --s5: 16px; }
+      .topnav { padding: 0 var(--s4); gap: var(--s3); }
+      .logo { font-size: var(--fs-md); }
+
+      /* Collapse the API key field into a toggle + dropdown panel */
+      .api-toggle {
+        display: inline-flex; align-items: center; justify-content: center;
+        width: 34px; height: 34px; flex-shrink: 0;
+        background: var(--surface); border: 1px solid var(--line-strong);
+        border-radius: var(--r-sm); color: var(--dim); cursor: pointer;
+        font-size: 14px; line-height: 1; transition: all var(--dur-2) ease;
+      }
+      .api-toggle[aria-expanded="true"], .api-toggle.has-key { color: var(--cyan); border-color: var(--line-accent); }
+      .api-popover {
+        display: none; position: absolute; top: calc(100% + 10px); right: 0; z-index: 210;
+        background: var(--raised); border: 1px solid var(--line-accent);
+        border-radius: var(--r-md); padding: var(--s3); box-shadow: var(--sh-3);
+        flex-direction: column; gap: var(--s2); width: min(78vw, 300px);
+      }
+      .api-popover.open { display: flex; animation: fadeUp var(--dur-2) var(--ease); }
+      .api-row input { width: 100%; }
+      .tweaks { right: var(--s3); left: var(--s3); width: auto; bottom: var(--s3); }
+    }
+
+    @media (max-width: 480px) {
+      .bc-item { font-size: var(--fs-micro); letter-spacing: 0.08em; }
+    }
   </style>
 </head>
 <body>
+<a class="skip-link" href="#main">Skip to content</a>
 <div id="root"></div>
 
 <!-- Component scripts (Babel-transpiled in the browser) -->
@@ -162,9 +463,15 @@ const TWEAK_DEFAULTS = /*EDITMODE-BEGIN*/{
 }/*EDITMODE-END*/;
 
 /* ── API KEY INPUT ───────────────────────────────────── */
+/* Desktop: inline field. Mobile (<=720px): a key toggle that opens a popover,
+   so the nav can never overflow on a 375px viewport. */
 function ApiKeyInput() {
   const [val, setVal] = React.useState(() => localStorage.getItem('piq_key') || '');
   const [savedTick, setSavedTick] = React.useState(false);
+  const [open, setOpen] = React.useState(false);
+  const wrapRef = React.useRef(null);
+
+  const hasKey = !!(localStorage.getItem('piq_key') || '').trim();
 
   const save = () => {
     const v = val.trim();
@@ -174,17 +481,39 @@ function ApiKeyInput() {
     setTimeout(() => setSavedTick(false), 1600);
   };
 
+  // Dismiss the mobile popover on outside click / Escape
+  React.useEffect(() => {
+    if (!open) return;
+    const onDown = e => { if (wrapRef.current && !wrapRef.current.contains(e.target)) setOpen(false); };
+    const onKey  = e => { if (e.key === 'Escape') setOpen(false); };
+    document.addEventListener('mousedown', onDown);
+    document.addEventListener('keydown', onKey);
+    return () => { document.removeEventListener('mousedown', onDown); document.removeEventListener('keydown', onKey); };
+  }, [open]);
+
   return (
-    <div className="api-row">
-      <input
-        type="password"
-        value={val}
-        onChange={e => setVal(e.target.value)}
-        onKeyDown={e => { if (e.key === 'Enter') save(); }}
-        placeholder="Claude API key (sk-ant-…)"
-      />
-      <button onClick={save}>SAVE</button>
-      {savedTick && <span className="saved">● SAVED</span>}
+    <div className="api-row" ref={wrapRef}>
+      <button
+        className={`api-toggle ${hasKey ? 'has-key' : ''}`}
+        aria-expanded={open}
+        aria-label={hasKey ? 'Claude API key saved — edit' : 'Add Claude API key'}
+        title={hasKey ? 'Claude API key saved' : 'Add Claude API key'}
+        onClick={() => setOpen(o => !o)}
+      >⚿</button>
+
+      <div className={`api-popover ${open ? 'open' : ''}`}>
+        <label className="sr-only" htmlFor="piq-api-key">Claude API key</label>
+        <input
+          id="piq-api-key"
+          type="password"
+          value={val}
+          onChange={e => setVal(e.target.value)}
+          onKeyDown={e => { if (e.key === 'Enter') save(); }}
+          placeholder="Claude API key (sk-ant-…)"
+        />
+        <button className="piq-btn piq-btn-primary" onClick={save}>SAVE</button>
+        {savedTick && <span className="saved">● SAVED</span>}
+      </div>
     </div>
   );
 }
@@ -215,8 +544,7 @@ function App() {
     setTweaks(next);
     window.parent.postMessage({ type: '__edit_mode_set_keys', edits: next }, '*');
     if (key === 'accentColor') document.documentElement.style.setProperty('--cyan', val);
-    if (key === 'gridLines')   document.body.style.backgroundImage = val
-      ? 'linear-gradient(rgba(0,212,255,0.022) 1px,transparent 1px),linear-gradient(90deg,rgba(0,212,255,0.022) 1px,transparent 1px)' : 'none';
+    if (key === 'gridLines')   document.documentElement.style.setProperty('--grid-line', val ? 'rgba(0,212,255,0.028)' : 'transparent');
   };
 
   React.useEffect(() => {
@@ -237,29 +565,46 @@ function App() {
     if (view === 'detail' && !selectedGame) setView('games');
   }, []);
 
-  const breadcrumb = {
-    home:   'PLAYIQ · SELECT SPORT',
-    games:  `${selectedSport.toUpperCase()} · TODAY'S GAMES`,
-    detail: selectedGame ? `${selectedGame.awayAbbr} @ ${selectedGame.homeAbbr}` : '—',
-  }[view];
+  // Clickable breadcrumb trail — each ancestor navigates back to its screen.
+  const crumbs = [{ label: 'PLAYIQ', onClick: view !== 'home' ? goHome : null }];
+  if (view === 'games')  crumbs.push({ label: `${selectedSport.toUpperCase()} · TODAY'S GAMES` });
+  if (view === 'detail') {
+    crumbs.push({ label: (selectedGame?.sportKey || selectedSport).toUpperCase(), onClick: () => setView('games') });
+    crumbs.push({ label: selectedGame ? `${selectedGame.awayAbbr} @ ${selectedGame.homeAbbr}` : '—' });
+  }
 
   return (
     <>
       {/* Nav */}
       <nav className="topnav">
-        <div className="logo" onClick={goHome}>PLAY<span>IQ</span></div>
-        <div className="nav-sep" />
-        <div className="nav-bc">{breadcrumb}</div>
+        <button className="brand" onClick={goHome} aria-label="PlayIQ home">
+          <span className="brand-mark" aria-hidden="true">P</span>
+          <span className="logo">PLAY<span>IQ</span></span>
+        </button>
+        <div className="nav-sep" aria-hidden="true" />
+        <div className="nav-bc" aria-label="Breadcrumb">
+          {crumbs.map((c, i) => (
+            <React.Fragment key={i}>
+              {i > 0 && <span className="bc-sep" aria-hidden="true">/</span>}
+              <button
+                className={`bc-item ${c.onClick ? 'link' : ''} ${i === crumbs.length - 1 ? 'current' : ''}`}
+                onClick={c.onClick || undefined}
+                disabled={!c.onClick}
+                aria-current={i === crumbs.length - 1 ? 'page' : undefined}
+              >{c.label}</button>
+            </React.Fragment>
+          ))}
+        </div>
         <ApiKeyInput />
-        <div className="nav-sep" />
-        <div className="nav-status">
+        <div className="nav-sep" aria-hidden="true" />
+        <div className="nav-status" title={window.API_BASE || 'localhost:3001'}>
           <div className="nav-dot" />
-          <span>{window.API_BASE || 'localhost:3001'}</span>
+          <span>{(window.API_BASE || 'localhost:3001').replace(/^https?:\/\//, '')}</span>
         </div>
       </nav>
 
       {/* Screens */}
-      <main>
+      <main id="main">
         {view === 'home'   && <div className="screen-enter"><HomeScreen   onSelectSport={goGames} /></div>}
         {view === 'games'  && <div className="screen-enter"><GamesScreen  onSelectGame={goDetail} onBack={goHome} /></div>}
         {view === 'detail' && selectedGame && <div className="screen-enter"><GameDetailScreen game={selectedGame} onBack={() => setView('games')} /></div>}
@@ -297,7 +642,7 @@ function App() {
               <button key={v} className={`tw-btn ${String(tweaks.scanlines)===v?'on':''}`}
                 onClick={() => {
                   applyTweak('scanlines', v==='true');
-                  document.body.style.setProperty('--scanlines-opacity', v==='true'?'1':'0');
+                  document.documentElement.style.setProperty('--scanlines-opacity', v==='true'?'1':'0');
                 }}>{l}</button>
             ))}
           </div>

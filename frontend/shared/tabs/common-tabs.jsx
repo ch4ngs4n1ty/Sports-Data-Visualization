@@ -14,29 +14,33 @@ function OverviewTab({ gameData }) {
     for (let i = form.length - 1; i >= 0; i--) { if (form[i].result === last) c++; else break; }
     return `${c}${last}`;
   };
-  const avgScore = form => form.length ? (form.reduce((s, g) => s + g.myScore, 0) / form.length).toFixed(1) : '—';
+  const avgScore   = form => form.length ? (form.reduce((s, g) => s + g.myScore, 0) / form.length).toFixed(1) : '—';
   const avgAllowed = form => form.length ? (form.reduce((s, g) => s + g.oppScore, 0) / form.length).toFixed(1) : '—';
 
-  const TeamSide = ({ team, abbr, logo, form, wins, color }) => (
-    <div style={{ flex: 1, minWidth: 200 }}>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 16 }}>
-        {logo && <img src={logo} alt={abbr} style={{ width: 48, height: 48, objectFit: 'contain', filter: 'drop-shadow(0 0 8px rgba(0,0,0,0.5))' }} onError={e => e.target.style.display='none'} />}
-        <div>
-          <div style={{ fontFamily: 'Orbitron, monospace', fontSize: 22, fontWeight: 700, color, letterSpacing: '0.04em' }}>{abbr}</div>
-          <div style={{ fontSize: 10, color: 'var(--muted)', fontFamily: 'Space Mono, monospace' }}>{team}</div>
+  const TeamSide = ({ team, abbr, logo, form, wins, color, side }) => (
+    <div style={{ minWidth: 0 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--s3)', marginBottom: 'var(--s4)' }}>
+        {logo && <img src={logo} alt="" loading="lazy"
+          style={{ width: 52, height: 52, objectFit: 'contain', flexShrink: 0, filter: 'drop-shadow(0 2px 8px rgba(0,0,0,0.6))' }}
+          onError={e => { e.target.style.visibility = 'hidden'; }} />}
+        <div style={{ minWidth: 0 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--s2)', flexWrap: 'wrap' }}>
+            <span className="piq-num" style={{ fontSize: 'var(--fs-xl)', color, letterSpacing: '0.03em' }}>{abbr}</span>
+            <Chip color="var(--dim)">{side}</Chip>
+          </div>
+          <div style={{ fontSize: 'var(--fs-xs)', color: 'var(--muted)', fontFamily: 'Space Mono, monospace', marginTop: 3 }}>{team}</div>
         </div>
       </div>
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, marginBottom: 16 }}>
-        {[['LAST ' + form.length, `${wins}-${form.length-wins}`], ['STREAK', getStreak(form)],
-          ['AVG PF', avgScore(form)], ['AVG PA', avgAllowed(form)]].map(([l, v]) => (
-          <div key={l} style={{ padding: '10px 12px', background: 'var(--surface)', border: '1px solid rgba(255,255,255,0.04)', borderRadius: 3 }}>
-            <div style={{ fontSize: 8, color: 'var(--dim)', fontFamily: 'Space Mono, monospace', letterSpacing: '0.14em', marginBottom: 3 }}>{l}</div>
-            <div style={{ fontSize: 18, fontFamily: 'Orbitron, monospace', color, fontWeight: 700 }}>{v}</div>
-          </div>
-        ))}
+
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(96px, 1fr))', gap: 'var(--s2)', marginBottom: 'var(--s4)' }}>
+        <StatTile label={`Last ${form.length}`} value={`${wins}-${form.length - wins}`} color={color} />
+        <StatTile label="Streak"  value={getStreak(form)} color={color} />
+        <StatTile label="Avg PF"  value={avgScore(form)}   color={color} />
+        <StatTile label="Avg PA"  value={avgAllowed(form)} color={color} />
       </div>
-      <div style={{ marginBottom: 8 }}>
-        <div style={{ fontSize: 9, color: 'var(--dim)', fontFamily: 'Space Mono, monospace', letterSpacing: '0.14em', marginBottom: 8 }}>FORM</div>
+
+      <div>
+        <div className="piq-label" style={{ marginBottom: 'var(--s2)' }}>Form (oldest → newest)</div>
         <FormDots form={form} />
       </div>
     </div>
@@ -46,36 +50,54 @@ function OverviewTab({ gameData }) {
     const list = (injuries?.[side] || []).filter(i => /out|doubtful|questionable/i.test(i.status));
     if (!list.length) return null;
     return (
-      <div style={{ marginTop: 16, padding: '12px 14px', background: 'rgba(255,107,53,0.06)', border: '1px solid rgba(255,107,53,0.15)', borderRadius: 3 }}>
-        <div style={{ fontSize: 9, color: '#ff6b35', fontFamily: 'Space Mono, monospace', letterSpacing: '0.14em', marginBottom: 8 }}>INJURY REPORT · {abbr}</div>
-        {list.slice(0, 4).map((inj, i) => (
-          <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
-            <div style={{ width: 6, height: 6, borderRadius: '50%', flexShrink: 0,
-              background: /out/i.test(inj.status) ? '#ff6b35' : '#ffd060',
-              boxShadow: `0 0 4px ${/out/i.test(inj.status) ? '#ff6b35' : '#ffd060'}` }} />
-            <span style={{ fontSize: 11, fontFamily: 'Space Mono, monospace', color: 'var(--text)' }}>{inj.name}</span>
-            <span style={{ fontSize: 9, color: 'var(--muted)', fontFamily: 'Space Mono, monospace' }}>{inj.pos}</span>
-            <span style={{ fontSize: 9, color: /out/i.test(inj.status) ? '#ff6b35' : '#ffd060', fontFamily: 'Space Mono, monospace', marginLeft: 'auto' }}>{inj.status}</span>
-          </div>
-        ))}
-      </div>
+      <HudCard accent="var(--orange)" style={{ padding: 'var(--s4)' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--s2)', marginBottom: 'var(--s3)' }}>
+          <span className="piq-label" style={{ color: 'var(--orange)' }}>Injury report</span>
+          <Chip color="var(--orange)" strong>{abbr}</Chip>
+          <span className="piq-label" style={{ marginLeft: 'auto' }}>{list.length}</span>
+        </div>
+        {list.slice(0, 5).map((inj, i) => {
+          const out = /out/i.test(inj.status);
+          const c = out ? 'var(--orange)' : 'var(--gold)';
+          return (
+            <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 'var(--s2)', padding: '7px 0',
+              borderTop: i === 0 ? 'none' : '1px solid var(--line)' }}>
+              <span style={{ width: 7, height: 7, borderRadius: '50%', flexShrink: 0, background: c, boxShadow: `0 0 6px ${c}` }} />
+              <span style={{ fontSize: 'var(--fs-sm)', fontFamily: 'Space Mono, monospace', color: 'var(--text)',
+                overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{inj.name}</span>
+              <span style={{ fontSize: 'var(--fs-micro)', color: 'var(--dim)', fontFamily: 'Space Mono, monospace', flexShrink: 0 }}>{inj.pos}</span>
+              <span style={{ marginLeft: 'auto', flexShrink: 0 }}><Chip color={c} strong>{inj.status}</Chip></span>
+            </div>
+          );
+        })}
+      </HudCard>
     );
   };
 
+  const away = injBlock('away', gameInfo.awayAbbr);
+  const home = injBlock('home', gameInfo.homeAbbr);
+
   return (
-    <div style={{ padding: '20px 0' }}>
-      <div style={{ display: 'flex', gap: 24, flexWrap: 'wrap', marginBottom: 24, padding: '20px', background: 'var(--card)', border: '1px solid rgba(255,255,255,0.04)', borderRadius: 4 }}>
-        <TeamSide team={gameInfo.awayFull} abbr={gameInfo.awayAbbr} logo={gameInfo.awayLogo} form={awayForm} wins={awayW} color="var(--cyan)" />
-        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 8, padding: '0 16px' }}>
-          <div style={{ fontFamily: 'Orbitron, monospace', fontSize: 20, color: 'var(--dim)', fontWeight: 700 }}>VS</div>
+    <div style={{ padding: 'var(--s5) 0', display: 'flex', flexDirection: 'column', gap: 'var(--s5)' }}>
+      <HudCard style={{ padding: 'var(--s5)' }} interactive={false}>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: 'var(--s5)' }}>
+          <TeamSide team={gameInfo.awayFull} abbr={gameInfo.awayAbbr} logo={gameInfo.awayLogo}
+            form={awayForm} wins={awayW} color="var(--cyan)" side="AWAY" />
+          <TeamSide team={gameInfo.homeFull} abbr={gameInfo.homeAbbr} logo={gameInfo.homeLogo}
+            form={homeForm} wins={homeW} color="var(--gold)" side="HOME" />
+        </div>
+
+        <div style={{ display: 'flex', justifyContent: 'center', marginTop: 'var(--s5)',
+          paddingTop: 'var(--s4)', borderTop: '1px solid var(--line)' }}>
           <OddsStrip game={gameInfo} />
         </div>
-        <TeamSide team={gameInfo.homeFull} abbr={gameInfo.homeAbbr} logo={gameInfo.homeLogo} form={homeForm} wins={homeW} color="#ffd060" />
-      </div>
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
-        {injBlock('away', gameInfo.awayAbbr)}
-        {injBlock('home', gameInfo.homeAbbr)}
-      </div>
+      </HudCard>
+
+      {(away || home) && (
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: 'var(--s3)' }}>
+          {away}{home}
+        </div>
+      )}
     </div>
   );
 }
@@ -83,53 +105,70 @@ function OverviewTab({ gameData }) {
 function H2HTab({ gameData }) {
   const { gameInfo, h2h } = gameData;
   const games = h2h?.games || [];
-  if (!games.length) return <div style={emptyMsg}>No head-to-head data found for the last 3 seasons.</div>;
+  if (!games.length) return (
+    <div style={{ padding: 'var(--s5) 0' }}>
+      <EmptyState title="NO HEAD-TO-HEAD DATA" hint="These teams haven't met in the last 3 seasons." />
+    </div>
+  );
+
   const awayWins = games.filter(g => g.winner === 'away' && g.awayAbbr === gameInfo.awayAbbr || g.winner === 'home' && g.homeAbbr === gameInfo.awayAbbr).length;
+  const homeWins = games.length - awayWins;
   const catLabels = gameInfo.sportKey === 'mlb'
     ? [{ key: 'hits', label: 'H' }, { key: 'rbi', label: 'RBI' }, { key: 'runs', label: 'R' }]
     : [{ key: 'pts', label: 'PTS' }, { key: 'reb', label: 'REB' }, { key: 'ast', label: 'AST' }];
 
-  return (
-    <div style={{ padding: '20px 0' }}>
-      <div style={{ display: 'flex', gap: 16, marginBottom: 20 }}>
-        {[
-          [gameInfo.awayAbbr, awayWins, 'var(--cyan)'],
-          [gameInfo.homeAbbr, games.length - awayWins, '#ffd060'],
-        ].map(([abbr, wins, color]) => (
-          <HudCard key={abbr} style={{ flex: 1, padding: '14px 18px', textAlign: 'center' }} accent={color}>
-            <div style={{ fontSize: 9, color: 'var(--dim)', fontFamily: 'Space Mono, monospace', letterSpacing: '0.16em', marginBottom: 6 }}>{abbr} WINS</div>
-            <div style={{ fontSize: 40, fontFamily: 'Orbitron, monospace', color, fontWeight: 900 }}>{wins}</div>
-            <div style={{ fontSize: 9, color: 'var(--muted)', fontFamily: 'Space Mono, monospace' }}>last {games.length}</div>
-          </HudCard>
-        ))}
-      </div>
+  const awayPct = games.length ? (awayWins / games.length) * 100 : 50;
 
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+  return (
+    <div style={{ padding: 'var(--s5) 0' }}>
+      {/* Series summary with a share-of-wins bar */}
+      <HudCard style={{ padding: 'var(--s5)', marginBottom: 'var(--s5)' }} interactive={false}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end', marginBottom: 'var(--s3)' }}>
+          {[[gameInfo.awayAbbr, awayWins, 'var(--cyan)', 'left'], [gameInfo.homeAbbr, homeWins, 'var(--gold)', 'right']].map(([abbr, wins, color, align]) => (
+            <div key={abbr} style={{ textAlign: align }}>
+              <div className="piq-label" style={{ marginBottom: 4 }}>{abbr} wins</div>
+              <div className="piq-num" style={{ fontSize: 44, fontWeight: 900, color, lineHeight: 1 }}>{wins}</div>
+            </div>
+          ))}
+        </div>
+        <div style={{ display: 'flex', height: 8, borderRadius: 99, overflow: 'hidden', background: 'rgba(255,255,255,0.05)' }}
+          role="img" aria-label={`${gameInfo.awayAbbr} ${awayWins}, ${gameInfo.homeAbbr} ${homeWins}`}>
+          <div style={{ width: `${awayPct}%`, background: 'var(--cyan)', boxShadow: '0 0 10px rgba(0,212,255,0.5)', transition: 'width var(--dur-1) var(--ease)' }} />
+          <div style={{ width: `${100 - awayPct}%`, background: 'var(--gold)', boxShadow: '0 0 10px rgba(255,208,96,0.4)' }} />
+        </div>
+        <div className="piq-label" style={{ textAlign: 'center', marginTop: 'var(--s2)' }}>Last {games.length} meetings</div>
+      </HudCard>
+
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--s2)' }}>
         {games.map((g, i) => {
           const awayWon = (g.awayAbbr === gameInfo.awayAbbr && g.winner === 'away') || (g.homeAbbr === gameInfo.awayAbbr && g.winner === 'home');
           return (
-            <HudCard key={i} style={{ padding: '14px 16px' }} accent={awayWon ? 'var(--cyan)' : '#ffd060'}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
-                <span style={{ fontSize: 9, color: 'var(--dim)', fontFamily: 'Space Mono, monospace', width: 80, flexShrink: 0 }}>{g.date}</span>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 8, flex: 1 }}>
-                  <span style={{ fontFamily: 'Space Mono, monospace', fontSize: 12, color: g.awayAbbr===gameInfo.awayAbbr ? 'var(--cyan)' : '#ffd060', fontWeight: 700 }}>{g.awayAbbr}</span>
-                  <span style={{ fontFamily: 'Orbitron, monospace', fontSize: 18, fontWeight: 900,
-                    color: g.awayScore > g.homeScore ? '#00ff88' : 'var(--text)' }}>{g.awayScore}</span>
-                  <span style={{ color: 'var(--dim)', fontFamily: 'Space Mono, monospace', fontSize: 11 }}>—</span>
-                  <span style={{ fontFamily: 'Orbitron, monospace', fontSize: 18, fontWeight: 900,
-                    color: g.homeScore > g.awayScore ? '#00ff88' : 'var(--text)' }}>{g.homeScore}</span>
-                  <span style={{ fontFamily: 'Space Mono, monospace', fontSize: 12, color: g.homeAbbr===gameInfo.homeAbbr ? '#ffd060' : 'var(--cyan)', fontWeight: 700 }}>{g.homeAbbr}</span>
+            <HudCard key={i} style={{ padding: 'var(--s4)' }} accent={awayWon ? 'var(--cyan)' : 'var(--gold)'} interactive={false}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--s4)', flexWrap: 'wrap' }}>
+                <span className="piq-label" style={{ width: 84, flexShrink: 0 }}>{g.date}</span>
+
+                <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--s2)', flex: 1, minWidth: 180 }}>
+                  <span style={{ fontFamily: 'Space Mono, monospace', fontSize: 'var(--fs-sm)', fontWeight: 700,
+                    color: g.awayAbbr === gameInfo.awayAbbr ? 'var(--cyan)' : 'var(--gold)' }}>{g.awayAbbr}</span>
+                  <span className="piq-num" style={{ fontSize: 'var(--fs-lg)', fontWeight: 900,
+                    color: g.awayScore > g.homeScore ? 'var(--green)' : 'var(--muted)' }}>{g.awayScore}</span>
+                  <span style={{ color: 'var(--faint)', fontFamily: 'Space Mono, monospace' }}>–</span>
+                  <span className="piq-num" style={{ fontSize: 'var(--fs-lg)', fontWeight: 900,
+                    color: g.homeScore > g.awayScore ? 'var(--green)' : 'var(--muted)' }}>{g.homeScore}</span>
+                  <span style={{ fontFamily: 'Space Mono, monospace', fontSize: 'var(--fs-sm)', fontWeight: 700,
+                    color: g.homeAbbr === gameInfo.homeAbbr ? 'var(--gold)' : 'var(--cyan)' }}>{g.homeAbbr}</span>
                 </div>
-                <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
+
+                <div style={{ display: 'flex', gap: 'var(--s3)', flexWrap: 'wrap' }}>
                   {catLabels.map(cat => {
                     const awayLdr = g.awayLeaders?.[cat.key];
                     const homeLdr = g.homeLeaders?.[cat.key];
                     if (!awayLdr && !homeLdr) return null;
                     return (
-                      <div key={cat.key} style={{ display: 'flex', gap: 8, fontSize: 9, fontFamily: 'Space Mono, monospace' }}>
+                      <div key={cat.key} style={{ display: 'flex', gap: 6, fontSize: 'var(--fs-micro)', fontFamily: 'Space Mono, monospace', alignItems: 'center' }}>
                         <span style={{ color: 'var(--cyan)' }}>{awayLdr ? `${awayLdr.name} ${awayLdr.value}${cat.label}` : '—'}</span>
-                        <span style={{ color: 'var(--dim)' }}>vs</span>
-                        <span style={{ color: '#ffd060' }}>{homeLdr ? `${homeLdr.name} ${homeLdr.value}${cat.label}` : '—'}</span>
+                        <span style={{ color: 'var(--faint)' }}>vs</span>
+                        <span style={{ color: 'var(--gold)' }}>{homeLdr ? `${homeLdr.name} ${homeLdr.value}${cat.label}` : '—'}</span>
                       </div>
                     );
                   })}
@@ -148,33 +187,33 @@ function RosterTab({ gameData }) {
   const [side, setSide] = React.useState('away');
   const roster = side === 'away' ? awayRoster : homeRoster;
   const statusColor = s => {
-    if (!s || /^active$/i.test(s)) return '#00ff88';
-    if (/out/i.test(s)) return '#ff6b35';
-    if (/doubtful/i.test(s)) return '#ff6b35';
-    if (/questionable/i.test(s)) return '#ffd060';
-    if (/day.to.day/i.test(s)) return '#ffd060';
+    if (!s || /^active$/i.test(s)) return 'var(--green)';
+    if (/out|doubtful/i.test(s)) return 'var(--orange)';
+    if (/questionable|day.to.day/i.test(s)) return 'var(--gold)';
     return 'var(--muted)';
   };
+
   return (
-    <div style={{ padding: '20px 0' }}>
-      <div style={{ display: 'flex', gap: 8, marginBottom: 20 }}>
+    <div style={{ padding: 'var(--s5) 0' }}>
+      <div className="piq-seg" role="group" aria-label="Select team"
+        style={{ marginBottom: 'var(--s5)', display: 'flex', width: '100%' }}>
         {[['away', gameInfo.awayFull, gameInfo.awayAbbr], ['home', gameInfo.homeFull, gameInfo.homeAbbr]].map(([s, full, abbr]) => (
-          <button key={s} onClick={() => setSide(s)}
-            style={{ flex: 1, padding: '10px 16px', background: side===s ? 'rgba(0,212,255,0.08)' : 'transparent',
-              border: `1px solid ${side===s ? 'rgba(0,212,255,0.3)' : 'rgba(255,255,255,0.06)'}`,
-              color: side===s ? 'var(--cyan)' : 'var(--muted)', fontFamily: 'Space Mono, monospace',
-              fontSize: 11, cursor: 'pointer', borderRadius: 2, letterSpacing: '0.08em', transition: 'all 0.2s' }}>
+          <button key={s} onClick={() => setSide(s)} aria-pressed={side === s}
+            style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis' }}>
             {abbr} · {full}
           </button>
         ))}
       </div>
-      {!roster?.length ? <div style={emptyMsg}>Roster not available.</div> : (
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(140px, 1fr))', gap: 10 }}>
+
+      {!roster?.length ? <EmptyState title="ROSTER NOT AVAILABLE" hint="ESPN's roster shape varies by sport — this league may not expose one." /> : (
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(150px, 1fr))', gap: 'var(--s2)' }}>
           {roster.map(p => (
-            <HudCard key={p.id} style={{ padding: '14px 12px', textAlign: 'center' }} accent={statusColor(p.status)}>
+            <HudCard key={p.id} style={{ padding: 'var(--s4) var(--s3)', textAlign: 'center' }} accent={statusColor(p.status)} interactive={false}>
               <PlayerCard player={{ ...p, headshot: p.headshot }} accent={statusColor(p.status)} size="md" />
-              <div style={{ marginTop: 10, fontSize: 9, fontFamily: 'Space Mono, monospace', color: statusColor(p.status), letterSpacing: '0.1em' }}>
-                {/^active$/i.test(p.status) ? '● ACTIVE' : p.status?.toUpperCase() || 'ACTIVE'}
+              <div style={{ marginTop: 'var(--s3)' }}>
+                <Chip color={statusColor(p.status)} strong={!/^active$/i.test(p.status || 'active')}>
+                  {/^active$/i.test(p.status) || !p.status ? '● ACTIVE' : p.status.toUpperCase()}
+                </Chip>
               </div>
             </HudCard>
           ))}
@@ -194,46 +233,43 @@ function FormTab({ gameData }) {
   const [statKey, setStatKey] = React.useState(cats[0]?.key || 'pts');
 
   return (
-    <div style={{ padding: '20px 0' }}>
-      <div style={{ display: 'flex', gap: 8, marginBottom: 16 }}>
-        {[['away', gameInfo.awayAbbr], ['home', gameInfo.homeAbbr]].map(([s, a]) => (
-          <button key={s} onClick={() => setSide(s)}
-            style={{ padding: '8px 16px', background: side===s ? 'rgba(0,212,255,0.08)' : 'transparent',
-              border: `1px solid ${side===s ? 'rgba(0,212,255,0.3)' : 'rgba(255,255,255,0.06)'}`,
-              color: side===s ? 'var(--cyan)' : 'var(--muted)', fontFamily: 'Space Mono, monospace',
-              fontSize: 10, cursor: 'pointer', borderRadius: 2, transition: 'all 0.2s' }}>
-            {a}
-          </button>
-        ))}
-        <div style={{ marginLeft: 'auto', display: 'flex', gap: 6 }}>
+    <div style={{ padding: 'var(--s5) 0' }}>
+      <div style={{ display: 'flex', gap: 'var(--s3)', marginBottom: 'var(--s5)', flexWrap: 'wrap', alignItems: 'center' }}>
+        <div className="piq-seg" role="group" aria-label="Select team">
+          {[['away', gameInfo.awayAbbr], ['home', gameInfo.homeAbbr]].map(([s, a]) => (
+            <button key={s} onClick={() => setSide(s)} aria-pressed={side === s}>{a}</button>
+          ))}
+        </div>
+        <div className="piq-seg" role="group" aria-label="Select stat" style={{ marginLeft: 'auto' }}>
           {cats.map(c => (
-            <button key={c.key} onClick={() => setStatKey(c.key)}
-              style={{ padding: '6px 12px', background: statKey===c.key ? 'rgba(0,212,255,0.1)' : 'transparent',
-                border: `1px solid ${statKey===c.key ? 'rgba(0,212,255,0.3)' : 'rgba(255,255,255,0.06)'}`,
-                color: statKey===c.key ? 'var(--cyan)' : 'var(--dim)', fontFamily: 'Space Mono, monospace',
-                fontSize: 10, cursor: 'pointer', borderRadius: 2 }}>
-              {c.label}
-            </button>
+            <button key={c.key} onClick={() => setStatKey(c.key)} aria-pressed={statKey === c.key}>{c.label}</button>
           ))}
         </div>
       </div>
 
-      <div style={{ display: 'grid', gridTemplateColumns: `repeat(${form.length}, 1fr)`, gap: 8 }}>
+      {/* auto-fit instead of repeat(form.length, 1fr) — the old fixed column
+          count squeezed 5 cards into ~60px each on a phone. */}
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(130px, 1fr))', gap: 'var(--s3)' }}>
         {form.map((g, i) => {
           const leader = g.player?.[statKey];
+          const win = g.result === 'W';
+          const c = win ? 'var(--green)' : 'var(--orange)';
           return (
-            <div key={i} style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 8 }}>
-              <HudCard style={{ width: '100%', padding: '10px 8px', textAlign: 'center' }} accent={g.result==='W' ? '#00ff88' : '#ff6b35'}>
+            <div key={i} style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 'var(--s2)' }}>
+              <HudCard style={{ width: '100%', padding: 'var(--s3) var(--s2)', textAlign: 'center' }} accent={c} interactive={false}>
                 {leader ? (
                   <>
-                    <PlayerCard player={{ name: leader.name, headshot: leader.headshot }} size="sm" accent={g.result==='W' ? '#00ff88' : '#ff6b35'} />
-                    <div style={{ fontSize: 18, fontFamily: 'Orbitron, monospace', fontWeight: 700, color: g.result==='W' ? '#00ff88' : '#ff6b35', marginTop: 6 }}>{leader.value}</div>
-                    <div style={{ fontSize: 8, color: 'var(--dim)', fontFamily: 'Space Mono, monospace' }}>{statKey.toUpperCase()}</div>
+                    <PlayerCard player={{ name: leader.name, headshot: leader.headshot }} size="sm" accent={c} />
+                    <div className="piq-num" style={{ fontSize: 'var(--fs-xl)', color: c, marginTop: 'var(--s2)' }}>{leader.value}</div>
+                    <div className="piq-label">{statKey.toUpperCase()}</div>
                   </>
-                ) : <div style={{ height: 60, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 9, color: 'var(--dim)', fontFamily: 'Space Mono, monospace' }}>—</div>}
+                ) : (
+                  <div style={{ height: 74, display: 'flex', alignItems: 'center', justifyContent: 'center',
+                    fontSize: 'var(--fs-xs)', color: 'var(--faint)', fontFamily: 'Space Mono, monospace' }}>NO DATA</div>
+                )}
               </HudCard>
-              <div style={{ fontSize: 9, fontFamily: 'Space Mono, monospace', textAlign: 'center', color: 'var(--muted)' }}>
-                <div style={{ color: g.result==='W' ? '#00ff88' : '#ff6b35', fontWeight: 700, marginBottom: 2 }}>{g.result} {g.myScore}-{g.oppScore}</div>
+              <div style={{ fontSize: 'var(--fs-xs)', fontFamily: 'Space Mono, monospace', textAlign: 'center', color: 'var(--muted)' }}>
+                <div style={{ color: c, fontWeight: 700, marginBottom: 2 }}>{g.result} {g.myScore}–{g.oppScore}</div>
                 <div>{g.home ? 'vs' : '@'} {g.opponent}</div>
                 <div style={{ color: 'var(--dim)', marginTop: 2 }}>{g.date}</div>
               </div>
@@ -246,22 +282,16 @@ function FormTab({ gameData }) {
 }
 
 const HOT_TIER_CFG = {
-  elite:   { label: '▲▲ ELITE', color: 'var(--green)', bg: 'rgba(0,255,136,0.1)', border: 'rgba(0,255,136,0.3)' },
-  hot:     { label: '▲ HOT', color: 'var(--gold)', bg: 'rgba(255,208,96,0.08)', border: 'rgba(255,208,96,0.25)' },
-  cold:    { label: '▼ COLD', color: 'var(--muted)', bg: 'transparent', border: 'rgba(255,255,255,0.06)' },
+  elite:   { label: '▲▲ ELITE', color: 'var(--green)' },
+  hot:     { label: '▲ HOT',    color: 'var(--gold)' },
+  cold:    { label: '▼ COLD',   color: 'var(--muted)' },
   neutral: { label: null },
 };
 
 function HotBadge({ tier }) {
   const cfg = HOT_TIER_CFG[tier] || HOT_TIER_CFG.neutral;
   if (!cfg.label) return null;
-  return (
-    <span style={{
-      fontSize: 9, fontFamily: 'Space Mono, monospace', fontWeight: 700,
-      letterSpacing: '0.12em', padding: '3px 8px', borderRadius: 2,
-      color: cfg.color, background: cfg.bg, border: `1px solid ${cfg.border}`,
-    }}>{cfg.label}</span>
-  );
+  return <Chip color={cfg.color} strong={tier !== 'cold'}>{cfg.label}</Chip>;
 }
 
 function AIPlaysTab({ gameData }) {
@@ -301,84 +331,88 @@ Give a concise 3-4 sentence analysis of this bet.`,
     setDiscussing(false);
   };
 
-  const confColor = c => c === 'HIGH' ? '#00ff88' : c === 'MEDIUM' ? '#ffd060' : 'var(--muted)';
-  const typeColor = t => ({ SPREAD: 'var(--cyan)', TOTAL: '#a855f7', PROP: '#ff6b35', ML: '#ffd060' }[t] || 'var(--dim)');
+  const confColor = c => c === 'HIGH' ? 'var(--green)' : c === 'MEDIUM' ? 'var(--gold)' : 'var(--muted)';
+  const typeColor = t => ({ SPREAD: 'var(--cyan)', TOTAL: 'var(--violet)', PROP: 'var(--orange)', ML: 'var(--gold)' }[t] || 'var(--dim)');
+
+  const KeyWarning = ({ text }) => (
+    <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--s3)', padding: 'var(--s3) var(--s4)',
+      marginBottom: 'var(--s3)', background: 'var(--tint-orange)', border: '1px solid rgba(255,107,53,0.28)',
+      borderRadius: 'var(--r-md)', fontSize: 'var(--fs-xs)', color: 'var(--orange)',
+      fontFamily: 'Space Mono, monospace', lineHeight: 1.6 }}>
+      <span style={{ fontSize: 'var(--fs-md)', flexShrink: 0 }} aria-hidden="true">⚠</span>
+      <span>{text}</span>
+    </div>
+  );
 
   return (
-    <div style={{ padding: '20px 0', display: 'flex', flexDirection: 'column', gap: 24 }}>
-      <div>
-        <SectionHeader label="◆ AI RECOMMENDED PLAYS" sub="Powered by Claude · Based on form, H2H, injuries" />
-        {!hasKey && (
-          <div style={{ padding: '14px 16px', marginBottom: 12, background: 'rgba(255,107,53,0.06)',
-            border: '1px solid rgba(255,107,53,0.2)', borderRadius: 3, fontSize: 11,
-            color: '#ff6b35', fontFamily: 'Space Mono, monospace', letterSpacing: '0.08em' }}>
-            ⚠ Add your Claude API key in the top bar to generate AI plays.
-          </div>
-        )}
+    <div style={{ padding: 'var(--s5) 0', display: 'flex', flexDirection: 'column', gap: 'var(--s6)' }}>
+      <section>
+        <SectionHeader label="◆ AI RECOMMENDED PLAYS" sub="Powered by Claude · Based on form, H2H and injuries" />
+
+        {!hasKey && <KeyWarning text="Add your Claude API key in the top bar to generate AI plays." />}
+
         {!plays && !loading && (
-          <button onClick={generate} style={{ padding: '12px 24px', background: 'rgba(0,212,255,0.1)',
-            border: '1px solid rgba(0,212,255,0.3)', color: 'var(--cyan)', fontFamily: 'Space Mono, monospace',
-            fontSize: 11, cursor: 'pointer', borderRadius: 2, letterSpacing: '0.1em', transition: 'all 0.2s' }}>
+          <button onClick={generate} className="piq-btn piq-btn-primary" style={{ padding: 'var(--s3) var(--s5)' }}>
             ◆ GENERATE AI PLAYS
           </button>
         )}
-        {loading && <Loader text="ANALYZING..." />}
-        {plays && plays.error === 'NO_API_KEY' && (
-          <div style={{ padding: '14px 16px', background: 'rgba(255,107,53,0.06)',
-            border: '1px solid rgba(255,107,53,0.2)', borderRadius: 3, fontSize: 11,
-            color: '#ff6b35', fontFamily: 'Space Mono, monospace' }}>
-            No API key set. Paste your Claude key (sk-ant-…) in the top bar.
-          </div>
-        )}
-        {Array.isArray(plays) && plays.length === 0 && <div style={emptyMsg}>No plays returned. Try again.</div>}
+
+        {loading && <Loader text="ANALYZING MATCHUP" />}
+
+        {plays && plays.error === 'NO_API_KEY' && <KeyWarning text="No API key set. Paste your Claude key (sk-ant-…) in the top bar." />}
+
+        {Array.isArray(plays) && plays.length === 0 && <EmptyState title="NO PLAYS RETURNED" hint="Claude returned an empty set — try generating again." />}
+
         {Array.isArray(plays) && plays.length > 0 && (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--s3)' }}>
             {plays.map((p, i) => (
-              <HudCard key={i} style={{ padding: '16px 18px' }} accent={confColor(p.confidence)}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 8 }}>
-                  <span style={{ fontSize: 9, padding: '2px 8px', border: `1px solid ${typeColor(p.type)}44`,
-                    color: typeColor(p.type), fontFamily: 'Space Mono, monospace', letterSpacing: '0.1em', borderRadius: 2 }}>{p.type}</span>
-                  <span style={{ fontSize: 9, padding: '2px 8px', border: `1px solid ${confColor(p.confidence)}44`,
-                    color: confColor(p.confidence), fontFamily: 'Space Mono, monospace', letterSpacing: '0.1em', borderRadius: 2 }}>{p.confidence}</span>
+              <HudCard key={i} style={{ padding: 'var(--s4) var(--s5)' }} accent={confColor(p.confidence)} interactive={false}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--s2)', marginBottom: 'var(--s3)', flexWrap: 'wrap' }}>
+                  <Chip color={typeColor(p.type)} strong>{p.type}</Chip>
+                  <Chip color={confColor(p.confidence)} strong>{p.confidence} CONFIDENCE</Chip>
                 </div>
-                <div style={{ fontSize: 15, fontFamily: 'Space Mono, monospace', color: 'var(--text)', fontWeight: 700, marginBottom: 8 }}>{p.play}</div>
-                <div style={{ fontSize: 11, color: 'var(--muted)', fontFamily: 'Space Mono, monospace', lineHeight: 1.5 }}>{p.reason}</div>
+                <div style={{ fontSize: 'var(--fs-md)', fontFamily: 'Space Mono, monospace', color: 'var(--text)',
+                  fontWeight: 700, marginBottom: 'var(--s2)', lineHeight: 1.4 }}>{p.play}</div>
+                <div style={{ fontSize: 'var(--fs-sm)', color: 'var(--muted)', fontFamily: 'Space Mono, monospace', lineHeight: 1.7 }}>{p.reason}</div>
               </HudCard>
             ))}
+            <button onClick={generate} className="piq-btn" style={{ alignSelf: 'flex-start' }}>↻ REGENERATE</button>
           </div>
         )}
-      </div>
+      </section>
 
-      <div>
-        <SectionHeader label="YOUR PLAY" sub="Discuss with Claude" />
-        <textarea value={userPlay} onChange={e => setUserPlay(e.target.value)}
-          placeholder="e.g. 'Braves -1.5' or 'Over 8.5 runs' or 'Acuña over 1.5 hits'"
-          style={{ width: '100%', minHeight: 80, background: 'var(--card)', border: '1px solid rgba(0,212,255,0.15)',
-            color: 'var(--text)', fontFamily: 'Space Mono, monospace', fontSize: 12, padding: '12px 14px',
-            borderRadius: 3, resize: 'vertical', outline: 'none', boxSizing: 'border-box' }} />
-        <button onClick={discuss} disabled={discussing}
-          style={{ marginTop: 8, padding: '10px 20px', background: 'rgba(0,212,255,0.08)',
-            border: '1px solid rgba(0,212,255,0.25)', color: 'var(--cyan)', fontFamily: 'Space Mono, monospace',
-            fontSize: 10, cursor: 'pointer', borderRadius: 2, letterSpacing: '0.1em' }}>
-          {discussing ? 'ANALYZING...' : 'DISCUSS →'}
+      <section>
+        <SectionHeader label="YOUR PLAY" sub="Describe a bet and Claude will pressure-test it" />
+        <label className="sr-only" htmlFor="piq-userplay">Your play</label>
+        <textarea id="piq-userplay" className="piq-textarea" value={userPlay}
+          onChange={e => setUserPlay(e.target.value)}
+          placeholder="e.g. 'Braves -1.5' or 'Over 8.5 runs' or 'Acuña over 1.5 hits'" />
+        <button onClick={discuss} disabled={discussing || !userPlay.trim()}
+          className="piq-btn piq-btn-primary" style={{ marginTop: 'var(--s3)' }}>
+          {discussing ? 'ANALYZING…' : 'DISCUSS →'}
         </button>
         {discussion && (
-          <HudCard style={{ padding: '14px 16px', marginTop: 12 }}>
-            <div style={{ fontSize: 12, color: 'var(--text)', fontFamily: 'Space Mono, monospace', lineHeight: 1.6 }}>{discussion}</div>
+          <HudCard style={{ padding: 'var(--s4) var(--s5)', marginTop: 'var(--s3)' }} interactive={false}>
+            <div style={{ fontSize: 'var(--fs-sm)', color: 'var(--text)', fontFamily: 'Space Mono, monospace', lineHeight: 1.8 }}>{discussion}</div>
           </HudCard>
         )}
-      </div>
+      </section>
     </div>
   );
 }
 
+/* Legacy shared style — still consumed by the MLB/NBA sport tabs. */
 const emptyMsg = {
-  padding: '40px 24px',
+  padding: 'var(--s7) var(--s5)',
   textAlign: 'center',
   fontFamily: 'Space Mono, monospace',
-  fontSize: 11,
+  fontSize: 'var(--fs-xs)',
   color: 'var(--dim)',
   letterSpacing: '0.1em',
+  border: '1px dashed var(--line-strong)',
+  borderRadius: 'var(--r-md)',
+  background: 'var(--surface)',
+  lineHeight: 1.7,
 };
 
 Object.assign(window, {
