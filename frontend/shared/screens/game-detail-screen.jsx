@@ -8,6 +8,9 @@ const TABS_MLB = [
   { id: 'h2h', label: 'HEAD-TO-HEAD' },
   { id: 'form', label: 'LAST 5' },
   { id: 'roster', label: 'ROSTERS' },
+  // Lineup-independent single-player research: works before a batting order
+  // posts, which is when the lineup-gated boards below are still empty.
+  { id: 'lookup', label: '🔍 PLAYER LOOKUP' },
   { id: 'lineup', label: '⬢ LINEUP' },
   { id: 'edges', label: 'EDGE FINDER' },
   { id: 'pitching', label: 'PITCHING' },
@@ -309,7 +312,14 @@ function GameDetailScreen({ game, onBack }) {
             {tab === 'overview' && <OverviewTab gameData={gameData} />}
             {tab === 'h2h' && <H2HTab gameData={gameData} />}
             {tab === 'form' && <FormTab gameData={gameData} />}
-            {tab === 'roster' && <RosterTab gameData={gameData} />}
+            {/* MLB only: a roster card becomes a shortcut into PLAYER LOOKUP.
+                Other sports get the plain (non-clickable) roster as before. */}
+            {tab === 'roster' && <RosterTab gameData={gameData}
+              onPlayerSelect={game.sportKey === 'mlb' ? (name => {
+                try { sessionStorage.setItem('piq_lookup_player', name); } catch {}
+                setTab('lookup');
+              }) : null} />}
+            {tab === 'lookup' && <MlbPlayerLookupTab gameData={gameData} />}
             {tab === 'lineup' && <MlbLineupFieldTab gameData={gameData} />}
             {tab === 'lineups' && (game.sportKey === 'wnba'
               ? <WnbaCourtLineupTab gameData={gameData} />

@@ -203,6 +203,12 @@ function mlbPropColor(p) {
   return '#ff6b35';
 }
 
+// Probability → American odds. Was defined identically inside two components;
+// lifted here so the player-lookup panel is a third caller, not a third copy.
+const mlbFmtOdds = p => p == null ? '—'
+  : p > 0.5 ? `-${Math.round(100 * p / (1 - p))}`
+  : `+${Math.round(100 * (1 - p) / p)}`;
+
 function EdgeFinderTab({ gameData }) {
   const { mlbEdgeData, mlbPropModel, gameInfo } = gameData;
   const [filter, setFilter] = React.useState('all');
@@ -312,7 +318,7 @@ function EdgeFinderTab({ gameData }) {
       .sort((a, b) => b.prob - a.prob);
     const abbrFor = side => side === 'away' ? gameInfo.awayAbbr : gameInfo.homeAbbr;
     const colorFor = side => side === 'away' ? 'var(--cyan)' : '#ffd060';
-    const fmtOdds = p => p == null ? '—' : p > 0.5 ? `-${Math.round(100 * p / (1 - p))}` : `+${Math.round(100 * (1 - p) / p)}`;
+    const fmtOdds = mlbFmtOdds;
     const park = mlbPropModel.park || {};
     const wx = mlbPropModel.weather || {};
 
@@ -531,7 +537,7 @@ function PitchingEdgeTab({ gameData }) {
       .sort((a, b) => b.prob - a.prob);
     const abbrFor = side => side === 'away' ? gameInfo.awayAbbr : gameInfo.homeAbbr;
     const colorFor = side => side === 'away' ? 'var(--cyan)' : '#ffd060';
-    const fmtOdds = p => p == null ? '—' : p > 0.5 ? `-${Math.round(100 * p / (1 - p))}` : `+${Math.round(100 * (1 - p) / p)}`;
+    const fmtOdds = mlbFmtOdds;
     const park = mlbPitcherProps.park || {};
 
     const Inputs = ({ p }) => {
@@ -1829,4 +1835,382 @@ function MlbLineupFieldTab({ gameData }) {
   );
 }
 
-Object.assign(window, { EdgeFinderTab, PitchingEdgeTab, HighContactTab, LowHrModelTab, MlbLineupFieldTab, MlbDataLoader, useMlbLoadGate });
+/* ═══════════════════════════════════════════════════════
+   PLAYER LOOKUP — analysis for one hitter, no lineup required
+   ═══════════════════════════════════════════════════════
+   Books post batter props hours before MLB exposes a batting order, so the
+   Edge Finder / prop board sit empty exactly when research is most useful.
+   This panel takes ANY hitter on either 40-man and runs the same career-BvP
+   + Log5 projection against today's opposing starter.
+
+   Two entry points, one component:
+     • the LOOKUP tab — search box + type-ahead over both rosters
+     • a ROSTER card click — opens the tab with that player preselected
+       (via the `piq_lookup_player` sessionStorage handoff, since the roster
+       tab is sport-agnostic and shouldn't import MLB internals) */
+
+function MlbPlayerLookupTab({ gameData }) {
+  const { gameInfo, pitchingData } = gameData;
+  // ESPN's probables, once Phase 2 lands. Deliberately NOT awaited: the
+  // backend resolves the starter from MLB's own feed, so the lookup works
+  // immediately — this only sharpens the match when MLB's field lags ESPN,
+  // which is the same override the other MLB endpoints accept.
+  const mlbPitchers = pitchingData?.pitchers || null;
+  const [query, setQuery] = React.useState('');
+  const [directory, setDirectory] = React.useState(null);
+  const [result, setResult] = React.useState(null);
+  const [loading, setLoading] = React.useState(false);
+  const [error, setError] = React.useState(null);
+  const [propStat, setPropStat] = React.useState('hits');
+  const [propLine, setPropLine] = React.useState(0.5);
+  const [showMath, setShowMath] = React.useState(false);
+  const boxRef = React.useRef(null);
+  const [focused, setFocused] = React.useState(false);
+
+  // Load both 40-man hitter lists once for the type-ahead.
+  React.useEffect(() => {
+    let alive = true;
+    (async () => {
+      const d = await window.fetchMlbGamePlayers(gameInfo);
+      if (alive) setDirectory(d);
+    })();
+    return () => { alive = false; };
+  }, [gameInfo.awayFull, gameInfo.homeFull, gameInfo.date]);
+
+  const runLookup = React.useCallback(async (name) => {
+    if (!name) return;
+    setLoading(true); setError(null); setFocused(false); setQuery(name);
+    const data = await window.fetchMlbPlayerLookup(gameInfo, name, mlbPitchers);
+    if (!data) { setError('Lookup failed — the backend may be unreachable.'); setResult(null); }
+    else if (data.error) {
+      setError(
+        data.error === 'PLAYER_NOT_FOUND' || data.error === 'PLAYER_NOT_ON_ROSTER'
+          ? `No player matching "${name}" on either 40-man roster for this game.`
+          : data.error === 'AMBIGUOUS_NAME'
+            ? `"${name}" matches more than one player — use the full name.`
+            : data.error === 'NO_OPPOSING_PITCHER'
+              ? 'The opposing starter has not been announced yet, so there is nothing to match against.'
+              : 'Lookup failed.'
+      );
+      setResult(null);
+    } else {
+      setResult(data);
+      // Snap the line selector to a line this stat actually has.
+      const lines = MLB_PROP_LINES[propStat] || [0.5];
+      if (!lines.includes(propLine)) setPropLine(lines[0]);
+    }
+    setLoading(false);
+  }, [gameInfo, mlbPitchers, propStat, propLine]);
+
+  // Handoff from a ROSTER card click.
+  React.useEffect(() => {
+    let pending = null;
+    try { pending = sessionStorage.getItem('piq_lookup_player'); } catch {}
+    if (pending) {
+      try { sessionStorage.removeItem('piq_lookup_player'); } catch {}
+      runLookup(pending);
+    }
+  }, []);                                     // mount only — a click remounts the tab
+
+  // Close the suggestion list on an outside click.
+  React.useEffect(() => {
+    const onDoc = e => { if (boxRef.current && !boxRef.current.contains(e.target)) setFocused(false); };
+    document.addEventListener('mousedown', onDoc);
+    return () => document.removeEventListener('mousedown', onDoc);
+  }, []);
+
+  const allPlayers = React.useMemo(() => {
+    if (!directory) return [];
+    const tag = (side, arr) => (arr || []).map(p => ({ ...p, side }));
+    return [...tag('away', directory.away?.players), ...tag('home', directory.home?.players)];
+  }, [directory]);
+
+  const suggestions = React.useMemo(() => {
+    const q = query.trim().toLowerCase();
+    if (!q) return allPlayers.slice(0, 8);
+    return allPlayers.filter(p => p.name.toLowerCase().includes(q)).slice(0, 8);
+  }, [query, allPlayers]);
+
+  const abbrFor = side => side === 'away' ? gameInfo.awayAbbr : gameInfo.homeAbbr;
+  const colorFor = side => side === 'away' ? 'var(--cyan)' : 'var(--gold)';
+
+  const prob = result?.predictions?.[propStat]?.[String(propLine)];
+  const pc = mlbPropColor(prob);
+  const lines = MLB_PROP_LINES[propStat] || [0.5];
+
+  return (
+    <div style={{ padding: '20px 0' }}>
+      <SectionHeader
+        label="PLAYER LOOKUP"
+        sub="Any hitter vs today's starter — career BvP + projection, no lineup required" />
+
+      {/* ── Search ── */}
+      <div ref={boxRef} style={{ position: 'relative', margin: '16px 0 20px', maxWidth: 480 }}>
+        <div style={{ display: 'flex', gap: 8 }}>
+          <input
+            value={query}
+            onChange={e => { setQuery(e.target.value); setFocused(true); }}
+            onFocus={() => setFocused(true)}
+            onKeyDown={e => { if (e.key === 'Enter') runLookup(query.trim()); }}
+            placeholder="Search a batter…"
+            aria-label="Search for a batter"
+            style={{ flex: 1, padding: '10px 12px', background: 'var(--surface)',
+              border: '1px solid rgba(255,255,255,0.1)', borderRadius: 3, color: 'var(--text)',
+              fontFamily: 'Space Mono, monospace', fontSize: 13, outline: 'none' }} />
+          <button onClick={() => runLookup(query.trim())} disabled={!query.trim() || loading}
+            style={{ padding: '10px 18px', background: query.trim() ? 'rgba(0,212,255,0.12)' : 'transparent',
+              border: `1px solid ${query.trim() ? 'rgba(0,212,255,0.4)' : 'rgba(255,255,255,0.08)'}`,
+              color: query.trim() ? 'var(--cyan)' : 'var(--muted)', fontFamily: 'Orbitron, monospace',
+              fontWeight: 700, fontSize: 11, letterSpacing: '0.08em',
+              cursor: query.trim() && !loading ? 'pointer' : 'default', borderRadius: 3 }}>
+            {loading ? '···' : 'ANALYZE'}
+          </button>
+        </div>
+
+        {focused && suggestions.length > 0 && (
+          <div style={{ position: 'absolute', top: '100%', left: 0, right: 0, marginTop: 4, zIndex: 20,
+            background: 'var(--card)', border: '1px solid rgba(255,255,255,0.1)', borderRadius: 3,
+            maxHeight: 280, overflowY: 'auto', boxShadow: '0 8px 24px rgba(0,0,0,0.5)' }}>
+            {suggestions.map(p => (
+              <div key={`${p.side}-${p.id}`} onClick={() => runLookup(p.name)}
+                style={{ display: 'flex', alignItems: 'center', gap: 9, padding: '8px 11px', cursor: 'pointer',
+                  borderBottom: '1px solid rgba(255,255,255,0.04)' }}
+                onMouseEnter={e => e.currentTarget.style.background = 'rgba(255,255,255,0.04)'}
+                onMouseLeave={e => e.currentTarget.style.background = 'transparent'}>
+                <div style={{ width: 24, height: 24, borderRadius: '50%', overflow: 'hidden', flexShrink: 0,
+                  border: `1px solid ${colorFor(p.side)}55` }}>
+                  <img src={mlbHeadshot(p.id)} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }}
+                    onError={e => { e.target.style.display = 'none'; }} />
+                </div>
+                <span style={{ fontSize: 12, fontFamily: 'Space Mono, monospace', color: 'var(--text)', flex: 1 }}>{p.name}</span>
+                <span style={{ fontSize: 9.5, padding: '1px 6px', borderRadius: 2, fontFamily: 'Space Mono, monospace',
+                  border: `1px solid ${colorFor(p.side)}55`, color: colorFor(p.side) }}>
+                  {abbrFor(p.side)} · {p.position}
+                </span>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {loading && <TabLoader label="PULLING MATCHUP DATA" />}
+
+      {error && !loading && <EmptyState title="NO MATCH" hint={error} />}
+
+      {!loading && !error && !result && (
+        <EmptyState
+          title="PICK A BATTER"
+          hint="Search above, or tap any player card in the ROSTER tab. Works before lineups post — all you need is the opposing starter." />
+      )}
+
+      {result && !loading && (() => {
+        const p = result.player, pit = result.pitcher, bvp = result.bvp || {};
+        const ctx = result.context || {};
+        const ac = colorFor(p.side);
+        const confColor = result.confidence === 'HIGH' ? 'var(--green)' : result.confidence === 'MED' ? 'var(--gold)' : 'var(--muted)';
+        const bvpOk = bvp && !bvp.error && bvp.pa > 0;
+        const inp = result.inputs?.[propStat] || {};
+
+        return (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+            {/* ── Identity + matchup ── */}
+            <HudCard style={{ padding: '16px 18px' }} accent={ac}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 14, flexWrap: 'wrap' }}>
+                <div style={{ width: 54, height: 54, borderRadius: '50%', overflow: 'hidden', border: `2px solid ${ac}66`, flexShrink: 0 }}>
+                  <img src={mlbHeadshot(p.id)} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }}
+                    onError={e => { e.target.style.display = 'none'; }} />
+                </div>
+                <div style={{ minWidth: 160 }}>
+                  <div style={{ fontSize: 17, fontFamily: 'Orbitron, monospace', fontWeight: 900, color: 'var(--text)' }}>{p.name}</div>
+                  <div style={{ fontSize: 10.5, fontFamily: 'Space Mono, monospace', color: 'var(--muted)', marginTop: 3 }}>
+                    {p.team} · {p.position}{p.batHand ? ` · bats ${p.batHand}` : ''}
+                  </div>
+                </div>
+                <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginLeft: 'auto' }}>
+                  {p.inPostedLineup
+                    ? <Chip color="var(--green)" strong>● IN LINEUP{p.order ? ` #${p.order}` : ''}</Chip>
+                    : <Chip color="var(--gold)">LINEUP NOT POSTED</Chip>}
+                  {ctx.platoonAdv && <Chip color="var(--green)">PLATOON EDGE</Chip>}
+                  <Chip color={confColor}>{result.confidence}</Chip>
+                </div>
+              </div>
+
+              <div style={{ marginTop: 13, paddingTop: 12, borderTop: '1px solid rgba(255,255,255,0.06)',
+                display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
+                <span style={{ fontSize: 10, fontFamily: 'Space Mono, monospace', color: 'var(--muted)', letterSpacing: '0.1em' }}>FACING</span>
+                <span style={{ fontSize: 14, fontFamily: 'Orbitron, monospace', fontWeight: 700, color: 'var(--text)' }}>
+                  {pit.name}{pit.throws ? ` (${pit.throws}HP)` : ''}
+                </span>
+                <span style={{ fontSize: 10, fontFamily: 'Space Mono, monospace', color: 'var(--muted)' }}>{pit.team}</span>
+                <div style={{ display: 'flex', gap: 14, marginLeft: 'auto', flexWrap: 'wrap' }}>
+                  {[['ERA', pit.era], ['WHIP', pit.whip], ['K/9', pit.k9], ['HR/9', pit.hrPer9], ['AVG-A', pit.oppAvg]].map(([l, v]) => (
+                    <StatTile key={l} label={l} value={v == null ? '—' : v} align="right" />
+                  ))}
+                </div>
+              </div>
+
+              {result.confidenceNote && (
+                <div style={{ marginTop: 10, fontSize: 10, fontFamily: 'Space Mono, monospace', color: 'var(--muted)' }}>
+                  {result.confidenceNote}
+                </div>
+              )}
+            </HudCard>
+
+            {/* ── Projection ── */}
+            <HudCard style={{ padding: '16px 18px' }} accent="#00ff88">
+              <div style={{ display: 'flex', alignItems: 'baseline', gap: 10, flexWrap: 'wrap', marginBottom: 12 }}>
+                <span style={{ fontSize: 12, fontFamily: 'Orbitron, monospace', fontWeight: 900, color: '#00ff88', letterSpacing: '0.12em' }}>◆ PROJECTION</span>
+                <span style={{ fontSize: 10, fontFamily: 'Space Mono, monospace', color: 'var(--muted)' }}>Log5 matchup · same model as the Edge Finder</span>
+                <span style={{ marginLeft: 'auto', fontSize: 10, fontFamily: 'Space Mono, monospace', color: 'var(--muted)' }}>
+                  {result.park?.venue || ''}{result.park?.factor != null ? ` · park ${result.park.factor}` : ''}
+                  {result.weather?.temp != null ? ` · ${result.weather.temp}°` : ''}
+                </span>
+              </div>
+
+              <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap', alignItems: 'center', marginBottom: 16 }}>
+                <div style={{ display: 'flex', gap: 5 }}>
+                  {['hits', 'rbi', 'k'].map(s => (
+                    <button key={s}
+                      onClick={() => { setPropStat(s); const L = MLB_PROP_LINES[s]; if (!L.includes(propLine)) setPropLine(L[0]); }}
+                      style={{ padding: '5px 13px', background: propStat === s ? 'rgba(0,255,136,0.12)' : 'transparent',
+                        border: `1px solid ${propStat === s ? 'rgba(0,255,136,0.4)' : 'rgba(255,255,255,0.08)'}`,
+                        color: propStat === s ? '#00ff88' : 'var(--muted)', fontFamily: 'Orbitron, monospace',
+                        fontWeight: 700, fontSize: 10, cursor: 'pointer', borderRadius: 2, letterSpacing: '0.08em' }}>
+                      {MLB_PROP_STAT_LABELS[s]}
+                    </button>
+                  ))}
+                </div>
+                <div style={{ width: 1, height: 22, background: 'rgba(255,255,255,0.08)' }} />
+                <div style={{ display: 'flex', gap: 5 }}>
+                  {lines.map(line => (
+                    <button key={line} onClick={() => setPropLine(line)}
+                      style={{ padding: '5px 12px', background: propLine === line ? 'rgba(0,212,255,0.12)' : 'transparent',
+                        border: `1px solid ${propLine === line ? 'rgba(0,212,255,0.4)' : 'rgba(255,255,255,0.08)'}`,
+                        color: propLine === line ? 'var(--cyan)' : 'var(--muted)',
+                        fontFamily: 'Space Mono, monospace', fontSize: 10, cursor: 'pointer', borderRadius: 2 }}>{line}+</button>
+                  ))}
+                </div>
+              </div>
+
+              <div style={{ display: 'flex', alignItems: 'center', gap: 14, flexWrap: 'wrap' }}>
+                <span style={{ fontSize: 13, fontFamily: 'Orbitron, monospace', fontWeight: 700, color: 'var(--text)', minWidth: 110 }}>
+                  {propLine}+ {MLB_PROP_STAT_LABELS[propStat]}
+                </span>
+                <div style={{ flex: 1, minWidth: 140, height: 10, background: 'rgba(255,255,255,0.05)', borderRadius: 5, overflow: 'hidden' }}>
+                  <div style={{ height: '100%', width: `${Math.round((prob || 0) * 100)}%`, background: pc,
+                    boxShadow: `0 0 10px ${pc}88`, borderRadius: 5, transition: 'width 0.5s cubic-bezier(0.16,1,0.3,1)' }} />
+                </div>
+                <span style={{ fontSize: 26, fontFamily: 'Orbitron, monospace', fontWeight: 900, color: pc, minWidth: 66, textAlign: 'right' }}>
+                  {prob == null ? '—' : `${Math.round(prob * 100)}%`}
+                </span>
+                <span style={{ fontSize: 12, fontFamily: 'Space Mono, monospace', color: 'var(--muted)', minWidth: 52, textAlign: 'right' }}>
+                  {mlbFmtOdds(prob)}
+                </span>
+              </div>
+
+              <button onClick={() => setShowMath(v => !v)}
+                style={{ marginTop: 12, padding: 0, background: 'transparent', border: 'none', color: 'var(--muted)',
+                  fontFamily: 'Space Mono, monospace', fontSize: 10, cursor: 'pointer', textDecoration: 'underline' }}>
+                {showMath ? 'hide the math' : 'how is this calculated?'}
+              </button>
+
+              {showMath && (
+                <div style={{ marginTop: 10, paddingTop: 10, borderTop: '1px solid rgba(255,255,255,0.06)',
+                  display: 'flex', flexWrap: 'wrap', gap: 5 }}>
+                  {Object.entries(inp).map(([k, v]) => (
+                    <span key={k} style={{ fontSize: 9.5, fontFamily: 'Space Mono, monospace', color: 'var(--text)',
+                      padding: '2px 6px', background: 'rgba(255,255,255,0.03)', borderRadius: 2,
+                      border: '1px solid rgba(255,255,255,0.05)' }}>
+                      <span style={{ color: 'var(--muted)' }}>{k} </span>
+                      {v === true ? 'yes' : v === false ? 'no' : v == null ? '—' : String(v)}
+                    </span>
+                  ))}
+                </div>
+              )}
+            </HudCard>
+
+            {/* ── Career BvP ── */}
+            <HudCard style={{ padding: '16px 18px' }} accent="var(--gold)">
+              <div style={{ display: 'flex', alignItems: 'baseline', gap: 10, flexWrap: 'wrap', marginBottom: 12 }}>
+                <span style={{ fontSize: 12, fontFamily: 'Orbitron, monospace', fontWeight: 900, color: 'var(--gold)', letterSpacing: '0.12em' }}>◆ CAREER vs {pit.name.toUpperCase()}</span>
+                {bvpOk && bvp.lastFaced && (
+                  <span style={{ fontSize: 10, fontFamily: 'Space Mono, monospace', color: 'var(--muted)' }}>last faced {bvp.lastFaced}</span>
+                )}
+              </div>
+
+              {!bvpOk ? (
+                <div style={{ fontSize: 11, fontFamily: 'Space Mono, monospace', color: 'var(--muted)', lineHeight: 1.6 }}>
+                  No career plate appearances against this pitcher. The projection above still holds — it leans on
+                  season rates and the matchup context instead of BvP.
+                </div>
+              ) : (
+                <>
+                  <div style={{ display: 'flex', gap: 18, flexWrap: 'wrap', alignItems: 'center' }}>
+                    <OpsGauge ops={bvp.ops || 0} size={76} />
+                    <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap' }}>
+                      {[['PA', bvp.pa], ['AB', bvp.ab], ['H', bvp.hits], ['HR', bvp.hr],
+                        ['BB', bvp.bb], ['K', bvp.k], ['AVG', (bvp.avg ?? 0).toFixed(3)],
+                        ['OPS', (bvp.ops ?? 0).toFixed(3)]].map(([l, v]) => (
+                        <StatTile key={l} label={l} value={v == null ? '—' : v} />
+                      ))}
+                    </div>
+                  </div>
+
+                  {bvp.gameByGame?.length > 0 && (
+                    <div style={{ marginTop: 14, paddingTop: 12, borderTop: '1px solid rgba(255,255,255,0.06)' }}>
+                      <div style={{ fontSize: 10, fontFamily: 'Space Mono, monospace', color: 'var(--muted)',
+                        letterSpacing: '0.1em', marginBottom: 8 }}>GAME BY GAME</div>
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                        {bvp.gameByGame.slice(0, 10).map((g, i) => (
+                          <div key={`${g.date}-${i}`} style={{ display: 'flex', alignItems: 'center', gap: 10,
+                            flexWrap: 'wrap', padding: '5px 8px', borderRadius: 2,
+                            background: i % 2 ? 'transparent' : 'rgba(255,255,255,0.02)' }}>
+                            <span style={{ fontSize: 10.5, fontFamily: 'Space Mono, monospace', color: 'var(--muted)', minWidth: 74 }}>{g.date}</span>
+                            <span style={{ fontSize: 11, fontFamily: 'Space Mono, monospace',
+                              color: g.h > 0 ? 'var(--green)' : 'var(--text)', minWidth: 58 }}>
+                              {g.h}-for-{g.ab}
+                            </span>
+                            <div style={{ display: 'flex', gap: 5, flexWrap: 'wrap' }}>
+                              {g.hr > 0 && <Chip color="var(--green)" strong>{g.hr} HR</Chip>}
+                              {g.bb > 0 && <Chip color="var(--cyan)">{g.bb} BB</Chip>}
+                              {g.k > 0 && <Chip color="var(--orange)">{g.k} K</Chip>}
+                            </div>
+                            {g.weather && <span style={{ marginLeft: 'auto' }}><WeatherPill weather={g.weather} /></span>}
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </>
+              )}
+            </HudCard>
+
+            {/* ── Season form ── */}
+            <HudCard style={{ padding: '16px 18px' }} accent="var(--cyan)">
+              <div style={{ fontSize: 12, fontFamily: 'Orbitron, monospace', fontWeight: 900, color: 'var(--cyan)',
+                letterSpacing: '0.12em', marginBottom: 12 }}>◆ SEASON & RECENT FORM</div>
+              <div style={{ display: 'flex', gap: 18, flexWrap: 'wrap' }}>
+                {[['GAMES', result.games], ['AVG', ctx.seasonAvg == null ? '—' : ctx.seasonAvg.toFixed(3)],
+                  ['HR', ctx.seasonHr], ['ISO', ctx.seasonIso == null ? '—' : ctx.seasonIso.toFixed(3)],
+                  ['HR L15', ctx.recentHr15]].map(([l, v]) => (
+                  <StatTile key={l} label={l} value={v == null ? '—' : v} />
+                ))}
+                {ctx.last15 && (
+                  <>
+                    <StatTile label="L15 AVG" value={ctx.last15.hPerAb == null ? '—' : ctx.last15.hPerAb.toFixed(3)} />
+                    <StatTile label="L15 K%" value={ctx.last15.kPerPa == null ? '—' : `${Math.round(ctx.last15.kPerPa * 100)}%`} />
+                  </>
+                )}
+              </div>
+              <div style={{ fontSize: 10, color: 'var(--muted)', fontFamily: 'Space Mono, monospace', marginTop: 12, lineHeight: 1.6 }}>
+                {result.source}
+              </div>
+            </HudCard>
+          </div>
+        );
+      })()}
+    </div>
+  );
+}
+
+Object.assign(window, { EdgeFinderTab, PitchingEdgeTab, HighContactTab, LowHrModelTab, MlbLineupFieldTab, MlbPlayerLookupTab, MlbDataLoader, useMlbLoadGate });

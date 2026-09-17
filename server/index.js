@@ -18,6 +18,8 @@ const {
   getLowHrReport,
   getBatterPropModel,
   getPitcherPropModel,
+  getPlayerLookup,
+  getGamePlayerDirectory,
 } = require('./mlb/service');
 const { getSlateSignals } = require('./mlb/slate-signals');
 const {
@@ -77,7 +79,7 @@ const server = http.createServer(async (req, res) => {
     if (seasonRaw != null && !isSeason(seasonRaw)) return sendError(res, 'invalid season');
 
     // ── Sanitize free-text params in place (names used for matching only) ──
-    for (const p of ['away', 'home', 'teamAbbr', 'team', 'position', 'awayPitcher', 'homePitcher']) {
+    for (const p of ['away', 'home', 'teamAbbr', 'team', 'position', 'awayPitcher', 'homePitcher', 'player']) {
       const v = url.searchParams.get(p);
       if (v != null) { const c = cleanText(v, 60); c ? url.searchParams.set(p, c) : url.searchParams.delete(p); }
     }
@@ -269,6 +271,52 @@ const server = http.createServer(async (req, res) => {
       const homePitcher = url.searchParams.get('homePitcher') || undefined;
       const report = await getPitcherPropModel(gamePk, { refresh, awayPitcher, homePitcher });
       return sendJson(res, report);
+    }
+
+    // GET /api/mlb/player-lookup?player=Juan+Soto&gamePk=... (or &away=&home=&date=)
+    //   ONE batter vs today's opposing starter — career BvP + the same Log5
+    //   prop projection the Edge Finder shows, but WITHOUT waiting for the
+    //   lineup to post. `player` is a name (from the roster card or typed)
+    //   or an MLB player id. Optional &awayPitcher=/&homePitcher= override
+    //   the starter exactly as the other MLB endpoints do.
+    if (path === '/api/mlb/player-lookup') {
+      const player = url.searchParams.get('player');
+      if (!player) return sendError(res, 'player (name or MLB id) required');
+      let gamePk = url.searchParams.get('gamePk');
+      if (!gamePk) {
+        const away = url.searchParams.get('away');
+        const home = url.searchParams.get('home');
+        const date = url.searchParams.get('date') || undefined;
+        if (!away || !home) return sendError(res, 'gamePk or away+home team names required');
+        gamePk = await findGamePkByTeams(away, home, date);
+        if (!gamePk) return sendError(res, `No game found for ${away} @ ${home}`, 404);
+      }
+      const refresh = url.searchParams.get('refresh') === '1';
+      const awayPitcher = url.searchParams.get('awayPitcher') || undefined;
+      const homePitcher = url.searchParams.get('homePitcher') || undefined;
+      const result = await getPlayerLookup(gamePk, player, { refresh, awayPitcher, homePitcher });
+      // Unresolvable name is a client-side miss, not a server fault.
+      if (result?.error === 'PLAYER_NOT_FOUND' || result?.error === 'PLAYER_NOT_ON_ROSTER') {
+        return sendJson(res, result, 404);
+      }
+      return sendJson(res, result);
+    }
+
+    // GET /api/mlb/game-players?gamePk=... (or &away=&home=&date=)
+    //   Both 40-man hitter lists for a game, for the lookup type-ahead.
+    if (path === '/api/mlb/game-players') {
+      let gamePk = url.searchParams.get('gamePk');
+      if (!gamePk) {
+        const away = url.searchParams.get('away');
+        const home = url.searchParams.get('home');
+        const date = url.searchParams.get('date') || undefined;
+        if (!away || !home) return sendError(res, 'gamePk or away+home team names required');
+        gamePk = await findGamePkByTeams(away, home, date);
+        if (!gamePk) return sendError(res, `No game found for ${away} @ ${home}`, 404);
+      }
+      const refresh = url.searchParams.get('refresh') === '1';
+      const dir = await getGamePlayerDirectory(gamePk, { refresh });
+      return sendJson(res, dir);
     }
 
     // GET /api/mlb/weather?date=YYYY-MM-DD&teamAbbr=ATL

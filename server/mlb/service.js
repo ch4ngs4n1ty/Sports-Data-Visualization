@@ -2128,6 +2128,207 @@ async function getPitcherPropModel(gamePk, options = {}) {
   return result;
 }
 
+/* ── MANUAL PLAYER LOOKUP ───────────────────────────────
+   The lineup-independent path into the same analysis the Edge Finder shows.
+
+   Why it exists: sportsbooks post batter props (and sharp accounts post
+   picks) well before MLB's boxscore exposes `battingOrder`, so for hours
+   every lineup-gated board in the app is empty even though BOTH probable
+   starters are already known. This lets the user name a hitter themselves
+   and get that hitter's card immediately.
+
+   It deliberately reuses the existing primitives rather than re-deriving
+   anything: getTeamRosterMap/resolveRosterEntry for name → MLB id,
+   fetchSavantBvP for career BvP, getBatterHitProfile + computeBatterProps
+   for the Log5 projection. Same numbers the Edge Finder would show once
+   the lineup posts — the ONLY difference is where the batter name came
+   from, which the response records as `resolvedFrom`.
+
+   Note: the opposing starter is resolved exactly as getGameBvp does, so a
+   caller-supplied ESPN probable still wins when MLB's own field lags. */
+
+// Which side of this game is the player on, and who does he face?
+function _sideForTeam(lineups, teamId) {
+  if (lineups.away?.teamId === teamId) return 'away';
+  if (lineups.home?.teamId === teamId) return 'home';
+  return null;
+}
+
+// Resolve a typed name against BOTH 40-man rosters in this game.
+// Returns { entry, side } or null. Checked full-name-first on both sides
+// before falling back to last-name, so "Alonso" can't match the wrong
+// team's Alonso when the other side has an exact full-name hit.
+async function resolveGamePlayer(name, lineups) {
+  const sides = ['away', 'home'];
+  const maps = {};
+  for (const s of sides) maps[s] = await getTeamRosterMap(lineups[s]?.teamId);
+
+  const fullKey = normalizeName(name);
+  for (const s of sides) {
+    const hit = maps[s].byFull[fullKey];
+    if (hit) return { entry: hit, side: s, matchedOn: 'full' };
+  }
+  const lastKey = lastNameKey(name);
+  if (lastKey) {
+    const hits = sides
+      .map(s => ({ s, hit: maps[s].byLast[lastKey] }))
+      .filter(x => x.hit);
+    // Ambiguous across teams (or within one) → report it instead of guessing.
+    if (hits.length === 1) return { entry: hits[0].hit, side: hits[0].s, matchedOn: 'last' };
+    if (hits.length > 1) return { ambiguous: true };
+  }
+  return null;
+}
+
+// Every hitter on both 40-mans, for the UI's type-ahead / picker.
+async function getGamePlayerDirectory(gamePk, options = {}) {
+  const lineups = await getGameLineups(gamePk, options);
+  const out = {};
+  for (const side of ['away', 'home']) {
+    const map = await getTeamRosterMap(lineups[side]?.teamId);
+    const seen = new Set();
+    const players = [];
+    for (const entry of Object.values(map.byFull)) {
+      if (!entry || seen.has(entry.id)) continue;
+      seen.add(entry.id);
+      // Pitchers can't be looked up as batters here — the pitcher board covers them.
+      if (entry.position === 'P') continue;
+      players.push({ id: entry.id, name: entry.name, position: entry.position });
+    }
+    players.sort((a, b) => a.name.localeCompare(b.name));
+    out[side] = {
+      teamId: lineups[side]?.teamId || null,
+      teamName: lineups[side]?.teamName || null,
+      lineupPosted: (lineups[side]?.lineup?.length || 0) >= 9,
+      players,
+    };
+  }
+  return { gamePk, away: out.away, home: out.home };
+}
+
+/* One batter vs today's opposing starter — the manual-lookup payload.
+   `player` may be a name (typed or clicked from the roster) or a numeric
+   MLB id. Everything else mirrors getBatterPropModel's per-batter branch. */
+async function getPlayerLookup(gamePk, player, options = {}) {
+  const season = currentMlbSeason();
+  const lineups = await getGameLineups(gamePk, options);
+
+  // ── Resolve the batter ──
+  let entry = null, side = null, resolvedFrom = null;
+  if (/^\d+$/.test(String(player))) {
+    const id = Number(player);
+    for (const s of ['away', 'home']) {
+      const map = await getTeamRosterMap(lineups[s]?.teamId);
+      const hit = Object.values(map.byFull).find(e => e && e.id === id);
+      if (hit) { entry = hit; side = s; resolvedFrom = 'id'; break; }
+    }
+    if (!entry) return { gamePk, error: 'PLAYER_NOT_ON_ROSTER', query: String(player) };
+  } else {
+    const res = await resolveGamePlayer(player, lineups);
+    if (res?.ambiguous) return { gamePk, error: 'AMBIGUOUS_NAME', query: String(player) };
+    if (!res) return { gamePk, error: 'PLAYER_NOT_FOUND', query: String(player) };
+    entry = res.entry; side = res.side; resolvedFrom = res.matchedOn === 'full' ? 'name' : 'lastName';
+  }
+
+  const oppSide = side === 'away' ? 'home' : 'away';
+
+  // ── Opposing starter (caller override wins when MLB's field lags) ──
+  let oppPitcher = lineups[oppSide]?.probablePitcher || null;
+  const providedOpp = options[`${oppSide}Pitcher`];
+  if (providedOpp && lineups[oppSide]?.teamId) {
+    const map = await getTeamRosterMap(lineups[oppSide].teamId);
+    const resolved = resolveRosterEntry(providedOpp, map);
+    if (resolved) oppPitcher = { id: resolved.id, name: resolved.name };
+  }
+  if (!oppPitcher) {
+    return {
+      gamePk, error: 'NO_OPPOSING_PITCHER',
+      player: { id: entry.id, name: entry.name, position: entry.position, side },
+      team: lineups[side]?.teamName || null,
+    };
+  }
+
+  const weather = await fetchGameWeather(gamePk);
+  const parkFactor = parkHrFactor(weather?.venue);
+
+  const [bp, batHand, pit, arsenal, hrProf, bvpRaw] = await Promise.all([
+    getBatterHitProfile(entry.id, season),
+    getBatterHand(entry.id),
+    getPitcherStats(oppPitcher.id, season),
+    getPitcherArsenal(oppPitcher.id, season),
+    getBatterHrProfile(entry.id, season),
+    fetchSavantBvP(entry.id, oppPitcher.id, options).catch(err => ({
+      batterId: entry.id, pitcherId: oppPitcher.id, error: err.message,
+      pa: 0, ab: 0, hits: 0, hr: 0, bb: 0, k: 0,
+      avg: 0, obp: 0, slg: 0, ops: 0,
+      totalPitches: 0, gamesPlayed: 0, lastFaced: null, gameByGame: [],
+    })),
+  ]);
+
+  const bvpOk = bvpRaw && !bvpRaw.error;
+  if (bvpOk && bvpRaw.gameByGame?.length) {
+    bvpRaw.gameByGame = await enrichBvpGamesWithWeather(bvpRaw.gameByGame);
+  }
+  const bvp = bvpOk ? { ab: bvpRaw.ab, hits: bvpRaw.hits, k: bvpRaw.k, pa: bvpRaw.pa } : null;
+
+  const { predictions, inputs, platoonAdv } = computeBatterProps({
+    bp, pit, arsenal, weather, parkFactor, batHand, bvp,
+  });
+
+  // Is he in the posted lineup? (Once it posts, this flips to a real order.)
+  const posted = (lineups[side]?.lineup || []).find(b => b.id === entry.id) || null;
+  const g = bp?.season?.g || 0;
+
+  return {
+    gamePk, season,
+    player: {
+      id: entry.id, name: entry.name, position: entry.position,
+      side, team: lineups[side]?.teamName || null,
+      batHand, resolvedFrom,
+      inPostedLineup: !!posted,
+      order: posted?.order ?? null,
+    },
+    pitcher: {
+      id: oppPitcher.id, name: oppPitcher.name,
+      throws: pit?.throws || null,
+      team: lineups[oppSide]?.teamName || null,
+      era: pit?.current?.era ?? null,
+      whip: pit?.current?.whip ?? null,
+      k9: pit?.current?.k9 ?? null,
+      hrPer9: pit?.current?.hrPer9 ?? null,
+      oppAvg: pit?.current?.oppAvg ?? null,
+    },
+    bvp: bvpRaw,
+    lines: PROP_LINES,
+    predictions, inputs,
+    context: {
+      bvpPa: bvp?.pa ?? 0, bvpH: bvp?.hits ?? 0, bvpK: bvp?.k ?? 0,
+      platoonAdv, batHand,
+      seasonAvg: bp?.season?.avg ?? null,
+      seasonHr: hrProf?.season?.hr ?? null,
+      seasonIso: hrProf?.season?.iso ?? null,
+      recentHr15: hrProf?.recent?.hr15 ?? null,
+      last15: bp?.recent || null,
+    },
+    park: { venue: weather?.venue || null, factor: parkFactor ?? null },
+    weather,
+    leagueRates: { avg: LG.avg, kPerPa: LG.kpa, rbiPerG: LG.rbiG },
+    games: g,
+    // Confidence is driven by the SEASON sample, with BvP as a bonus — not a
+    // gate. (getBatterPropModel requires bvpPa>=10 for HIGH, which is fine
+    // once a lineup is posted, but here the whole point is looking up hitters
+    // who may never have faced this starter: a 140-game regular with 4 BvP PA
+    // is a well-sampled projection, not a MED one.)
+    confidence: g >= 60 ? 'HIGH' : g >= 20 ? 'MED' : 'LOW',
+    confidenceNote: (bvp?.pa ?? 0) >= 10
+      ? `${g} games sampled · ${bvp.pa} career PA vs this pitcher`
+      : `${g} games sampled · limited BvP history (${bvp?.pa ?? 0} PA) — projection leans on season rates`,
+    lineupPosted: (lineups[side]?.lineup?.length || 0) >= 9,
+    source: 'Log5 matchup model · MLB Stats API season stats + Baseball Savant BvP/arsenal',
+    cachedAt: new Date().toISOString(),
+  };
+}
+
 module.exports = {
   getGames,
   getGameLineups,
@@ -2141,4 +2342,6 @@ module.exports = {
   scoreF5,
   getBatterPropModel,
   getPitcherPropModel,
+  getPlayerLookup,
+  getGamePlayerDirectory,
 };
