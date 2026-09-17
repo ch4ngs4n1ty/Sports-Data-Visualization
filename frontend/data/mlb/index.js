@@ -364,7 +364,52 @@ async function fetchMlbStarters(gameInfo) {
   return { pitchers, lineups, summary };
 }
 
+/* ── MANUAL PLAYER LOOKUP ──────────────────────────────
+   Analysis for ONE hitter without waiting for the lineup to post.
+   Books price batter props hours before MLB exposes a batting order, so
+   every lineup-gated tab is empty exactly when the user wants to research.
+   These two call the backend's lineup-independent path. */
+
+// One batter vs today's opposing starter: career BvP + Log5 projection.
+// `player` is a full name, last name, or MLB player id.
+async function fetchMlbPlayerLookup(gameInfo, player, pitchers) {
+  try {
+    const date = mlbBusinessDate(gameInfo.date);
+    const url = `${API_BASE}/api/mlb/player-lookup`
+      + `?player=${encodeURIComponent(player)}`
+      + `&away=${encodeURIComponent(gameInfo.awayFull)}`
+      + `&home=${encodeURIComponent(gameInfo.homeFull)}`
+      + (date ? `&date=${date}` : '')
+      + (pitchers?.away?.name ? `&awayPitcher=${encodeURIComponent(pitchers.away.name)}` : '')
+      + (pitchers?.home?.name ? `&homePitcher=${encodeURIComponent(pitchers.home.name)}` : '');
+    const r = await fetch(url);
+    // 404 still carries a structured {error} the UI renders as "not found".
+    const data = await r.json().catch(() => null);
+    if (!r.ok && !data?.error) return null;
+    return data;
+  } catch {
+    return null;
+  }
+}
+
+// Both 40-man hitter lists for this game (type-ahead / picker source).
+async function fetchMlbGamePlayers(gameInfo) {
+  try {
+    const date = mlbBusinessDate(gameInfo.date);
+    const url = `${API_BASE}/api/mlb/game-players`
+      + `?away=${encodeURIComponent(gameInfo.awayFull)}`
+      + `&home=${encodeURIComponent(gameInfo.homeFull)}`
+      + (date ? `&date=${date}` : '');
+    const r = await fetch(url);
+    if (!r.ok) return null;
+    return await r.json();
+  } catch {
+    return null;
+  }
+}
+
 Object.assign(window, {
+  fetchMlbPlayerLookup, fetchMlbGamePlayers,
   fetchGameBvp, fetchWeather, fetchHighContactReport, fetchLowHrReport, fetchMlbPropModel,
   fetchMlbPitcherProps,
   fetchMlbLineups,

@@ -182,7 +182,10 @@ function H2HTab({ gameData }) {
   );
 }
 
-function RosterTab({ gameData }) {
+// `onPlayerSelect` is optional and currently MLB-only: when supplied, each
+// player card becomes a shortcut into the PLAYER LOOKUP tab (batter vs today's
+// starter). Without it the cards stay non-interactive, exactly as before.
+function RosterTab({ gameData, onPlayerSelect }) {
   const { gameInfo, awayRoster, homeRoster } = gameData;
   const [side, setSide] = React.useState('away');
   const roster = side === 'away' ? awayRoster : homeRoster;
@@ -207,16 +210,32 @@ function RosterTab({ gameData }) {
 
       {!roster?.length ? <EmptyState title="ROSTER NOT AVAILABLE" hint="ESPN's roster shape varies by sport — this league may not expose one." /> : (
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(150px, 1fr))', gap: 'var(--s2)' }}>
-          {roster.map(p => (
-            <HudCard key={p.id} style={{ padding: 'var(--s4) var(--s3)', textAlign: 'center' }} accent={statusColor(p.status)} interactive={false}>
-              <PlayerCard player={{ ...p, headshot: p.headshot }} accent={statusColor(p.status)} size="md" />
-              <div style={{ marginTop: 'var(--s3)' }}>
-                <Chip color={statusColor(p.status)} strong={!/^active$/i.test(p.status || 'active')}>
-                  {/^active$/i.test(p.status) || !p.status ? '● ACTIVE' : p.status.toUpperCase()}
-                </Chip>
-              </div>
-            </HudCard>
-          ))}
+          {roster.map(p => {
+            // The lookup is a BATTER model, so pitchers aren't clickable —
+            // the PITCHING tab already covers them.
+            const isPitcher = /^(P|SP|RP|LHP|RHP)$/i.test(String(p.position || '').trim());
+            const clickable = !!onPlayerSelect && !isPitcher && !!p.name;
+            return (
+              <HudCard key={p.id} style={{ padding: 'var(--s4) var(--s3)', textAlign: 'center' }}
+                accent={statusColor(p.status)}
+                interactive={clickable}
+                onClick={clickable ? () => onPlayerSelect(p.name) : undefined}
+                title={clickable ? `Analyze ${p.name} vs today's starter` : undefined}>
+                <PlayerCard player={{ ...p, headshot: p.headshot }} accent={statusColor(p.status)} size="md" />
+                <div style={{ marginTop: 'var(--s3)' }}>
+                  <Chip color={statusColor(p.status)} strong={!/^active$/i.test(p.status || 'active')}>
+                    {/^active$/i.test(p.status) || !p.status ? '● ACTIVE' : p.status.toUpperCase()}
+                  </Chip>
+                </div>
+                {clickable && (
+                  <div style={{ marginTop: 'var(--s2)', fontSize: 9.5, fontFamily: 'Space Mono, monospace',
+                    color: 'var(--cyan)', letterSpacing: '0.08em' }}>
+                    🔍 ANALYZE
+                  </div>
+                )}
+              </HudCard>
+            );
+          })}
         </div>
       )}
     </div>
