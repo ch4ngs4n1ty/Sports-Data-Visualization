@@ -1849,6 +1849,10 @@ function MlbLineupFieldTab({ gameData }) {
    lookup in place — no tab hop, no sessionStorage handoff. Non-MLB sports
    still get the plain sport-agnostic `RosterTab`. */
 
+// away/home → the abbreviation for that side of THIS game. Module-scope because
+// the recent-form effect needs it above the component's own render helpers.
+const abbrForSide = (gameInfo, side) => side === 'away' ? gameInfo.awayAbbr : gameInfo.homeAbbr;
+
 function MlbPlayerLookupTab({ gameData }) {
   const { gameInfo, pitchingData } = gameData;
   // ESPN's probables, once Phase 2 lands. Deliberately NOT awaited: the
@@ -1866,6 +1870,11 @@ function MlbPlayerLookupTab({ gameData }) {
   const [showMath, setShowMath] = React.useState(false);
   const boxRef = React.useRef(null);
   const [focused, setFocused] = React.useState(false);
+  // Last-5 season game log for the resolved batter. The lookup endpoint returns
+  // career BvP but no per-game season log, so this is fetched client-side with
+  // the SAME helper the Edge Finder uses — no new endpoint, no forked parsing.
+  const [gameLog, setGameLog] = React.useState(null);
+  const [logLoading, setLogLoading] = React.useState(false);
 
   // Load both 40-man hitter lists once for the type-ahead.
   React.useEffect(() => {
@@ -1902,6 +1911,27 @@ function MlbPlayerLookupTab({ gameData }) {
     setLoading(false);
   }, [gameInfo, mlbPitchers, propStat, propLine]);
 
+  // Pull the resolved batter's last-5 season games once the lookup lands.
+  // Separate from the lookup call on purpose: the projection + BvP render
+  // immediately, and the recent-form module fills in behind them rather than
+  // holding up the whole panel.
+  const lookedUpId = result?.player?.id || null;
+  const lookedUpTeamAbbr = result?.player?.side ? abbrForSide(gameInfo, result.player.side) : null;
+  React.useEffect(() => {
+    if (!lookedUpId) { setGameLog(null); return; }
+    let alive = true;
+    setGameLog(null); setLogLoading(true);
+    (async () => {
+      const log = await window.fetchPlayerGameLog(lookedUpId, { count: 5 });
+      const withWeather = await window.attachWeatherToGameLog(log, lookedUpTeamAbbr);
+      if (!alive) return;
+      setGameLog(withWeather || []);
+      setLogLoading(false);
+    })();
+    return () => { alive = false; };
+  }, [lookedUpId, lookedUpTeamAbbr]);
+
+
   // Close the suggestion list on an outside click.
   React.useEffect(() => {
     const onDoc = e => { if (boxRef.current && !boxRef.current.contains(e.target)) setFocused(false); };
@@ -1921,7 +1951,7 @@ function MlbPlayerLookupTab({ gameData }) {
     return allPlayers.filter(p => p.name.toLowerCase().includes(q)).slice(0, 8);
   }, [query, allPlayers]);
 
-  const abbrFor = side => side === 'away' ? gameInfo.awayAbbr : gameInfo.homeAbbr;
+  const abbrFor = side => abbrForSide(gameInfo, side);
   const colorFor = side => side === 'away' ? 'var(--cyan)' : 'var(--gold)';
 
   const prob = result?.predictions?.[propStat]?.[String(propLine)];
@@ -2000,6 +2030,9 @@ function MlbPlayerLookupTab({ gameData }) {
         const confColor = result.confidence === 'HIGH' ? 'var(--green)' : result.confidence === 'MED' ? 'var(--gold)' : 'var(--muted)';
         const bvpOk = bvp && !bvp.error && bvp.pa > 0;
         const inp = result.inputs?.[propStat] || {};
+        // Same tier the Edge Finder assigns this hitter (shared scorer). Until
+        // the log lands, bvpOps alone drives it — the badge only sharpens.
+        const form = window.scoreMlbBatterForm(gameLog || [], bvp?.ops ?? 0);
 
         return (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
@@ -2021,6 +2054,7 @@ function MlbPlayerLookupTab({ gameData }) {
                     ? <Chip color="var(--green)" strong>● IN LINEUP{p.order ? ` #${p.order}` : ''}</Chip>
                     : <Chip color="var(--gold)">LINEUP NOT POSTED</Chip>}
                   {ctx.platoonAdv && <Chip color="var(--green)">PLATOON EDGE</Chip>}
+                  <HotBadge tier={form.hotTier} />
                   <Chip color={confColor}>{result.confidence}</Chip>
                 </div>
               </div>
@@ -2218,6 +2252,25 @@ function MlbPlayerLookupTab({ gameData }) {
                   </>
                 )}
               </div>
+              <div style={{ marginTop: 16, paddingTop: 14, borderTop: '1px solid rgba(255,255,255,0.06)' }}>
+                <div style={{ display: 'flex', alignItems: 'baseline', gap: 10, flexWrap: 'wrap', marginBottom: 10 }}>
+                  <span style={{ fontSize: 10, fontFamily: 'Space Mono, monospace', color: ac, letterSpacing: '0.22em' }}>
+                    LAST 5 GAMES (SEASON)
+                  </span>
+                  {gameLog?.length > 0 && (
+                    <span style={{ fontSize: 10, fontFamily: 'Space Mono, monospace', color: 'var(--muted)' }}>
+                      {form.hitStreak > 0 ? `${form.hitStreak}-game hit streak · ` : ''}
+                      {form.l5Avg.toFixed(1)} H/G
+                      {form.trendRatio >= 1.25 ? ' · trending up' : form.trendRatio <= 0.75 ? ' · cooling off' : ''}
+                    </span>
+                  )}
+                </div>
+                {logLoading
+                  ? <TabLoader label="PULLING RECENT GAMES" />
+                  : <GameLogChart games={gameLog || []} stats={L5_STATS} defaultStat="hits"
+                      emptyLabel="NO RECENT SEASON GAMES" accent={ac} />}
+              </div>
+
               <div style={{ fontSize: 10, color: 'var(--muted)', fontFamily: 'Space Mono, monospace', marginTop: 12, lineHeight: 1.6 }}>
                 {result.source}
               </div>

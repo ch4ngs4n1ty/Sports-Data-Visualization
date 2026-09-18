@@ -354,6 +354,38 @@ returned 0 batters.
   empty card. Once the lineup posts, the response carries `inPostedLineup` +
   `order` so the tab agrees with the official lineup instead of contradicting it.
 
+### Recent-form module (Sep 2026)
+
+The lookup panel carries the same visual analysis the Edge Finder gives a
+batter, so one hitter's page isn't thinner than the board he'd appear on:
+
+- **Last 5 games (season)** — a `GameLogChart` over H/HR/R/RBI/K/BB, plus a
+  trend line (hit streak, H/G, "trending up" / "cooling off").
+- **Every meeting** — a second `GameLogChart` over the career BvP games, next
+  to the existing game-by-game rows (the rows keep the weather pills, which a
+  bar chart can't show).
+- **Hot/cold badge** — `HotBadge` in the identity header, the same tier the
+  Edge Finder assigns.
+
+Three things worth not re-deriving:
+
+- **No backend change.** `/api/mlb/player-lookup` already returns career BvP;
+  the only missing piece was a per-game SEASON log, which the Edge Finder
+  already fetches client-side. The tab calls the same `fetchPlayerGameLog` +
+  `attachWeatherToGameLog`, so there is no new endpoint and no second parser.
+- **The tier scorer is shared, not copied.** `scoreMlbBatterForm(gameLog,
+  bvpOps)` in `frontend/data/mlb/index.js` is the block that used to sit inline
+  in `buildMlbEdgeData`; both callers use it, so the two boards can't disagree
+  about who is hot. Verified identical on 40k randomized logs.
+- **An empty log is `neutral`, not `cold`.** The old inline code hit its cold
+  branch on `l5Avg === 0`, so a batter with no games scored COLD on zero
+  evidence — which here would also flash a false badge in the gap before the
+  log fetch resolves. Absence of data is now explicitly neutral. This is the
+  ONE intentional behaviour change to the Edge Finder's tiers.
+- **The log loads after the panel.** The projection and BvP cards render from
+  the lookup response immediately; the form module fills in behind them rather
+  than holding up first paint.
+
 
 ## Style Guide
 - CSS variables only — no hardcoded hex colors except in component-local styles where you need a specific channel value (e.g. `'#00ff88'` for a win color)

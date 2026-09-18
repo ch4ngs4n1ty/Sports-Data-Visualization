@@ -261,6 +261,37 @@ async function attachWeatherToGameLog(gameLog, teamAbbr) {
   return gameLog.map((g, i) => ({ ...g, weather: weathers[i] }));
 }
 
+// Recent-form heat for one batter, from his last-5 game log + career BvP OPS.
+// Lifted verbatim out of buildMlbEdgeData so the PLAYER LOOKUP tab can badge a
+// hitter with the SAME tier the Edge Finder gives him — one implementation, so
+// the two boards can never disagree about who is hot.
+function scoreMlbBatterForm(gameLog, bvpOps = 0) {
+  const hitVals = (gameLog || []).map(g => g.hits || 0);
+  // No games yet (log still loading, or a callup with none) is NOT a cold read:
+  // with an empty log the cold branch below would fire on l5Avg === 0 and flash
+  // a false COLD badge before the fetch resolves. Absence of data is neutral.
+  if (!hitVals.length) {
+    return { hotScore: bvpOps * 10, hotTier: bvpOps >= 0.700 ? 'hot' : 'neutral',
+      l5Avg: 0, l3Avg: 0, trendRatio: 1.0, hitStreak: 0 };
+  }
+  const mean = arr => arr.length ? arr.reduce((s, v) => s + v, 0) / arr.length : 0;
+  const l5Avg = mean(hitVals);
+  const l3Avg = mean(hitVals.slice(0, 3));
+  const trendRatio = l5Avg > 0 ? Math.min(l3Avg / l5Avg, 2.0) : 1.0;
+  let hitStreak = 0;
+  for (const h of hitVals) { if (h > 0) hitStreak++; else break; }
+
+  const hotScore = (bvpOps * 10) * (0.6 + 0.4 * trendRatio) + hitStreak * 0.4;
+
+  const hotTier =
+    bvpOps >= 0.850 && hitStreak >= 3 ? 'elite'
+    : bvpOps >= 0.700 || trendRatio >= 1.25 ? 'hot'
+    : l5Avg < 0.4 && bvpOps < 0.400 ? 'cold'
+    : 'neutral';
+
+  return { hotScore, hotTier, l5Avg, l3Avg, trendRatio, hitStreak };
+}
+
 async function buildMlbEdgeData(gameInfo, bvpData) {
   if (!bvpData?.matchups?.length) return null;
   const MLB_EDGE_STATS = [
@@ -305,23 +336,7 @@ async function buildMlbEdgeData(gameInfo, bvpData) {
     b.gameLog = await attachWeatherToGameLog(log, b.teamAbbr);
   }));
 
-  allBatters.forEach(b => {
-    const bvpOps = b.bvp?.ops ?? 0;
-    const l5 = b.gameLog || [];
-    const hitVals = l5.map(g => g.hits || 0);
-    const l5Avg = hitVals.length ? hitVals.reduce((s, v) => s + v, 0) / hitVals.length : 0;
-    const l3Avg = hitVals.slice(0, 3).length ? hitVals.slice(0, 3).reduce((s, v) => s + v, 0) / hitVals.slice(0, 3).length : 0;
-    const trendRatio = l5Avg > 0 ? Math.min(l3Avg / l5Avg, 2.0) : 1.0;
-    let hitStreak = 0;
-    for (const h of hitVals) { if (h > 0) hitStreak++; else break; }
-
-    b.hotScore = (bvpOps * 10) * (0.6 + 0.4 * trendRatio) + hitStreak * 0.4;
-
-    if (bvpOps >= 0.850 && hitStreak >= 3) b.hotTier = 'elite';
-    else if (bvpOps >= 0.700 || trendRatio >= 1.25) b.hotTier = 'hot';
-    else if (l5Avg < 0.4 && bvpOps < 0.400) b.hotTier = 'cold';
-    else b.hotTier = 'neutral';
-  });
+  allBatters.forEach(b => Object.assign(b, scoreMlbBatterForm(b.gameLog, b.bvp?.ops ?? 0)));
 
   allBatters.sort((a, b) => (b.hotScore ?? 0) - (a.hotScore ?? 0));
   return { batters: allBatters, bvpStatus: bvpData.status, MLB_EDGE_STATS };
@@ -415,6 +430,6 @@ Object.assign(window, {
   fetchMlbLineups,
   fetchMlbSlateReadiness, findMlbReadiness,
   fetchMlbSlateSignals, findMlbSignals,
-  fetchPlayerGameLog, attachWeatherToGameLog,
+  fetchPlayerGameLog, attachWeatherToGameLog, scoreMlbBatterForm,
   buildMlbEdgeData, fetchMlbStarters, MLB_TEAM_ABBR,
 });
