@@ -1,0 +1,4 @@
+# Local machine state — not shared
+settings.local.json
+worktrees/
+*.bak
