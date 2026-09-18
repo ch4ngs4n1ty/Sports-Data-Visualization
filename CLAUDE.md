@@ -199,6 +199,17 @@ For any legacy code that calls `window.claude.complete(prompt)`, `data-layer.js`
   - `GET /api/mlb/player-lookup?player=<name|id>&gamePk=…` (or `&away=&home=&date=`) — ONE batter vs today's opposing starter: career BvP (game-by-game, weather-enriched) + the same Log5 prop projection the Edge Finder shows. `player` is a full name, a last name, or an MLB id. Lineup-independent — the whole point is that it works before a batting order posts. Returns a structured `{error}` for `PLAYER_NOT_FOUND` / `AMBIGUOUS_NAME` / `NO_OPPOSING_PITCHER` rather than a 500.
   - `GET /api/mlb/game-players?gamePk=…` — both 40-man hitter lists (pitchers excluded) for the lookup type-ahead.
 - Internal caches: 2-min for live MLB, 15-min for historical BvP (max 500 entries, LRU eviction)
+- **In-flight coalescing (`dedupe` in `server/shared/cache.js`)** — the TTL cache
+  is only written *after* a fetch resolves, so simultaneous callers all miss it
+  and all fetch. `dedupe(key, fn)` hands concurrent callers the promise already
+  running for that key. It is NOT a cache: nothing is retained after settle, and
+  a rejection reaches every joined caller, so existing `.catch()` fallbacks are
+  unaffected. Used by `fetchSavantBvP`, `getBatterHitProfile`, `getBatterHand`,
+  `getPitcherStats` and `getArsenalIndex` — each keeps its normal
+  `cacheGet`/`cacheSet` around the `dedupe` call, and re-checks the cache inside
+  it (a caller that queued may have had its answer filled while waiting).
+  A `refresh:true` caller dedupes on a separate `refresh_` key so it is never
+  served by a coalesced normal fetch.
 
 **Rule: maintain the backend's current shape.** Add new endpoints rather than mutating existing ones, and keep it dependency-free.
 
@@ -343,3 +354,45 @@ returned 0 batters.
 - Orbitron for numbers and labels; Space Mono for everything else
 - Do NOT introduce a bundler, TypeScript, or npm-installed React. The "no build step" constraint is intentional — keep it that way.
 - When adding components to a `.jsx` file, remember to append them to the `Object.assign(window, { … })` export at the bottom, or the next script won't find them.
+
+---
+
+## Backend performance — why the Edge Finder was slow (Sep 2026)
+
+The MLB game detail screen fires `/api/mlb/game-bvp` and `/api/mlb/prop-model`
+in the SAME `Promise.all` (`game-detail-screen.jsx` Phase 2). Both call
+`getGameBvp()` internally. Measured cold, `prop-model` took **16.9s** while
+every other MLB endpoint was under 700ms. Three independent causes, all
+plumbing — **no model math was touched, and responses are byte-identical**:
+
+1. **Duplicated in-flight work.** Neither request could see the other's cache
+   (it is written only on completion), so all ~18 batter/pitcher Savant CSVs
+   were downloaded **twice** — verified: 36 fetches for 18 unique pairs. Fixed
+   by `dedupe` (above); now exactly 18.
+2. **The two sides were sequential.** `getGameBvp` looped
+   `for (const [side, oppSide] of [['away','home'],['home','away']])`, so the
+   away team's ~9 Savant calls fully finished before the home team's began.
+   They share no state — now built concurrently with `Promise.all`. Away is
+   still index 0 and home index 1, and the `totalBatters`/`resolvedBatters`/
+   `failedBatters` counters are tallied after both settle, so the response is
+   order-independent.
+3. **Independent fetches sat behind an unrelated await.** `getBatterPropModel`
+   awaited `getGameBvp()` — which ends with a weather-enrichment pass over every
+   BvP game — before fetching per-player season stats. But
+   `getBatterHitProfile`/`getBatterHand`/`getPitcherStats`/`getPitcherArsenal`
+   depend only on `(playerId, season)`, never on BvP. A request waterfall showed
+   ~1.8s of MLB Stats API calls idling until the Savant+weather stage finished.
+   They are now warmed concurrently with BvP off the (cheap, usually cached)
+   lineups. Those priming calls are the same memoized functions the per-side
+   build calls, so only timing changes; their errors are swallowed on purpose
+   because the real call downstream re-runs and handles its own failures.
+
+**Measured on cold games** (both endpoints concurrent, as the browser does it):
+17.9s → 5.3s, 31.1s → 4.9s, 14.7s → 2.7s (**3.4x–6.3x**). Full 15-game slate:
+median 1.5s, zero non-200s.
+
+**If you touch this path, keep the guarantee that made it safe:** the win came
+entirely from *when* fetches start and *how many* run, never from changing what
+is computed. `$CLAUDE_JOB_DIR` scratch tests deep-compared old vs new
+`game-bvp` + `prop-model` JSON across 4 live games and found them identical —
+do the same before landing further changes here.

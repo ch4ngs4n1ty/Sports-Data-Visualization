@@ -1,6 +1,6 @@
 const fs = require('fs');
 const path = require('path');
-const { cacheGet, cacheSet, CACHE_TTL, LIVE_CACHE_TTL } = require('../shared/cache');
+const { cacheGet, cacheSet, dedupe, CACHE_TTL, LIVE_CACHE_TTL } = require('../shared/cache');
 const { fetchUrl, fetchJson } = require('../shared/http');
 
 const MLB_API = 'https://statsapi.mlb.com/api/v1';
@@ -337,20 +337,36 @@ async function fetchSavantBvP(batterId, pitcherId, options = {}) {
     + `&type=details`
     + `&min_pitches=0&min_results=0&min_pas=0`;
 
-  let lastErr;
-  for (let attempt = 0; attempt < 3; attempt++) {
-    try {
-      const text = await fetchUrl(url);
-      const pitches = parseCsv(text);
-      const summary = summarizeBvP(pitches, batterId, pitcherId);
-      cacheSet(cacheKey, summary);
-      return summary;
-    } catch (err) {
-      lastErr = err;
-      if (attempt < 2) await new Promise(r => setTimeout(r, 500 * Math.pow(2, attempt)));
+  // Coalesce concurrent callers: /api/mlb/game-bvp and /api/mlb/prop-model are
+  // requested simultaneously by the game detail screen and ask for the SAME
+  // pairs, so without this each CSV is downloaded twice. Retry/backoff and the
+  // cacheSet below are unchanged — they just now happen once per pair.
+  // A refresh:true caller must never be handed a coalesced normal fetch (it is
+  // explicitly asking to bypass what is cached), so it dedupes on its own key —
+  // concurrent refreshes still share one download.
+  const flightKey = options.refresh ? `refresh_${cacheKey}` : cacheKey;
+  return dedupe(flightKey, async () => {
+    // A caller that queued behind an identical request may have had it filled
+    // while waiting; re-check so we never re-fetch what just landed.
+    if (!options.refresh) {
+      const fresh = cacheGet(cacheKey);
+      if (fresh) return fresh;
     }
-  }
-  throw lastErr;
+    let lastErr;
+    for (let attempt = 0; attempt < 3; attempt++) {
+      try {
+        const text = await fetchUrl(url);
+        const pitches = parseCsv(text);
+        const summary = summarizeBvP(pitches, batterId, pitcherId);
+        cacheSet(cacheKey, summary);
+        return summary;
+      } catch (err) {
+        lastErr = err;
+        if (attempt < 2) await new Promise(r => setTimeout(r, 500 * Math.pow(2, attempt)));
+      }
+    }
+    throw lastErr;
+  });
 }
 
 async function fetchGameWeather(gamePk) {
@@ -397,27 +413,29 @@ async function getGameBvp(gamePk, options = {}) {
     }
   }
 
-  const matchups = [];
   let totalBatters = 0;
   let resolvedBatters = 0;
   let failedBatters = 0;
 
-  for (const [side, oppSide] of [['away', 'home'], ['home', 'away']]) {
+  // Both sides are built CONCURRENTLY. This loop used to be sequential, which
+  // meant the away team's ~9 Savant CSV fetches had to fully finish before the
+  // home team's ~9 even started — roughly doubling wall time for no reason
+  // (the two sides share no state). The per-side body below is unchanged; the
+  // counters are tallied after both settle so the totals stay deterministic
+  // and independent of which side finishes first.
+  const buildMatchup = async ([side, oppSide]) => {
     const team = lineups[side];
     const opponent = lineups[oppSide];
     const pitcher = pitcherOverrides[oppSide] || opponent.probablePitcher;
 
     if (!pitcher) {
-      matchups.push({ side, teamName: team.teamName, pitcher: null, pitcherTeam: opponent.teamName, error: 'Probable pitcher not yet announced', batters: [] });
-      continue;
+      return { side, teamName: team.teamName, pitcher: null, pitcherTeam: opponent.teamName, error: 'Probable pitcher not yet announced', batters: [] };
     }
     if (!team.lineup?.length) {
-      matchups.push({ side, teamName: team.teamName, pitcher: { id: pitcher.id, name: pitcher.name }, pitcherTeam: opponent.teamName, error: 'Lineup not yet posted', batters: [] });
-      continue;
+      return { side, teamName: team.teamName, pitcher: { id: pitcher.id, name: pitcher.name }, pitcherTeam: opponent.teamName, error: 'Lineup not yet posted', batters: [] };
     }
 
     const batters = team.lineup;
-    totalBatters += batters.length;
     const bvpResults = await Promise.all(
       batters.map(b =>
         fetchSavantBvP(b.id, pitcher.id, options).catch(err => ({
@@ -429,7 +447,6 @@ async function getGameBvp(gamePk, options = {}) {
       )
     );
 
-    bvpResults.forEach(r => { if (r.error) failedBatters++; else resolvedBatters++; });
     await Promise.all(bvpResults.map(async r => { if (r.gameByGame?.length) r.gameByGame = await enrichBvpGamesWithWeather(r.gameByGame); }));
 
     const batterDetails = batters.map((b, i) => ({
@@ -440,13 +457,26 @@ async function getGameBvp(gamePk, options = {}) {
       bvp: bvpResults[i],
     }));
 
-    matchups.push({
+    return {
       side,
       teamName: team.teamName,
       pitcher: { id: pitcher.id, name: pitcher.name },
       pitcherTeam: opponent.teamName,
       batters: batterDetails,
-    });
+    };
+  };
+
+  // Away stays index 0 and home index 1 regardless of completion order, so the
+  // response shape is byte-identical to the old sequential build.
+  const matchups = await Promise.all(
+    [['away', 'home'], ['home', 'away']].map(buildMatchup)
+  );
+
+  for (const m of matchups) {
+    for (const b of m.batters || []) {
+      totalBatters++;
+      if (b.bvp?.error) failedBatters++; else resolvedBatters++;
+    }
   }
 
   const awayFull = lineups.away.lineup.length >= 9 && lineups.away.probablePitcher;
@@ -614,6 +644,10 @@ async function getPitcherStats(pitcherId, season) {
   const cacheKey = `pitcher_stats_${pitcherId}_${season}`;
   const cached = cacheGet(cacheKey);
   if (cached) return cached;
+  // Coalesced — see getBatterHand. Body below is unchanged.
+  return dedupe(cacheKey, async () => {
+  const fresh = cacheGet(cacheKey);
+  if (fresh) return fresh;
 
   const cur = season;
   const prev = season - 1;
@@ -644,6 +678,7 @@ async function getPitcherStats(pitcherId, season) {
   };
   cacheSet(cacheKey, result, PITCHER_STATS_TTL);
   return result;
+  });
 }
 
 /* ── Savant pitch-arsenal: league CSV cached, lookup by id ──
@@ -653,6 +688,11 @@ async function getArsenalIndex(season) {
   const cacheKey = `arsenal_${season}`;
   const cached = cacheGet(cacheKey);
   if (cached) return cached;
+  // Coalesced: this is a whole-league CSV that BOTH probable starters ask for
+  // at the same moment, so without this the same large download runs twice.
+  return dedupe(cacheKey, async () => {
+  const fresh = cacheGet(cacheKey);
+  if (fresh) return fresh;
 
   const url = `https://baseballsavant.mlb.com/leaderboard/pitch-arsenal-stats`
     + `?type=pitcher&pitchType=&year=${season}&team=&min=1&csv=true`;
@@ -683,6 +723,7 @@ async function getArsenalIndex(season) {
     cacheSet(cacheKey, {}, 30 * 60 * 1000); // shorter TTL on failure
     return {};
   }
+  });
 }
 
 async function getPitcherArsenal(pitcherId, season) {
@@ -1695,6 +1736,10 @@ async function getBatterHitProfile(batterId, season) {
   const cacheKey = `batter_hit_${batterId}_${season}`;
   const cached = cacheGet(cacheKey);
   if (cached) return cached;
+  // Coalesced — see getBatterHand. Body below is unchanged.
+  return dedupe(cacheKey, async () => {
+  const fresh = cacheGet(cacheKey);
+  if (fresh) return fresh;
   try {
     const data = await fetchJson(`${MLB_API}/people/${batterId}/stats?stats=season,gameLog&group=hitting&season=${season}`);
     const byType = {};
@@ -1725,6 +1770,7 @@ async function getBatterHitProfile(batterId, season) {
     cacheSet(cacheKey, result, 6 * 60 * 60 * 1000);
     return result;
   } catch { return null; }
+  });
 }
 
 // Batter handedness ('L' | 'R' | 'S') for platoon — cached a week.
@@ -1733,12 +1779,18 @@ async function getBatterHand(batterId) {
   const cacheKey = `batter_hand_${batterId}`;
   const cached = cacheGet(cacheKey);
   if (cached) return cached;
-  try {
-    const data = await fetchJson(`${MLB_API}/people/${batterId}`);
-    const code = data?.people?.[0]?.batSide?.code || null;
-    if (code) cacheSet(cacheKey, code, 7 * 24 * 60 * 60 * 1000);
-    return code;
-  } catch { return null; }
+  // Coalesced: the prop model warms these concurrently with the per-side build,
+  // so the same id can be asked for twice before either write lands.
+  return dedupe(cacheKey, async () => {
+    const fresh = cacheGet(cacheKey);
+    if (fresh) return fresh;
+    try {
+      const data = await fetchJson(`${MLB_API}/people/${batterId}`);
+      const code = data?.people?.[0]?.batSide?.code || null;
+      if (code) cacheSet(cacheKey, code, 7 * 24 * 60 * 60 * 1000);
+      return code;
+    } catch { return null; }
+  });
 }
 
 function _arsenalWhiff(arsenal) {
@@ -1816,9 +1868,41 @@ async function getBatterPropModel(gamePk, options = {}) {
   if (!options.refresh) { const c = cacheGet(cacheKey); if (c) return c; }
 
   const season = currentMlbSeason();
-  const bvpData = await getGameBvp(gamePk, options);
+
+  // Lineups first (cheap, usually cached) — they name every batter and probable
+  // pitcher, which is all the per-player stat fetches below actually need.
   const lineups = await getGameLineups(gamePk, options);
-  const weather = await fetchGameWeather(gamePk);
+
+  // getGameBvp() ends with a weather-enrichment pass over every BvP game, and
+  // the per-batter/per-pitcher season stats used to sit BEHIND that await even
+  // though they depend only on (playerId, season) — never on BvP. Measured on a
+  // real game, that left ~1.8s of MLB Stats API calls idling until the Savant +
+  // weather stage finished. They are independent, so warm them CONCURRENTLY.
+  // These are cache-priming calls: every one is the same memoized function the
+  // per-side build below calls, so results are identical — only the timing
+  // changes. Failures are swallowed here on purpose; the real call downstream
+  // re-runs and handles its own errors exactly as before.
+  const primeProfiles = (async () => {
+    const ids = [];
+    for (const side of ['away', 'home']) {
+      for (const b of lineups[side]?.lineup || []) if (b?.id) ids.push(b.id);
+    }
+    const pitcherIds = ['away', 'home']
+      .map(s => lineups[s]?.probablePitcher?.id)
+      .filter(Boolean);
+    await Promise.all([
+      ...ids.map(id => getBatterHitProfile(id, season).catch(() => null)),
+      ...ids.map(id => getBatterHand(id).catch(() => null)),
+      ...pitcherIds.map(id => getPitcherStats(id, season).catch(() => null)),
+      ...pitcherIds.map(id => getPitcherArsenal(id, season).catch(() => null)),
+    ]);
+  })();
+
+  const [bvpData, weather] = await Promise.all([
+    getGameBvp(gamePk, options),
+    fetchGameWeather(gamePk),
+    primeProfiles,
+  ]);
   const parkFactor = parkHrFactor(weather?.venue);
 
   const buildSide = async (side) => {
