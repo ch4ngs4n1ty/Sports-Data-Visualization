@@ -46,19 +46,45 @@
        --card (both were failing WCAG AA before).
        ══════════════════════════════════════════════════════════ */
     :root {
-      /* ── Surfaces (ascending elevation) ── */
+      /* ── Surfaces (ascending elevation) ──
+         Surfaces now carry a faint hue that follows the active sport accent
+         (--accent-h/s), so re-theming tints the whole page, not just the
+         highlights. Falls back to the navy values when no sport is set. */
       --bg:        #05080f;
       --surface:   #0a1020;
       --card:      #0e1626;
       --card-hi:   #142038;
       --raised:    #18243c;
 
+      /* ── THEME ENGINE ──────────────────────────────────
+         Every sport tab in the app reads var(--cyan) for its accent. Rather
+         than touch ~4,000 lines of sport files, --cyan is redefined per sport
+         from these three channels. Setting data-sport on <html> re-themes the
+         ENTIRE app — chrome, cards, charts, glows — in one assignment.
+         --accent-h / -s / -l are the source of truth; --cyan is the alias the
+         legacy code already consumes. */
+      --accent-h:  193;
+      --accent-s:  100%;
+      --accent-l:  50%;
+
+      --accent:       hsl(var(--accent-h) var(--accent-s) var(--accent-l));
+      --accent-soft:  hsl(var(--accent-h) var(--accent-s) var(--accent-l) / 0.14);
+      --accent-line:  hsl(var(--accent-h) var(--accent-s) var(--accent-l) / 0.32);
+      --accent-glow:  hsl(var(--accent-h) var(--accent-s) var(--accent-l) / 0.45);
+      --accent-deep:  hsl(var(--accent-h) var(--accent-s) 12%);
+
+      /* Secondary accent — sits opposite the primary on the wheel so
+         two-series charts and comparison boards read as a real pair. */
+      --accent-2:     hsl(calc(var(--accent-h) + 52) 92% 62%);
+
       /* ── Accents ── */
-      --cyan:      #00d4ff;
+      --cyan:      var(--accent);      /* legacy alias → now sport-aware */
+      --cyan-fixed:#00d4ff;            /* when you specifically need cyan */
       --green:     #00ff88;
       --orange:    #ff6b35;
       --gold:      #ffd060;
       --violet:    #a855f7;
+      --pink:      #ff4d8d;
 
       /* ── Text ramp ── */
       --text:      #dce9f7;   /* primary        ~15:1  */
@@ -69,8 +95,8 @@
       /* ── Lines & tints ── */
       --line:        rgba(147, 170, 198, 0.10);
       --line-strong: rgba(147, 170, 198, 0.20);
-      --line-accent: rgba(0, 212, 255, 0.28);
-      --tint-cyan:   rgba(0, 212, 255, 0.07);
+      --line-accent: hsl(var(--accent-h) var(--accent-s) var(--accent-l) / 0.30);
+      --tint-cyan:   hsl(var(--accent-h) var(--accent-s) var(--accent-l) / 0.08);
       --tint-green:  rgba(0, 255, 136, 0.08);
       --tint-orange: rgba(255, 107, 53, 0.08);
       --tint-gold:   rgba(255, 208, 96, 0.08);
@@ -94,20 +120,46 @@
       --dur-1: 120ms;   /* charts, bars            */
       --dur-2: 150ms;   /* cards, hovers           */
       --dur-3: 220ms;   /* screen transitions      */
+      --dur-4: 420ms;   /* theme cross-fade, reveals */
       --ease:  cubic-bezier(0.16, 1, 0.3, 1);
+      --ease-out: cubic-bezier(0.22, 1, 0.36, 1);
+      --ease-spring: cubic-bezier(0.34, 1.56, 0.64, 1);
 
-      /* ── Elevation ── */
+      /* ── Elevation ──
+         Layered shadows (ambient + direct) instead of one flat blur; this is
+         most of the difference between "a div with a box-shadow" and a
+         surface that looks like it occupies space. */
       --sh-1: 0 1px 2px rgba(0,0,0,0.4);
-      --sh-2: 0 4px 16px rgba(0,0,0,0.45);
-      --sh-3: 0 12px 40px rgba(0,0,0,0.55);
+      --sh-2: 0 2px 4px rgba(0,0,0,0.30), 0 6px 18px rgba(0,0,0,0.42);
+      --sh-3: 0 4px 10px rgba(0,0,0,0.34), 0 18px 48px rgba(0,0,0,0.55);
+      --sh-accent: 0 8px 30px hsl(var(--accent-h) var(--accent-s) 40% / 0.22);
 
       /* ── Layout ── */
       --maxw: 1180px;
       --nav-h: 56px;
 
       --scanlines-opacity: 1;
-      --grid-line: rgba(0, 212, 255, 0.028);
+      --grid-line: hsl(var(--accent-h) var(--accent-s) var(--accent-l) / 0.035);
     }
+
+    /* ══════════════════════════════════════════════════════════
+       PER-SPORT THEMES
+       One attribute on <html> re-colors the whole application.
+       Hues are chosen to match how each league is actually seen
+       (NBA hardwood-ember, NFL turf-green, NHL ice-blue) and to
+       stay ≥4.5:1 against --card at the given lightness.
+       ══════════════════════════════════════════════════════════ */
+    :root[data-sport="mlb"]    { --accent-h: 193; --accent-s: 100%; --accent-l: 50%; }
+    :root[data-sport="nba"]    { --accent-h:  18; --accent-s: 100%; --accent-l: 60%; }
+    :root[data-sport="wnba"]   { --accent-h: 280; --accent-s:  92%; --accent-l: 68%; }
+    :root[data-sport="nfl"]    { --accent-h: 152; --accent-s:  90%; --accent-l: 52%; }
+    :root[data-sport="nhl"]    { --accent-h: 210; --accent-s:  95%; --accent-l: 66%; }
+    :root[data-sport="ncaamb"] { --accent-h:  45; --accent-s:  95%; --accent-l: 60%; }
+
+    /* The accent transition is what makes sport switching feel designed
+       rather than abrupt — the entire page cross-fades its hue. */
+    :root { transition: --accent-h var(--dur-4) linear; }
+    @property --accent-h { syntax: '<number>'; inherits: true; initial-value: 193; }
 
     html, body {
       height: 100%;
@@ -129,17 +181,45 @@
       transition: opacity var(--dur-2) ease;
     }
 
-    /* Grid backdrop + top glow. The mask fades the grid toward the bottom so
-       the page gains depth instead of reading as flat graph paper. */
+    /* Grid backdrop. Perspective-scaled rows (the grid cells get taller as
+       they recede) so the floor reads as a plane going back, not flat paper. */
     body::before {
       content: ''; position: fixed; inset: 0; pointer-events: none; z-index: 0;
       background-image:
-        radial-gradient(1100px 520px at 50% -12%, rgba(0,212,255,0.09), transparent 70%),
         linear-gradient(var(--grid-line) 1px, transparent 1px),
         linear-gradient(90deg, var(--grid-line) 1px, transparent 1px);
-      background-size: 100% 100%, 48px 48px, 48px 48px;
-      -webkit-mask-image: linear-gradient(180deg, #000 0%, #000 42%, transparent 92%);
-      mask-image: linear-gradient(180deg, #000 0%, #000 42%, transparent 92%);
+      background-size: 54px 54px, 54px 54px;
+      -webkit-mask-image: linear-gradient(180deg, #000 0%, #000 38%, transparent 88%);
+      mask-image: linear-gradient(180deg, #000 0%, #000 38%, transparent 88%);
+    }
+
+    /* ── Ambient aurora ───────────────────────────────────────
+       Two large, slowly drifting accent blooms behind everything. This is
+       what removes the "flat navy rectangle" feeling: the background is
+       never quite the same twice, so surfaces read as lit rather than filled.
+       Sits at z-index 0 under #root, and is inert to pointer events. */
+    .piq-aurora { position: fixed; inset: 0; z-index: 0; pointer-events: none; overflow: hidden; }
+    .piq-aurora span {
+      position: absolute; display: block; border-radius: 50%;
+      filter: blur(90px); opacity: 0.5; will-change: transform;
+    }
+    .piq-aurora span:nth-child(1) {
+      width: 58vw; height: 46vw; left: -10vw; top: -18vw;
+      background: radial-gradient(circle, hsl(var(--accent-h) var(--accent-s) 46% / 0.34), transparent 66%);
+      animation: aurora 26s ease-in-out infinite;
+    }
+    .piq-aurora span:nth-child(2) {
+      width: 50vw; height: 40vw; right: -12vw; top: -8vw;
+      background: radial-gradient(circle, hsl(calc(var(--accent-h) + 52) 88% 52% / 0.20), transparent 68%);
+      animation: aurora 34s ease-in-out infinite reverse;
+    }
+    /* A single scan bar crawling down the viewport — the strongest "this is a
+       live instrument" cue, and cheap (one transform-animated element). */
+    .piq-aurora i {
+      position: absolute; left: 0; right: 0; height: 28vh;
+      background: linear-gradient(180deg, transparent,
+        hsl(var(--accent-h) var(--accent-s) 60% / 0.05) 48%, transparent);
+      animation: scanDown 13s linear infinite; mix-blend-mode: screen;
     }
 
     #root { position: relative; z-index: 1; min-height: 100vh; }
@@ -153,11 +233,65 @@
     /* ── Keyframes ─────────────────────────────────────────── */
     @keyframes livePulse     { 0%,100%{opacity:1;transform:scale(1)} 50%{opacity:.4;transform:scale(.8)} }
     @keyframes fadeUp        { from{opacity:0;transform:translateY(8px)} to{opacity:1;transform:translateY(0)} }
-    @keyframes glowPulse     { 0%,100%{text-shadow:0 0 10px rgba(0,212,255,.35)} 50%{text-shadow:0 0 26px rgba(0,212,255,.7),0 0 52px rgba(0,212,255,.18)} }
+    @keyframes glowPulse     { 0%,100%{text-shadow:0 0 10px var(--accent-soft)} 50%{text-shadow:0 0 26px var(--accent-glow),0 0 52px var(--accent-soft)} }
     @keyframes shimmer       { 0%{left:-100%} 100%{left:200%} }
     @keyframes skeletonPulse { 0%,100%{opacity:0.4} 50%{opacity:0.7} }
 
-    .screen-enter { animation: fadeUp var(--dur-3) var(--ease); }
+    /* Entrance: rises, scales in slightly, and un-blurs. The blur is what
+       makes it read as "resolving into focus" rather than just sliding. */
+    @keyframes riseIn {
+      from { opacity: 0; transform: translateY(14px) scale(0.985); filter: blur(6px); }
+      to   { opacity: 1; transform: translateY(0)    scale(1);     filter: blur(0); }
+    }
+    /* A bar/gauge growing from its baseline */
+    @keyframes growUp    { from { transform: scaleY(0);   opacity: 0; } to { transform: scaleY(1); opacity: 1; } }
+    @keyframes growRight { from { transform: scaleX(0); } to { transform: scaleX(1); } }
+
+    /* A light sweeping across a surface once, on entrance */
+    @keyframes sweep { 0% { transform: translateX(-120%) skewX(-18deg); opacity: 0; }
+                       36% { opacity: 1; }
+                       100% { transform: translateX(320%) skewX(-18deg); opacity: 0; } }
+
+    /* Ambient: a scan bar that crawls down the HUD, and a slow aurora drift */
+    @keyframes scanDown { 0% { top: -12%; opacity: 0; } 12% { opacity: 1; }
+                          88% { opacity: 1; } 100% { top: 108%; opacity: 0; } }
+    @keyframes aurora {
+      0%   { transform: translate3d(-4%, -2%, 0) scale(1.05); }
+      50%  { transform: translate3d( 4%,  3%, 0) scale(1.18); }
+      100% { transform: translate3d(-4%, -2%, 0) scale(1.05); }
+    }
+    @keyframes borderRun { to { background-position: 200% 0; } }
+    @keyframes popIn { from { opacity:0; transform: scale(0.82); } to { opacity:1; transform: scale(1); } }
+
+    .screen-enter { animation: riseIn var(--dur-4) var(--ease-out); }
+
+    /* ── Staggered reveal ────────────────────────────────────
+       Put .stagger on a container; its children animate in sequence.
+       Depth is capped at 14 so a 200-row table doesn't wait 6 seconds. */
+    .stagger > * { animation: riseIn 380ms var(--ease-out) backwards; }
+    .stagger > *:nth-child(1){animation-delay:0ms}    .stagger > *:nth-child(2){animation-delay:38ms}
+    .stagger > *:nth-child(3){animation-delay:76ms}   .stagger > *:nth-child(4){animation-delay:114ms}
+    .stagger > *:nth-child(5){animation-delay:152ms}  .stagger > *:nth-child(6){animation-delay:190ms}
+    .stagger > *:nth-child(7){animation-delay:228ms}  .stagger > *:nth-child(8){animation-delay:266ms}
+    .stagger > *:nth-child(9){animation-delay:304ms}  .stagger > *:nth-child(10){animation-delay:342ms}
+    .stagger > *:nth-child(11){animation-delay:380ms} .stagger > *:nth-child(12){animation-delay:418ms}
+    .stagger > *:nth-child(13){animation-delay:456ms} .stagger > *:nth-child(n+14){animation-delay:494ms}
+
+    /* ── Utility effects ─────────────────────────────────── */
+    /* A one-shot specular sweep — add to any positioned container */
+    .sheen { position: relative; overflow: hidden; }
+    .sheen::before {
+      content: ''; position: absolute; inset: 0 auto 0 0; width: 42%;
+      background: linear-gradient(90deg, transparent, rgba(255,255,255,0.07), transparent);
+      animation: sweep 1.15s var(--ease-out) 180ms 1 backwards; pointer-events: none;
+    }
+    /* Animated gradient border for "this is the important panel" */
+    .runline {
+      background: linear-gradient(90deg, transparent, var(--accent), var(--accent-2), transparent);
+      background-size: 200% 100%; animation: borderRun 3.2s linear infinite;
+    }
+    .glow-text { text-shadow: 0 0 18px var(--accent-glow); }
+    .tabular   { font-variant-numeric: tabular-nums; }
 
     /* ══════════════════════════════════════════════════════════
        ACCESSIBILITY PRIMITIVES
@@ -199,15 +333,17 @@
       min-height: var(--nav-h);
       display: flex; align-items: center; gap: var(--s4);
       padding: 0 var(--s5);
-      background: rgba(5,8,15,0.86);
-      backdrop-filter: blur(18px) saturate(140%);
-      -webkit-backdrop-filter: blur(18px) saturate(140%);
+      background: linear-gradient(180deg, rgba(8,13,26,0.92), rgba(5,8,15,0.78));
+      backdrop-filter: blur(22px) saturate(160%);
+      -webkit-backdrop-filter: blur(22px) saturate(160%);
       border-bottom: 1px solid var(--line);
     }
-    /* Accent hairline under the nav */
+    /* Accent hairline under the nav — now a live running gradient */
     .topnav::after {
       content: ''; position: absolute; left: 0; right: 0; bottom: -1px; height: 1px;
-      background: linear-gradient(90deg, transparent, rgba(0,212,255,0.45), transparent);
+      background: linear-gradient(90deg, transparent, var(--accent), var(--accent-2), transparent);
+      background-size: 200% 100%; animation: borderRun 5s linear infinite;
+      opacity: 0.75;
     }
 
     .brand {
@@ -284,6 +420,7 @@
        BUTTONS
        ══════════════════════════════════════════════════════════ */
     .piq-btn {
+      position: relative; overflow: hidden;
       display: inline-flex; align-items: center; justify-content: center; gap: var(--s2);
       font-family: 'Space Mono', monospace; font-size: var(--fs-xs); font-weight: 700;
       letter-spacing: 0.12em; padding: var(--s2) var(--s4);
@@ -291,17 +428,31 @@
       border: 1px solid var(--line-strong); border-radius: var(--r-sm);
       cursor: pointer; white-space: nowrap;
       transition: color var(--dur-2) ease, border-color var(--dur-2) ease,
-                  background var(--dur-2) ease, transform var(--dur-2) var(--ease);
+                  background var(--dur-2) ease, transform 90ms var(--ease-spring),
+                  box-shadow var(--dur-2) ease;
     }
-    .piq-btn:hover { color: var(--text); border-color: var(--line-accent); background: var(--card-hi); }
-    .piq-btn:active { transform: translateY(1px); }
+    /* Specular sweep that crosses the button on hover */
+    .piq-btn::after {
+      content: ''; position: absolute; top: 0; bottom: 0; left: -60%; width: 45%;
+      background: linear-gradient(90deg, transparent, rgba(255,255,255,0.13), transparent);
+      transform: skewX(-18deg); transition: left 480ms var(--ease-out); pointer-events: none;
+    }
+    .piq-btn:hover::after { left: 120%; }
+    .piq-btn:hover {
+      color: var(--text); border-color: var(--line-accent); background: var(--card-hi);
+      transform: translateY(-1px);
+    }
+    .piq-btn:active { transform: translateY(1px) scale(0.985); }
 
     .piq-btn-primary {
-      color: var(--cyan); background: var(--tint-cyan); border-color: var(--line-accent);
+      color: var(--accent);
+      background: linear-gradient(180deg, var(--accent-soft), transparent);
+      border-color: var(--line-accent);
     }
     .piq-btn-primary:hover {
-      color: var(--bg); background: var(--cyan); border-color: var(--cyan);
-      box-shadow: 0 0 24px rgba(0,212,255,0.35);
+      color: #04070d; border-color: var(--accent);
+      background: linear-gradient(180deg, var(--accent), hsl(var(--accent-h) var(--accent-s) 42%));
+      box-shadow: 0 0 28px var(--accent-glow), var(--sh-2);
     }
     .piq-btn:disabled { opacity: 0.45; cursor: not-allowed; transform: none; }
 
@@ -344,15 +495,21 @@
       transition: color var(--dur-2) ease;
       border-radius: var(--r-sm) var(--r-sm) 0 0;
     }
-    .piq-tab:hover { color: var(--text); background: rgba(147,170,198,0.04); }
+    .piq-tab:hover { color: var(--text); background: rgba(147,170,198,0.05); }
     .piq-tab::after {
       content: ''; position: absolute; left: var(--s3); right: var(--s3); bottom: -1px;
-      height: 2px; background: var(--cyan); border-radius: 2px 2px 0 0;
+      height: 2px; border-radius: 2px 2px 0 0;
+      background: linear-gradient(90deg, var(--accent), var(--accent-2));
       transform: scaleX(0); transform-origin: center;
-      transition: transform var(--dur-2) var(--ease);
+      transition: transform var(--dur-3) var(--ease-spring);
     }
-    .piq-tab[aria-selected="true"] { color: var(--cyan); }
-    .piq-tab[aria-selected="true"]::after { transform: scaleX(1); box-shadow: 0 0 12px rgba(0,212,255,0.6); }
+    /* Selected tab also gets a soft upward bloom, so the active section reads
+       as lit from below rather than merely underlined. */
+    .piq-tab[aria-selected="true"] {
+      color: var(--accent);
+      background: linear-gradient(180deg, transparent 40%, var(--accent-soft));
+    }
+    .piq-tab[aria-selected="true"]::after { transform: scaleX(1); box-shadow: 0 0 14px var(--accent-glow); }
 
     /* ══════════════════════════════════════════════════════════
        FORM CONTROLS
@@ -411,6 +568,11 @@
       .nav-status { display: none; }
     }
 
+    /* The home sport grid is a fixed 3-up so six sports form a clean 3x2.
+       It has to step down on narrower viewports or the cards get crushed. */
+    @media (max-width: 860px) { .piq-sport-grid { grid-template-columns: repeat(2, 1fr) !important; } }
+    @media (max-width: 520px) { .piq-sport-grid { grid-template-columns: 1fr !important; } }
+
     @media (max-width: 720px) {
       :root { --s5: 16px; }
       .topnav { padding: 0 var(--s4); gap: var(--s3); }
@@ -463,6 +625,26 @@ const TWEAK_DEFAULTS = /*EDITMODE-BEGIN*/{
   "scanlines": true,
   "density": "comfortable"
 }/*EDITMODE-END*/;
+
+/* Hex → HSL channels, so the tweak panel can feed the theme engine.
+   Returns rounded {h,s,l} (s/l as 0-100 numbers), or null on a bad string. */
+function hexToHsl(hex) {
+  const m = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(String(hex).trim());
+  if (!m) return null;
+  const r = parseInt(m[1], 16) / 255, g = parseInt(m[2], 16) / 255, b = parseInt(m[3], 16) / 255;
+  const max = Math.max(r, g, b), min = Math.min(r, g, b);
+  const l = (max + min) / 2;
+  const d = max - min;
+  let h = 0, s = 0;
+  if (d) {
+    s = d / (1 - Math.abs(2 * l - 1));
+    if      (max === r) h = ((g - b) / d) % 6;
+    else if (max === g) h = (b - r) / d + 2;
+    else                h = (r - g) / d + 4;
+    h *= 60; if (h < 0) h += 360;
+  }
+  return { h: Math.round(h), s: Math.round(s * 100), l: Math.round(l * 100) };
+}
 
 /* ── API KEY INPUT ───────────────────────────────────── */
 /* Desktop: inline field. Mobile (<=720px): a key toggle that opens a popover,
@@ -533,6 +715,21 @@ function App() {
   const [tweaks, setTweaks] = React.useState(TWEAK_DEFAULTS);
   const [tweaksOpen, setTweaksOpen] = React.useState(false);
 
+  /* ── Theme engine ──────────────────────────────────────
+     Every sport tab in the app paints with var(--cyan), which is now an
+     alias for the themed --accent. Setting data-sport on <html> therefore
+     re-colors the ENTIRE app — nav, cards, charts, gauges, glows — without
+     any sport file knowing a theme exists. On the home screen we clear it
+     so the picker shows each sport in its own color against neutral chrome. */
+  const themeSport = view === 'home' ? null
+    : (view === 'detail' ? (selectedGame?.sportKey || selectedSport) : selectedSport);
+
+  React.useEffect(() => {
+    const el = document.documentElement;
+    if (themeSport) el.setAttribute('data-sport', themeSport);
+    else el.removeAttribute('data-sport');
+  }, [themeSport]);
+
   React.useEffect(() => {
     window.addEventListener('message', e => {
       if (e.data?.type === '__activate_edit_mode')   setTweaksOpen(true);
@@ -541,17 +738,26 @@ function App() {
     window.parent.postMessage({ type: '__edit_mode_available' }, '*');
   }, []);
 
+  /* The tweaks panel now drives the theme's HUE CHANNELS rather than setting
+     --cyan directly. Writing --cyan would shadow the per-sport theme and
+     freeze the app on one color; writing --accent-h/s/l keeps the whole
+     derived palette (tints, lines, glows, --accent-2) coherent. */
+  const applyAccentHex = hex => {
+    const hsl = hexToHsl(hex);
+    if (!hsl) return;
+    const el = document.documentElement;
+    el.style.setProperty('--accent-h', String(hsl.h));
+    el.style.setProperty('--accent-s', hsl.s + '%');
+    el.style.setProperty('--accent-l', hsl.l + '%');
+  };
+
   const applyTweak = (key, val) => {
     const next = { ...tweaks, [key]: val };
     setTweaks(next);
     window.parent.postMessage({ type: '__edit_mode_set_keys', edits: next }, '*');
-    if (key === 'accentColor') document.documentElement.style.setProperty('--cyan', val);
-    if (key === 'gridLines')   document.documentElement.style.setProperty('--grid-line', val ? 'rgba(0,212,255,0.028)' : 'transparent');
+    if (key === 'accentColor') applyAccentHex(val);
+    if (key === 'gridLines')   document.documentElement.style.setProperty('--grid-line', val ? '' : 'transparent');
   };
-
-  React.useEffect(() => {
-    document.documentElement.style.setProperty('--cyan', tweaks.accentColor);
-  }, []);
 
   // Persist nav
   const goHome   = () => { setView('home');  sessionStorage.setItem('piq_view', JSON.stringify({ view:'home'  })); };
@@ -577,6 +783,10 @@ function App() {
 
   return (
     <>
+      {/* Ambient backdrop — drifting accent blooms + a crawling scan bar.
+          Purely decorative, inert to pointers, and hidden from a11y tools. */}
+      <div className="piq-aurora" aria-hidden="true"><span /><span /><i /></div>
+
       {/* Nav */}
       <nav className="topnav">
         <button className="brand" onClick={goHome} aria-label="PlayIQ home">

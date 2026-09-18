@@ -11,8 +11,9 @@
    Now draws a hairline border + elevation underneath the
    brackets. Previously the card had no border at all, so
    panels read as floating text rather than contained surfaces. */
-function HudCard({ children, style = {}, accent = 'var(--cyan)', onClick, active = false, className = '', interactive }) {
+function HudCard({ children, style = {}, accent = 'var(--cyan)', onClick, active = false, className = '', interactive, glow = true }) {
   const [hov, setHov] = React.useState(false);
+  const ref = React.useRef(null);
   const on = hov || active;
   const clickable = !!onClick;
   const lift = interactive ?? clickable;
@@ -23,39 +24,75 @@ function HudCard({ children, style = {}, accent = 'var(--cyan)', onClick, active
     if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onClick(e); }
   };
 
+  /* Pointer-tracked spotlight. We write CSS custom properties on the node
+     instead of setState so moving the mouse never triggers a React render —
+     this stays smooth even on the 30+ card slate grid. */
+  const onMove = e => {
+    const el = ref.current; if (!el) return;
+    const b = el.getBoundingClientRect();
+    el.style.setProperty('--mx', `${((e.clientX - b.left) / b.width) * 100}%`);
+    el.style.setProperty('--my', `${((e.clientY - b.top) / b.height) * 100}%`);
+  };
+
+  // `accent` may be a raw hex (#00ff88) or a CSS var reference. Hex supports
+  // the +alpha suffix trick; a var() must go through color-mix instead.
+  const isVar = typeof accent === 'string' && accent.includes('var(');
+  const at = (hex, pct) => isVar ? `color-mix(in srgb, ${accent} ${pct}%, transparent)` : accent + hex;
+
   return (
-    <div onClick={onClick}
+    <div ref={ref}
+      onClick={onClick}
       onMouseEnter={() => setHov(true)} onMouseLeave={() => setHov(false)}
+      onMouseMove={glow ? onMove : undefined}
       onFocus={() => setHov(true)} onBlur={() => setHov(false)}
       onKeyDown={keyActivate}
       className={className}
       role={clickable ? 'button' : undefined}
       tabIndex={clickable ? 0 : undefined}
       style={{
-        position: 'relative',
-        background: on ? 'var(--card-hi)' : 'var(--card)',
-        border: `1px solid ${on ? accent + '55' : 'var(--line)'}`,
+        position: 'relative', isolation: 'isolate',
+        // A top-lit gradient rather than a flat fill, so the surface has a
+        // light direction and stops reading as a plain colored rectangle.
+        background: on
+          ? `linear-gradient(180deg, var(--card-hi), var(--card))`
+          : `linear-gradient(180deg, var(--card), var(--surface))`,
+        border: `1px solid ${on ? at('66', 42) : 'var(--line)'}`,
         borderRadius: r,
         cursor: clickable ? 'pointer' : 'default',
         boxShadow: on
-          ? `var(--sh-2), 0 0 26px ${accent}1f, inset 0 1px 0 rgba(255,255,255,0.04)`
-          : 'var(--sh-1), inset 0 1px 0 rgba(255,255,255,0.025)',
-        transform: on && lift ? 'translateY(-2px)' : 'translateY(0)',
-        transition: 'background var(--dur-2) ease, border-color var(--dur-2) ease, box-shadow var(--dur-2) ease, transform var(--dur-2) var(--ease)',
+          ? `var(--sh-3), 0 0 32px ${at('26', 16)}, inset 0 1px 0 rgba(255,255,255,0.06)`
+          : 'var(--sh-1), inset 0 1px 0 rgba(255,255,255,0.03)',
+        transform: on && lift ? 'translateY(-3px) scale(1.006)' : 'translateY(0) scale(1)',
+        transition: 'background var(--dur-2) ease, border-color var(--dur-2) ease, box-shadow var(--dur-2) ease, transform var(--dur-3) var(--ease-spring)',
         ...style,
       }}>
+
+      {/* Cursor spotlight — a soft accent bloom that follows the pointer.
+          Only painted while hovered, and never intercepts clicks. */}
+      {glow && (
+        <div aria-hidden="true" style={{
+          position: 'absolute', inset: 0, borderRadius: r, pointerEvents: 'none', zIndex: 0,
+          background: `radial-gradient(260px circle at var(--mx, 50%) var(--my, 0%), ${at('1f', 13)}, transparent 72%)`,
+          opacity: on ? 1 : 0, transition: 'opacity var(--dur-3) ease',
+        }} />
+      )}
+
+      {/* Corner brackets */}
       {[['top','left'],['top','right'],['bottom','left'],['bottom','right']].map(([v,h]) => (
-        <div key={v+h} style={{
-          position: 'absolute', [v]: -1, [h]: -1, width: bs, height: bs, pointerEvents: 'none',
-          borderTop:    v==='top'    ? `${bw}px solid ${on ? accent : accent+'55'}` : 'none',
-          borderBottom: v==='bottom' ? `${bw}px solid ${on ? accent : accent+'55'}` : 'none',
-          borderLeft:   h==='left'   ? `${bw}px solid ${on ? accent : accent+'55'}` : 'none',
-          borderRight:  h==='right'  ? `${bw}px solid ${on ? accent : accent+'55'}` : 'none',
+        <div key={v+h} aria-hidden="true" style={{
+          position: 'absolute', [v]: -1, [h]: -1, width: on ? bs + 4 : bs, height: on ? bs + 4 : bs,
+          pointerEvents: 'none', zIndex: 2,
+          borderTop:    v==='top'    ? `${bw}px solid ${on ? accent : at('55', 34)}` : 'none',
+          borderBottom: v==='bottom' ? `${bw}px solid ${on ? accent : at('55', 34)}` : 'none',
+          borderLeft:   h==='left'   ? `${bw}px solid ${on ? accent : at('55', 34)}` : 'none',
+          borderRight:  h==='right'  ? `${bw}px solid ${on ? accent : at('55', 34)}` : 'none',
           [`border${v==='top'?'Top':'Bottom'}${h==='left'?'Left':'Right'}Radius`]: r,
-          transition: 'border-color var(--dur-2) ease',
+          filter: on ? `drop-shadow(0 0 6px ${at('88', 55)})` : 'none',
+          transition: 'border-color var(--dur-2) ease, width var(--dur-3) var(--ease-spring), height var(--dur-3) var(--ease-spring), filter var(--dur-2) ease',
         }} />
       ))}
-      {children}
+
+      <div style={{ position: 'relative', zIndex: 1 }}>{children}</div>
     </div>
   );
 }
@@ -114,13 +151,55 @@ function Loader({ text = 'LOADING' }) {
   );
 }
 
+/* ── Count-up animation ──────────────────────────────────
+   Animates a number from 0 to its value on mount (and on change). Keeps the
+   original string's decimal places and any suffix (%, °, +) so callers can
+   keep passing pre-formatted values. Returns the value unchanged when it is
+   not numeric, or when the user prefers reduced motion. */
+function useCountUp(value, ms = 620) {
+  const raw = String(value ?? '');
+  const m = /^(-?)(\d+(?:\.\d+)?)(.*)$/.exec(raw);
+  const target = m ? parseFloat(m[2]) : null;
+  const decimals = m && m[2].includes('.') ? m[2].split('.')[1].length : 0;
+  const [n, setN] = React.useState(target);
+
+  React.useEffect(() => {
+    if (target == null) return;
+    const reduce = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
+    if (reduce) { setN(target); return; }
+    let raf, start;
+    const step = t => {
+      if (start == null) start = t;
+      const p = Math.min((t - start) / ms, 1);
+      // easeOutExpo — fast arrival, gentle settle
+      const e = p === 1 ? 1 : 1 - Math.pow(2, -10 * p);
+      setN(target * e);
+      if (p < 1) raf = requestAnimationFrame(step);
+    };
+    raf = requestAnimationFrame(step);
+    return () => cancelAnimationFrame(raf);
+  }, [target, ms]);
+
+  if (target == null || n == null) return raw;
+  return `${m[1]}${n.toFixed(decimals)}${m[3]}`;
+}
+
 /* ── Stat tile (label + value) ───────────────────────────── */
-function StatTile({ label, value, color = 'var(--text)', sub, align = 'left' }) {
+function StatTile({ label, value, color = 'var(--text)', sub, align = 'left', countUp = true }) {
+  const shown = useCountUp(countUp ? value : null);
+  const display = countUp ? shown : value;
   return (
-    <div style={{ padding: '11px 13px', background: 'var(--surface)', border: '1px solid var(--line)',
+    <div style={{ position: 'relative', overflow: 'hidden',
+      padding: '11px 13px',
+      background: 'linear-gradient(180deg, var(--card), var(--surface))',
+      border: '1px solid var(--line)',
       borderRadius: 'var(--r-sm)', textAlign: align, minWidth: 0 }}>
+      {/* Accent edge — ties the tile to the active theme */}
+      <span aria-hidden="true" style={{ position: 'absolute', left: 0, top: 0, bottom: 0, width: 2,
+        background: `linear-gradient(180deg, ${color}, transparent)`, opacity: 0.8 }} />
       <div className="piq-label" style={{ marginBottom: 4 }}>{label}</div>
-      <div className="piq-num" style={{ fontSize: 'var(--fs-lg)', color, lineHeight: 1.1 }}>{value}</div>
+      <div className="piq-num tabular" style={{ fontSize: 'var(--fs-lg)', color, lineHeight: 1.1,
+        textShadow: `0 0 20px ${color === 'var(--text)' ? 'transparent' : 'currentColor'}` }}>{display}</div>
       {sub && <div style={{ fontSize: 'var(--fs-micro)', color: 'var(--dim)', marginTop: 3 }}>{sub}</div>}
     </div>
   );
@@ -147,9 +226,14 @@ function StatBar({ label, value, max = 1, color = 'var(--cyan)', decimals = 3 })
         <span className="piq-label">{label}</span>
         <span className="piq-num" style={{ fontSize: 'var(--fs-sm)', color }}>{value != null ? value.toFixed(decimals) : '—'}</span>
       </div>
-      <div style={{ height: 5, background: 'rgba(255,255,255,0.05)', borderRadius: 99, overflow: 'hidden' }}>
-        <div style={{ height: '100%', width: `${pct}%`, background: color, boxShadow: `0 0 8px ${color}88`,
-          borderRadius: 99, transition: 'width var(--dur-1) var(--ease)' }} />
+      <div style={{ height: 6, background: 'rgba(255,255,255,0.06)', borderRadius: 99, overflow: 'hidden',
+        boxShadow: 'inset 0 1px 2px rgba(0,0,0,0.4)' }}>
+        <div style={{ height: '100%', width: `${pct}%`, borderRadius: 99,
+          background: `linear-gradient(90deg, ${color}aa, ${color})`,
+          boxShadow: `0 0 10px ${color}aa`,
+          transformOrigin: 'left',
+          animation: 'growRight 560ms var(--ease-out) backwards',
+          transition: 'width var(--dur-1) var(--ease)' }} />
       </div>
     </div>
   );
@@ -172,35 +256,67 @@ function Sparkline({ data, width = 200, height = 48, color = 'var(--cyan)', valu
   const pts = vals.map((v, i) => [p + (i/(vals.length-1))*(width-p*2), p + (1-(v-minV)/range)*(height-p*2)]);
   const d = pts.map((pt, i) => `${i===0?'M':'L'}${pt[0].toFixed(1)},${pt[1].toFixed(1)}`).join(' ');
   const area = d + ` L${pts[pts.length-1][0]},${height} L${pts[0][0]},${height} Z`;
+  // Rough path length, used to animate the stroke drawing itself on mount.
+  const len = pts.reduce((a, p, i) => i ? a + Math.hypot(p[0]-pts[i-1][0], p[1]-pts[i-1][1]) : 0, 0);
+  const last = pts[pts.length - 1];
+
   return (
     <svg width={width} height={height} style={{ overflow: 'visible' }} role="img" aria-label="Trend sparkline">
       <defs>
         <linearGradient id={`sg_${uid}`} x1="0" y1="0" x2="0" y2="1">
-          <stop offset="0%" stopColor={color} stopOpacity="0.28" />
+          <stop offset="0%" stopColor={color} stopOpacity="0.34" />
           <stop offset="100%" stopColor={color} stopOpacity="0" />
         </linearGradient>
+        <style>{`
+          @keyframes dash_${uid} { to { stroke-dashoffset: 0; } }
+          @keyframes fadein_${uid} { to { opacity: 1; } }
+        `}</style>
       </defs>
-      <path d={area} fill={`url(#sg_${uid})`} />
-      <path d={d} fill="none" stroke={color} strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" />
-      {pts.map((pt, i) => <circle key={i} cx={pt[0]} cy={pt[1]} r={2.5} fill={color} stroke="var(--bg)" strokeWidth="1.5" />)}
+      <path d={area} fill={`url(#sg_${uid})`} opacity="0"
+        style={{ animation: `fadein_${uid} 420ms var(--ease-out) 380ms forwards` }} />
+      <path d={d} fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"
+        strokeDasharray={len} strokeDashoffset={len}
+        style={{ filter: `drop-shadow(0 0 5px ${color})`,
+                 animation: `dash_${uid} 720ms var(--ease-out) forwards` }} />
+      {pts.map((pt, i) => (
+        <circle key={i} cx={pt[0]} cy={pt[1]} r={i === pts.length - 1 ? 3.2 : 2.3}
+          fill={i === pts.length - 1 ? color : 'var(--bg)'} stroke={color} strokeWidth="1.6" opacity="0"
+          style={{ animation: `fadein_${uid} 260ms var(--ease-out) ${340 + i * 40}ms forwards` }} />
+      ))}
+      {/* The most recent point pulses — it's the one that matters */}
+      {last && (
+        <circle cx={last[0]} cy={last[1]} r="3.2" fill="none" stroke={color} strokeWidth="1.4" opacity="0.7"
+          style={{ animation: 'livePulse 2.4s ease-in-out 900ms infinite', transformOrigin: `${last[0]}px ${last[1]}px` }} />
+      )}
     </svg>
   );
 }
 
 /* ── OPS Gauge (circular) ─────────────────────────────── */
 function OpsGauge({ ops, size = 80 }) {
+  const uid = React.useId().replace(/:/g, '');
   const max = 1.4, r = size*0.42, cx = size/2, cy = size/2, sw = size*0.075;
   const pct = Math.min(ops / max, 1);
   const circ = 2 * Math.PI * r;
   const color = ops >= 0.900 ? 'var(--green)' : ops >= 0.750 ? 'var(--gold)' : ops >= 0.600 ? 'var(--cyan)' : 'var(--orange)';
+  // The arc sweeps from empty to its value on mount, and the readout counts
+  // up alongside it, so the gauge reads as taking a measurement.
+  const shown = useCountUp(ops > 0 ? ops.toFixed(3) : null, 720);
   return (
     <svg width={size} height={size} role="img" aria-label={`OPS ${ops > 0 ? ops.toFixed(3) : 'unavailable'}`}>
-      <circle cx={cx} cy={cy} r={r} fill="none" stroke="rgba(255,255,255,0.06)" strokeWidth={sw} />
+      <defs><style>{`@keyframes sweep_${uid} { from { stroke-dashoffset: ${circ}; } to { stroke-dashoffset: 0; } }`}</style></defs>
+      <circle cx={cx} cy={cy} r={r} fill="none" stroke="rgba(255,255,255,0.07)" strokeWidth={sw} />
+      {/* Faint full ring in the accent, so the dial has a track to travel */}
+      <circle cx={cx} cy={cy} r={r} fill="none" stroke={color} strokeWidth={sw} opacity="0.1" />
       <circle cx={cx} cy={cy} r={r} fill="none" stroke={color} strokeWidth={sw}
         strokeDasharray={`${circ*pct} ${circ}`} strokeLinecap="round"
         transform={`rotate(-90 ${cx} ${cy})`}
-        style={{ filter: `drop-shadow(0 0 6px ${color})`, transition: 'stroke-dasharray var(--dur-1) var(--ease)' }} />
-      <text x={cx} y={cy-2} textAnchor="middle" fill={color} fontSize={size*0.185} fontFamily="Orbitron, monospace" fontWeight="700">{ops>0?ops.toFixed(3):'—'}</text>
+        style={{ filter: `drop-shadow(0 0 7px ${color})`,
+                 animation: `sweep_${uid} 780ms var(--ease-out) backwards`,
+                 transition: 'stroke-dasharray var(--dur-1) var(--ease)' }} />
+      <text x={cx} y={cy-2} textAnchor="middle" fill={color} fontSize={size*0.185}
+        fontFamily="Orbitron, monospace" fontWeight="700"
+        style={{ fontVariantNumeric: 'tabular-nums' }}>{ops>0?shown:'—'}</text>
       <text x={cx} y={cy+size*0.155} textAnchor="middle" fill="var(--dim)" fontSize={size*0.115} fontFamily="Space Mono, monospace" letterSpacing="2">OPS</text>
     </svg>
   );
@@ -254,9 +370,12 @@ function SvgBarChart({ items, height = 140, barW = 28, gap = 10, showLabel = tru
         const labelY = Math.max(valuePad - 5, barTop - 5);
         return (
           <g key={i}>
-            <rect x={x} y={valuePad} width={barW} height={height} fill="rgba(255,255,255,0.04)" rx={4} />
+            <rect x={x} y={valuePad} width={barW} height={height} fill="rgba(255,255,255,0.045)" rx={4} />
+            {/* Grows from its baseline, staggered across the series */}
             <rect x={x} y={barTop} width={barW} height={barH} fill={color} rx={4}
-              style={{ filter: `drop-shadow(0 0 5px ${color}88)` }} />
+              style={{ filter: `drop-shadow(0 0 6px ${color}99)`,
+                       transformOrigin: `${x + barW / 2}px ${valuePad + height}px`,
+                       animation: `growUp 500ms var(--ease-out) ${i * 50}ms backwards` }} />
             <text x={x + barW/2} y={labelY} textAnchor="middle" fill={color}
               fontSize="11" fontFamily="Orbitron, monospace" fontWeight="700">
               {item.valueLabel || ''}
@@ -340,10 +459,13 @@ function SectionHeader({ label, sub, right }) {
   return (
     <div style={{ display: 'flex', alignItems: 'flex-start', gap: 'var(--s3)', marginBottom: 'var(--s4)' }}>
       <span aria-hidden="true" style={{ width: 3, alignSelf: 'stretch', minHeight: 30, borderRadius: 99,
-        background: 'linear-gradient(180deg, var(--cyan), transparent)', flexShrink: 0 }} />
+        background: 'linear-gradient(180deg, var(--accent), var(--accent-2), transparent)', flexShrink: 0,
+        boxShadow: '0 0 12px var(--accent-glow)',
+        transformOrigin: 'top', animation: 'growUp 420ms var(--ease-out) backwards' }} />
       <div style={{ flex: 1, minWidth: 0 }}>
         <h2 style={{ fontSize: 'var(--fs-xs)', fontFamily: 'Space Mono, monospace', fontWeight: 700,
-          color: 'var(--cyan)', letterSpacing: '0.22em', margin: 0 }}>{label}</h2>
+          color: 'var(--accent)', letterSpacing: '0.22em', margin: 0,
+          textShadow: '0 0 16px var(--accent-glow)' }}>{label}</h2>
         {sub && <div style={{ fontSize: 'var(--fs-xs)', color: 'var(--muted)', fontFamily: 'Space Mono, monospace', marginTop: 4, lineHeight: 1.5 }}>{sub}</div>}
       </div>
       {right}
@@ -360,12 +482,14 @@ function OddsStrip({ game }) {
   if (game.homeMoneyline) pills.push([`${game.homeAbbr} ML`, game.homeMoneyline > 0 ? `+${game.homeMoneyline}` : game.homeMoneyline]);
   if (!pills.length) return null;
   return (
-    <div style={{ display: 'flex', gap: 'var(--s2)', flexWrap: 'wrap' }}>
+    <div className="stagger" style={{ display: 'flex', gap: 'var(--s2)', flexWrap: 'wrap' }}>
       {pills.map(([l, v]) => (
         <div key={l} style={{ padding: '6px 12px', border: '1px solid var(--line)', borderRadius: 'var(--r-sm)',
-          background: 'var(--surface)', textAlign: 'center' }}>
+          background: 'linear-gradient(180deg, var(--card), var(--surface))', textAlign: 'center',
+          boxShadow: 'var(--sh-1)' }}>
           <div className="piq-label" style={{ fontSize: 'var(--fs-micro)', marginBottom: 2 }}>{l}</div>
-          <div className="piq-num" style={{ fontSize: 'var(--fs-sm)', color: 'var(--cyan)' }}>{v}</div>
+          <div className="piq-num tabular" style={{ fontSize: 'var(--fs-sm)', color: 'var(--accent)',
+            textShadow: '0 0 14px var(--accent-glow)' }}>{v}</div>
         </div>
       ))}
     </div>
@@ -443,13 +567,24 @@ function GameLogChart({ games, stats, defaultStat, emptyLabel = 'NO GAMES', acce
           const color = barColor(v);
           return (
             <Cell key={i}>
-              <div className="piq-num" style={{ fontSize: 'var(--fs-sm)', color, height: 16, lineHeight: 1 }}>{v}</div>
+              <div className="piq-num tabular" style={{ fontSize: 'var(--fs-sm)', color, height: 16, lineHeight: 1,
+                textShadow: `0 0 14px ${color}` }}>{v}</div>
               <div style={{ width: '100%', maxWidth: maxBarW, height: chartHeight,
                 background: 'rgba(255,255,255,0.035)', borderRadius: 'var(--r-sm)', position: 'relative', overflow: 'hidden',
                 border: '1px solid var(--line)' }}>
-                <div style={{ position: 'absolute', bottom: 0, left: 0, right: 0, height: `${pct}%`, background: color,
-                  boxShadow: `0 0 10px ${color}88, inset 0 0 8px ${color}22`, borderRadius: 'var(--r-xs)',
-                  transition: 'height var(--dur-1) var(--ease)' }} />
+                {/* Bars grow from the baseline, staggered left→right, so the
+                    chart draws itself instead of appearing fully formed. */}
+                <div style={{ position: 'absolute', bottom: 0, left: 0, right: 0, height: `${pct}%`,
+                  background: `linear-gradient(180deg, ${color}, ${color}bb)`,
+                  boxShadow: `0 0 14px ${color}99, inset 0 1px 0 rgba(255,255,255,0.28)`,
+                  borderRadius: 'var(--r-xs)',
+                  transformOrigin: 'bottom',
+                  animation: `growUp 460ms var(--ease-out) ${i * 55}ms backwards`,
+                  transition: 'height var(--dur-1) var(--ease)' }}>
+                  {/* Bright cap line — gives each bar a readable top edge */}
+                  <span aria-hidden="true" style={{ position: 'absolute', left: 0, right: 0, top: 0, height: 2,
+                    background: '#fff', opacity: 0.55, borderRadius: 2 }} />
+                </div>
               </div>
             </Cell>
           );
@@ -564,4 +699,6 @@ Object.assign(window, {
   OddsStrip, FormDots, GameLogChart, TabLoader,
   // new atoms
   Chip, StatTile, EmptyState,
+  // hooks
+  useCountUp,
 });

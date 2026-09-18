@@ -8,6 +8,18 @@ function HomeScreen({ onSelectSport }) {
   // No-op locally; ~1 ping while sleeping is enough to start the cold start.
   React.useEffect(() => { prewarmBackend(); }, []);
 
+  /* Hovering a sport card previews that sport's theme across the whole page —
+     the aurora, grid and chrome shift to its hue before you even click. The
+     home screen normally runs unthemed, so this is also how the user learns
+     each league has its own identity. Cleared on unmount so navigating away
+     never leaves a stray preview applied. */
+  const previewSport = key => {
+    const el = document.documentElement;
+    if (key) el.setAttribute('data-sport', key);
+    else el.removeAttribute('data-sport');
+  };
+  React.useEffect(() => () => previewSport(null), []);
+
   // Per-sport accent so the grid is scannable by colour, not just by text.
   const sports = [
     { key: 'mlb',    label: 'MLB',   full: 'Major League Baseball',                     active: true,  season: 'Spring 2026',   accent: 'var(--cyan)',   depth: '9 analysis tabs' },
@@ -45,13 +57,20 @@ function HomeScreen({ onSelectSport }) {
 
       {/* ── Sport grid ───────────────────────────────────── */}
       <h2 className="piq-label" style={{ marginBottom: 'var(--s3)' }}>Select sport</h2>
-      <div style={homeS.grid}>
+      <div className="stagger piq-sport-grid" style={homeS.grid}>
+        {/* Each card is wrapped so the hover handlers can preview the sport's
+            theme. The wrapper is what the grid stretches, so it passes its
+            full height down to the card — otherwise tiles with shorter
+            footers (NFL) render visibly stubbier than their row neighbours. */}
         {sports.map(sp => (
-          <HudCard key={sp.key}
+          <div key={sp.key} style={{ display: 'flex', minWidth: 0 }}
+            onMouseEnter={() => sp.active && previewSport(sp.key)}
+            onMouseLeave={() => previewSport(null)}>
+          <HudCard
             onClick={sp.active ? () => onSelectSport(sp.key) : undefined}
             accent={sp.accent}
             style={{
-              padding: 'var(--s5)', minHeight: 190,
+              padding: 'var(--s5)', minHeight: 200, width: '100%',
               display: 'flex', flexDirection: 'column', justifyContent: 'space-between',
               opacity: sp.active ? 1 : 0.45,
               cursor: sp.active ? 'pointer' : 'not-allowed',
@@ -83,6 +102,7 @@ function HomeScreen({ onSelectSport }) {
               </div>
             )}
           </HudCard>
+          </div>
         ))}
       </div>
 
@@ -108,12 +128,17 @@ const homeS = {
 
   hero: { marginBottom: 'var(--s7)', maxWidth: 720 },
 
+  /* The wordmark is the single largest element on the page, so it carries the
+     theme: a light-raked gradient that sweeps the accent through the letters,
+     with the glow tied to the active hue rather than a fixed cyan. */
   title: {
-    fontFamily: 'Orbitron, monospace', fontSize: 'clamp(44px, 8vw, 88px)', fontWeight: 900,
+    fontFamily: 'Orbitron, monospace', fontSize: 'clamp(46px, 8.5vw, 96px)', fontWeight: 900,
     lineHeight: 1, margin: '0 0 var(--s4)', letterSpacing: '0.06em',
-    background: 'linear-gradient(180deg, var(--text) 0%, var(--muted) 100%)',
+    background: 'linear-gradient(112deg, var(--text) 0%, var(--text) 26%, var(--accent) 48%, var(--accent-2) 60%, var(--muted) 82%)',
+    backgroundSize: '220% 100%',
     WebkitBackgroundClip: 'text', backgroundClip: 'text', color: 'transparent',
-    filter: 'drop-shadow(0 0 44px rgba(0,212,255,0.28))',
+    filter: 'drop-shadow(0 0 48px var(--accent-glow))',
+    animation: 'borderRun 9s linear infinite, riseIn 620ms var(--ease-out)',
   },
 
   sub: {
@@ -123,8 +148,13 @@ const homeS = {
 
   caps: { display: 'flex', gap: 'var(--s2)', flexWrap: 'wrap', marginTop: 'var(--s5)' },
 
+  /* 3 columns → the six sports land as a clean 3×2 block. `auto-fit` used to
+     fit 4 across on a wide viewport and orphan 2 on the second row.
+     `alignItems: stretch` (grid's default, stated here deliberately) plus the
+     cards' own flex column keeps every tile the same height despite the
+     footers having different amounts of text. */
   grid: {
-    display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(230px, 1fr))',
+    display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', alignItems: 'stretch',
     gap: 'var(--s3)', marginBottom: 'var(--s7)',
   },
 
