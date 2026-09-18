@@ -182,9 +182,10 @@ function H2HTab({ gameData }) {
   );
 }
 
-// `onPlayerSelect` is optional and currently MLB-only: when supplied, each
-// player card becomes a shortcut into the PLAYER LOOKUP tab (batter vs today's
-// starter). Without it the cards stay non-interactive, exactly as before.
+// `onPlayerSelect` is optional and currently MLB-only: `MlbPlayerLookupTab`
+// embeds this grid beneath its search panel and passes a handler, so a card
+// click runs the batter-vs-starter lookup in place. Without it the cards stay
+// non-interactive, exactly as before.
 function RosterTab({ gameData, onPlayerSelect }) {
   const { gameInfo, awayRoster, homeRoster } = gameData;
   const [side, setSide] = React.useState('away');

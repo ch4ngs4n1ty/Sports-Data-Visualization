@@ -29,59 +29,128 @@ function MlbReadyRow({ r }) {
 
 /* ── Hot-play signal ─────────────────────────────────────
    The "go here first" indicator. Answers, without opening the game:
-   is there a batter or starter in a run worth shopping props on?
-   Backed by /api/mlb/slate-signals (last-10 batter form + last-5
-   starter form). Triage only — the per-game models remain the truth. */
+   is there a specific player in a real streak here, and WHICH point do I
+   look at — the pitcher he's facing, his history vs this team, or where
+   he hits in the order?
+
+   Backed by /api/mlb/slate-signals, which requires a consecutive-game
+   streak plus at least one matchup angle before it badges anything. The
+   badge therefore shows three things, in order of what the user acts on:
+     1. the streak (the headline — "12-game hit streak")
+     2. the market it points at (HITS 0.5+, RBI, K, … — never HR-only)
+     3. the angle chips (BvP / vs-team / lineup spot), each labeled with
+        its source so it can be checked in the tabs rather than trusted
+   Triage only — the per-game models remain the truth. */
 const SIGNAL_TIERS = {
   hot:  { color: 'var(--green)',  glyph: '🔥', label: 'HOT PLAY' },
   warm: { color: 'var(--gold)',   glyph: '▲',  label: 'LEAN'     },
   note: { color: 'var(--cyan)',   glyph: '•',  label: 'LOOK'     },
 };
 
+// What each angle kind means and where to verify it. The prefix is the
+// whole point: "VS SP" tells the user to open PITCHING/EDGE, "ORDER"
+// tells them the lineup is already posted and this bat is hitting high.
+const ANGLE_KINDS = {
+  bvp:    { tag: 'VS SP',   tab: 'Edge Finder / Player Lookup' },
+  vsteam: { tag: 'VS TEAM', tab: 'H2H' },
+  order:  { tag: 'ORDER',   tab: 'Lineup' },
+  form:   { tag: 'FORM',    tab: 'Last 5' },
+  streak: { tag: 'STREAK',  tab: 'Last 5' },
+};
+
+function AngleChip({ a }) {
+  const meta = ANGLE_KINDS[a.kind] || { tag: a.kind.toUpperCase(), tab: '' };
+  // Direction drives the color: an angle that argues AGAINST the streak is
+  // still worth showing (it's a point to look at), just not in green.
+  const color = a.direction === 'fade' ? 'var(--orange)'
+    : a.direction === 'back' ? 'var(--green)' : 'var(--muted)';
+  return (
+    <span title={meta.tab ? `${a.text} — check the ${meta.tab} tab` : a.text}
+      style={{ display: 'inline-flex', alignItems: 'center', gap: 4,
+        maxWidth: '100%', minWidth: 0,
+        padding: '2px 6px', borderRadius: 'var(--r-sm)',
+        background: color + '12', border: `1px solid ${color}33` }}>
+      <span className="piq-num" style={{ fontSize: 'var(--fs-micro)', color,
+        letterSpacing: '0.1em', fontWeight: 700, flexShrink: 0 }}>{meta.tag}</span>
+      <span style={{ fontSize: 'var(--fs-micro)', fontFamily: 'Space Mono, monospace',
+        color: 'var(--text)', whiteSpace: 'nowrap', overflow: 'hidden',
+        textOverflow: 'ellipsis' }}>{a.text}</span>
+    </span>
+  );
+}
+
 function SignalBadge({ sig }) {
   const t = SIGNAL_TIERS[sig?.tier];
   if (!t || !sig.top) return null;
   const top = sig.top;
   // A vulnerable starter is an opportunity too, but it points the other way —
-  // label it so the user doesn't read it as "back this arm".
+  // label it so the user doesn't read it as "back this arm". `caution` is the
+  // batter equivalent: the streak is real, the matchup argues against it.
   const fade = top.direction === 'fade';
-  const color = fade ? 'var(--orange)' : t.color;
+  const caution = top.direction === 'caution';
+  const color = fade ? 'var(--orange)' : caution ? 'var(--gold)' : t.color;
   const extra = sig.count - 1;
 
+  // Matchup angles are what make this actionable, so they lead; form is the
+  // supporting detail and only fills a remaining slot.
+  const angles = top.angles || [];
+  const matchup = angles.filter(a => a.kind === 'bvp' || a.kind === 'vsteam' || a.kind === 'order');
+  const shown = (matchup.length ? matchup : angles.filter(a => a.kind !== 'streak')).slice(0, 2);
+
+  const label = fade ? 'FADE SP' : caution ? 'CHECK MATCHUP' : t.label;
+  const tip = [
+    `${top.name} (${top.team})`,
+    top.stat,
+    ...angles.map(a => `• ${a.text}`),
+    top.confirmed ? '' : '(lineup not posted; projected)',
+  ].filter(Boolean).join('\n');
+
   return (
-    <div
-      title={`${top.name} — ${top.why}${top.confirmed ? '' : ' (lineup not posted; projected)'}`}
+    <div title={tip}
       style={{
-        display: 'flex', alignItems: 'center', gap: 'var(--s2)',
         marginTop: 'var(--s3)', padding: '7px 9px',
         borderRadius: 'var(--r-sm)',
         background: color + '14',
         border: `1px solid ${color}44`,
       }}>
-      <span aria-hidden="true" style={{ fontSize: 12, lineHeight: 1, flexShrink: 0 }}>
-        {fade ? '⚠' : t.glyph}
-      </span>
-      <div style={{ minWidth: 0, flex: 1 }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-          <span className="piq-num" style={{ fontSize: 'var(--fs-micro)', color,
-            letterSpacing: '0.12em', fontWeight: 700 }}>
-            {fade ? 'FADE SP' : t.label}
-          </span>
-          {!top.confirmed && (
-            <span style={{ fontSize: 'var(--fs-micro)', color: 'var(--faint)',
-              fontFamily: 'Space Mono, monospace' }} title="Lineup not posted yet — projected">PROJ</span>
-          )}
+      {/* line 1: tier + the player and the streak that earned the badge */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--s2)' }}>
+        <span aria-hidden="true" style={{ fontSize: 12, lineHeight: 1, flexShrink: 0 }}>
+          {fade ? '⚠' : caution ? '◐' : t.glyph}
+        </span>
+        <div style={{ minWidth: 0, flex: 1 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+            <span className="piq-num" style={{ fontSize: 'var(--fs-micro)', color,
+              letterSpacing: '0.12em', fontWeight: 700 }}>
+              {label}
+            </span>
+            {top.market && (
+              <span className="piq-num" style={{ fontSize: 'var(--fs-micro)',
+                color: 'var(--muted)', letterSpacing: '0.08em' }}>{top.market}</span>
+            )}
+            {!top.confirmed && (
+              <span style={{ fontSize: 'var(--fs-micro)', color: 'var(--faint)',
+                fontFamily: 'Space Mono, monospace' }} title="Lineup not posted yet — projected">PROJ</span>
+            )}
+          </div>
+          <div style={{ fontSize: 'var(--fs-xs)', fontFamily: 'Space Mono, monospace',
+            color: 'var(--text)', whiteSpace: 'nowrap', overflow: 'hidden',
+            textOverflow: 'ellipsis' }}>
+            {top.name} <span style={{ color: 'var(--muted)' }}>· {top.stat}</span>
+          </div>
         </div>
-        <div style={{ fontSize: 'var(--fs-xs)', fontFamily: 'Space Mono, monospace',
-          color: 'var(--text)', whiteSpace: 'nowrap', overflow: 'hidden',
-          textOverflow: 'ellipsis' }}>
-          {top.name} <span style={{ color: 'var(--muted)' }}>· {top.stat}</span>
-        </div>
+        {extra > 0 && (
+          <span title={`${extra} more signal${extra === 1 ? '' : 's'} in this game`}
+            style={{ fontSize: 'var(--fs-micro)', fontFamily: 'Space Mono, monospace',
+              color: 'var(--muted)', flexShrink: 0 }}>+{extra}</span>
+        )}
       </div>
-      {extra > 0 && (
-        <span title={`${extra} more signal${extra === 1 ? '' : 's'} in this game`}
-          style={{ fontSize: 'var(--fs-micro)', fontFamily: 'Space Mono, monospace',
-            color: 'var(--muted)', flexShrink: 0 }}>+{extra}</span>
+      {/* line 2: the angles — WHICH points to look at */}
+      {shown.length > 0 && (
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4,
+          marginTop: 5, paddingLeft: 20 }}>
+          {shown.map((a, i) => <AngleChip key={i} a={a} />)}
+        </div>
       )}
     </div>
   );
@@ -98,7 +167,8 @@ function GameCard({ g, onSelect, readiness, signals, formatTime }) {
   // whole point of the feature: spot the game to research from across the grid.
   const hasHot = !isLive && !isFinal && signals?.tier === 'hot';
   const accent = isLive ? 'var(--green)' : isFinal ? 'var(--dim)'
-    : hasHot ? (signals.top?.direction === 'fade' ? 'var(--orange)' : 'var(--green)')
+    : hasHot ? (signals.top?.direction === 'fade' ? 'var(--orange)'
+      : signals.top?.direction === 'caution' ? 'var(--gold)' : 'var(--green)')
     : 'var(--cyan)';
 
   // Winner gets full-strength type; loser is dimmed. Reads instantly at a glance.

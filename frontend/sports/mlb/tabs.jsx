@@ -1843,11 +1843,11 @@ function MlbLineupFieldTab({ gameData }) {
    This panel takes ANY hitter on either 40-man and runs the same career-BvP
    + Log5 projection against today's opposing starter.
 
-   Two entry points, one component:
-     • the LOOKUP tab — search box + type-ahead over both rosters
-     • a ROSTER card click — opens the tab with that player preselected
-       (via the `piq_lookup_player` sessionStorage handoff, since the roster
-       tab is sport-agnostic and shouldn't import MLB internals) */
+   This IS the MLB ROSTERS tab: the search + projection panel sits on top and
+   the two 40-man grids sit underneath it, because the only thing anyone ever
+   did with an MLB roster card was click it to get here. A card click runs the
+   lookup in place — no tab hop, no sessionStorage handoff. Non-MLB sports
+   still get the plain sport-agnostic `RosterTab`. */
 
 function MlbPlayerLookupTab({ gameData }) {
   const { gameInfo, pitchingData } = gameData;
@@ -1902,16 +1902,6 @@ function MlbPlayerLookupTab({ gameData }) {
     setLoading(false);
   }, [gameInfo, mlbPitchers, propStat, propLine]);
 
-  // Handoff from a ROSTER card click.
-  React.useEffect(() => {
-    let pending = null;
-    try { pending = sessionStorage.getItem('piq_lookup_player'); } catch {}
-    if (pending) {
-      try { sessionStorage.removeItem('piq_lookup_player'); } catch {}
-      runLookup(pending);
-    }
-  }, []);                                     // mount only — a click remounts the tab
-
   // Close the suggestion list on an outside click.
   React.useEffect(() => {
     const onDoc = e => { if (boxRef.current && !boxRef.current.contains(e.target)) setFocused(false); };
@@ -1941,7 +1931,7 @@ function MlbPlayerLookupTab({ gameData }) {
   return (
     <div style={{ padding: '20px 0' }}>
       <SectionHeader
-        label="PLAYER LOOKUP"
+        label="ROSTERS & PLAYER LOOKUP"
         sub="Any hitter vs today's starter — career BvP + projection, no lineup required" />
 
       {/* ── Search ── */}
@@ -2000,7 +1990,7 @@ function MlbPlayerLookupTab({ gameData }) {
       {!loading && !error && !result && (
         <EmptyState
           title="PICK A BATTER"
-          hint="Search above, or tap any player card in the ROSTER tab. Works before lineups post — all you need is the opposing starter." />
+          hint="Search above, or tap any player card below. Works before lineups post — all you need is the opposing starter." />
       )}
 
       {result && !loading && (() => {
@@ -2156,6 +2146,32 @@ function MlbPlayerLookupTab({ gameData }) {
                     </div>
                   </div>
 
+                  {/* Bar chart of the same career meetings the rows below list.
+                      Same component + shaper the Edge Finder uses, so the two
+                      tabs read identically. `gameByGame` arrives newest-first
+                      and GameLogChart renders in ARRAY ORDER, so it's reversed
+                      here to put time left→right; capped at the 12 most recent
+                      meetings so a long career doesn't render hairline bars. */}
+                  {bvp.gameByGame?.length > 0 && (
+                    <div style={{ marginTop: 16, paddingTop: 14, borderTop: '1px solid rgba(255,255,255,0.06)' }}>
+                      <div style={{ display: 'flex', alignItems: 'baseline', gap: 10, flexWrap: 'wrap', marginBottom: 10 }}>
+                        <span style={{ fontSize: 10, fontFamily: 'Space Mono, monospace', color: 'var(--gold)',
+                          letterSpacing: '0.22em' }}>CAREER MEETINGS</span>
+                        <span style={{ fontSize: 10, fontFamily: 'Space Mono, monospace', color: 'var(--muted)' }}>
+                          {bvp.gameByGame.length > 12
+                            ? `last 12 of ${bvp.gameByGame.length}G · oldest → newest`
+                            : `${bvp.gameByGame.length}G · oldest → newest`}
+                        </span>
+                      </div>
+                      <GameLogChart
+                        games={shapeBvpForChart(bvp.gameByGame.slice(0, 12), pit.name).reverse()}
+                        stats={BVP_STATS}
+                        defaultStat="h"
+                        emptyLabel="NO BvP HISTORY"
+                        accent="var(--gold)" />
+                    </div>
+                  )}
+
                   {bvp.gameByGame?.length > 0 && (
                     <div style={{ marginTop: 14, paddingTop: 12, borderTop: '1px solid rgba(255,255,255,0.06)' }}>
                       <div style={{ fontSize: 10, fontFamily: 'Space Mono, monospace', color: 'var(--muted)',
@@ -2209,6 +2225,16 @@ function MlbPlayerLookupTab({ gameData }) {
           </div>
         );
       })()}
+
+      {/* ── The roster itself, folded in below the panel. Clicking a card runs
+             the lookup above instead of navigating anywhere. ── */}
+      <div style={{ marginTop: 28, paddingTop: 20, borderTop: '1px solid rgba(255,255,255,0.06)' }}>
+        <SectionHeader label="40-MAN ROSTERS" sub="Tap a hitter to analyze them above" />
+        <RosterTab gameData={gameData} onPlayerSelect={name => {
+          runLookup(name);
+          try { window.scrollTo({ top: 0, behavior: 'smooth' }); } catch { window.scrollTo(0, 0); }
+        }} />
+      </div>
     </div>
   );
 }

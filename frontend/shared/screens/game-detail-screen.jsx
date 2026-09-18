@@ -7,10 +7,10 @@ const TABS_MLB = [
   { id: 'overview', label: 'OVERVIEW' },
   { id: 'h2h', label: 'HEAD-TO-HEAD' },
   { id: 'form', label: 'LAST 5' },
-  { id: 'roster', label: 'ROSTERS' },
-  // Lineup-independent single-player research: works before a batting order
-  // posts, which is when the lineup-gated boards below are still empty.
-  { id: 'lookup', label: '🔍 PLAYER LOOKUP' },
+  // MLB's roster tab IS the player lookup: search + per-batter projection on
+  // top, both 40-mans underneath. Lineup-independent, so it works before a
+  // batting order posts — when the lineup-gated boards below are still empty.
+  { id: 'roster', label: 'ROSTERS · 🔍 LOOKUP' },
   { id: 'lineup', label: '⬢ LINEUP' },
   { id: 'edges', label: 'EDGE FINDER' },
   { id: 'pitching', label: 'PITCHING' },
@@ -63,7 +63,12 @@ const TABS_OTHER = [
 ];
 
 function GameDetailScreen({ game, onBack }) {
-  const [tab, setTab] = React.useState(() => sessionStorage.getItem('piq_tab') || 'overview');
+  const [tab, setTab] = React.useState(() => {
+    const saved = sessionStorage.getItem('piq_tab');
+    // 'lookup' was folded into 'roster'; a session persisted before that
+    // change would otherwise restore onto a tab that no longer renders.
+    return saved === 'lookup' ? 'roster' : (saved || 'overview');
+  });
   const [gameData, setGameData] = React.useState(null);
   const [loading, setLoading] = React.useState(true);
   const [stepIdx, setStepIdx] = React.useState(0);
@@ -312,14 +317,12 @@ function GameDetailScreen({ game, onBack }) {
             {tab === 'overview' && <OverviewTab gameData={gameData} />}
             {tab === 'h2h' && <H2HTab gameData={gameData} />}
             {tab === 'form' && <FormTab gameData={gameData} />}
-            {/* MLB only: a roster card becomes a shortcut into PLAYER LOOKUP.
-                Other sports get the plain (non-clickable) roster as before. */}
-            {tab === 'roster' && <RosterTab gameData={gameData}
-              onPlayerSelect={game.sportKey === 'mlb' ? (name => {
-                try { sessionStorage.setItem('piq_lookup_player', name); } catch {}
-                setTab('lookup');
-              }) : null} />}
-            {tab === 'lookup' && <MlbPlayerLookupTab gameData={gameData} />}
+            {/* MLB folds the player lookup into the roster tab (search +
+                projection above, the 40-mans below). Other sports get the
+                plain, non-clickable roster. */}
+            {tab === 'roster' && (game.sportKey === 'mlb'
+              ? <MlbPlayerLookupTab gameData={gameData} />
+              : <RosterTab gameData={gameData} />)}
             {tab === 'lineup' && <MlbLineupFieldTab gameData={gameData} />}
             {tab === 'lineups' && (game.sportKey === 'wnba'
               ? <WnbaCourtLineupTab gameData={gameData} />
