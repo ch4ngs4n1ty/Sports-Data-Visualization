@@ -228,9 +228,11 @@ function StatBar({ label, value, max = 1, color = 'var(--cyan)', decimals = 3 })
       </div>
       <div style={{ height: 6, background: 'rgba(255,255,255,0.06)', borderRadius: 99, overflow: 'hidden',
         boxShadow: 'inset 0 1px 2px rgba(0,0,0,0.4)' }}>
+        {/* Flat fill, not a `${color}aa` gradient: callers pass var(--cyan)
+            and friends, and "var(--cyan)aa" is invalid — it voids the whole
+            background and the bar renders empty. */}
         <div style={{ height: '100%', width: `${pct}%`, borderRadius: 99,
-          background: `linear-gradient(90deg, ${color}aa, ${color})`,
-          boxShadow: `0 0 10px ${color}aa`,
+          background: color,
           transformOrigin: 'left',
           animation: 'growRight 560ms var(--ease-out) backwards',
           transition: 'width var(--dur-1) var(--ease)' }} />
@@ -573,18 +575,22 @@ function GameLogChart({ games, stats, defaultStat, emptyLabel = 'NO GAMES', acce
                 background: 'rgba(255,255,255,0.035)', borderRadius: 'var(--r-sm)', position: 'relative', overflow: 'hidden',
                 border: '1px solid var(--line)' }}>
                 {/* Bars grow from the baseline, staggered left→right, so the
-                    chart draws itself instead of appearing fully formed. */}
-                <div style={{ position: 'absolute', bottom: 0, left: 0, right: 0, height: `${pct}%`,
-                  background: `linear-gradient(180deg, ${color}, ${color}bb)`,
-                  boxShadow: `0 0 14px ${color}99, inset 0 1px 0 rgba(255,255,255,0.28)`,
+                    chart draws itself instead of appearing fully formed.
+                    `color` is usually a var() (callers pass var(--green) etc.),
+                    so the fill must be a FLAT color — a `${color}bb` gradient
+                    stop produces "var(--green)bb", which is invalid and voids
+                    the whole background, leaving a bar with no fill at all. */}
+                <div style={{ position: 'absolute', bottom: 0, left: 0, right: 0,
+                  // A zero value still needs to be visible as a zero, not vanish.
+                  height: v === 0 ? 3 : `${pct}%`,
+                  minHeight: 3,
+                  background: color,
+                  opacity: v === 0 ? 0.55 : 1,
+                  boxShadow: `inset 0 1px 0 rgba(255,255,255,0.3)`,
                   borderRadius: 'var(--r-xs)',
                   transformOrigin: 'bottom',
                   animation: `growUp 460ms var(--ease-out) ${i * 55}ms backwards`,
-                  transition: 'height var(--dur-1) var(--ease)' }}>
-                  {/* Bright cap line — gives each bar a readable top edge */}
-                  <span aria-hidden="true" style={{ position: 'absolute', left: 0, right: 0, top: 0, height: 2,
-                    background: '#fff', opacity: 0.55, borderRadius: 2 }} />
-                </div>
+                  transition: 'height var(--dur-1) var(--ease)' }} />
               </div>
             </Cell>
           );
