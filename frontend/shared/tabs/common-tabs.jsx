@@ -87,10 +87,9 @@ function OverviewTab({ gameData }) {
             form={homeForm} wins={homeW} color="var(--gold)" side="HOME" />
         </div>
 
-        <div style={{ display: 'flex', justifyContent: 'center', marginTop: 'var(--s5)',
-          paddingTop: 'var(--s4)', borderTop: '1px solid var(--line)' }}>
-          <OddsStrip game={gameInfo} />
-        </div>
+        {/* The betting lines used to repeat here. GameDetailScreen's header
+            now carries an OddsStrip that stays visible on EVERY tab, so a
+            second copy on Overview was the same numbers twice on one screen. */}
       </HudCard>
 
       {(away || home) && (

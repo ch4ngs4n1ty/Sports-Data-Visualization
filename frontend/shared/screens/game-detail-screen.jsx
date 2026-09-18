@@ -244,32 +244,95 @@ function GameDetailScreen({ game, onBack }) {
   const isLive = game.statusState === 'in';
   const statusLabel = isLive ? 'In Progress' : game.statusState === 'post' ? 'Final' : 'Scheduled';
 
-  const TeamMark = ({ logo, abbr }) => (
-    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 'var(--s2)', minWidth: 0 }}>
-      <img src={logo} alt="" loading="lazy" style={{ width: 34, height: 34, objectFit: 'contain', flexShrink: 0 }}
-        onError={e => { e.target.style.visibility = 'hidden'; }} />
-      <span className="piq-num" style={{ fontSize: 'clamp(18px, 2.6vw, 28px)', color: 'var(--text)', letterSpacing: '0.03em' }}>{abbr}</span>
-    </span>
+  const hasScore = game.statusState === 'in' || game.statusState === 'post';
+  const awayWon = hasScore && Number(game.awayScore) > Number(game.homeScore);
+  const homeWon = hasScore && Number(game.homeScore) > Number(game.awayScore);
+
+  /* One side of the scoreboard. The logo gets a soft accent halo behind it so
+     the marks read as lit objects rather than pasted PNGs, and the losing
+     side dims — the result is legible before you read a single number. */
+  const TeamSide = ({ logo, abbr, full, score, won, align }) => (
+    <div style={{
+      display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 'var(--s2)',
+      flex: 1, minWidth: 0, textAlign: 'center',
+      opacity: hasScore && !won ? 0.62 : 1,
+      transition: 'opacity var(--dur-3) ease',
+    }}>
+      {/* Team logos are dark-on-transparent for several clubs (NYY navy, BOS
+          deep red), which disappears on this background. A light plate behind
+          the mark plus a brightness lift keeps every club legible without
+          recoloring anyone's brand. */}
+      <div style={{ position: 'relative', width: 66, height: 66, display: 'grid', placeItems: 'center' }}>
+        <span aria-hidden="true" style={{ position: 'absolute', inset: 0, borderRadius: '50%',
+          background: 'radial-gradient(circle, rgba(255,255,255,0.13), rgba(255,255,255,0.05) 58%, transparent 72%)' }} />
+        <img src={logo} alt="" loading="lazy"
+          style={{ width: 54, height: 54, objectFit: 'contain', position: 'relative',
+            filter: 'drop-shadow(0 2px 8px rgba(0,0,0,0.55)) brightness(1.22) contrast(1.06)' }}
+          onError={e => { e.target.style.visibility = 'hidden'; }} />
+      </div>
+      <div className="piq-num" style={{ fontSize: 'clamp(20px, 3vw, 30px)', color: 'var(--text)',
+        letterSpacing: '0.04em', lineHeight: 1 }}>{abbr}</div>
+      <div style={{ fontSize: 'var(--fs-micro)', color: 'var(--dim)', fontFamily: 'Space Mono, monospace',
+        whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: '100%' }}>{full}</div>
+      {hasScore && (
+        <div className="piq-num tabular" style={{ fontSize: 'clamp(34px, 6vw, 56px)', lineHeight: 1,
+          color: won ? 'var(--green)' : 'var(--text)', marginTop: 2,
+          textShadow: won ? '0 0 30px rgba(0,255,136,0.45)' : 'none' }}>{score ?? '—'}</div>
+      )}
+    </div>
   );
 
   return (
     <div style={{ maxWidth: 'var(--maxw)', margin: '0 auto', padding: '0 var(--s5) var(--s7)' }}>
-      {/* ── Game header ──────────────────────────────────── */}
+      {/* ── Game header ──────────────────────────────────────
+          A broadcast-style scoreboard rather than a text line: both marks at
+          equal weight either side of the status, scores when the game is
+          under way, and the betting lines directly beneath. */}
       <header style={{ padding: 'var(--s5) 0 var(--s4)' }}>
         <button onClick={onBack} className="piq-btn piq-btn-ghost" style={{ marginBottom: 'var(--s4)' }}>← GAMES</button>
 
-        <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--s5)', flexWrap: 'wrap' }}>
-          <div style={{ flex: 1, minWidth: 240 }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--s3)', flexWrap: 'wrap', marginBottom: 'var(--s2)' }}>
-              <TeamMark logo={game.awayLogo} abbr={game.awayAbbr} />
-              <span className="piq-label" style={{ fontSize: 'var(--fs-xs)' }}>AT</span>
-              <TeamMark logo={game.homeLogo} abbr={game.homeAbbr} />
+        <HudCard glow={false} style={{ padding: 'var(--s5)', overflow: 'hidden' }}>
+          {/* Live games get a running accent line along the top edge */}
+          {/* Inset past the card's 8px corner radius so the line reads as a
+              full-width bar rather than one clipped at both ends. */}
+          {isLive && (
+            <div className="runline" aria-hidden="true"
+              style={{ position: 'absolute', top: 0, left: 10, right: 10, height: 2,
+                borderRadius: '0 0 2px 2px' }} />
+          )}
+
+          <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--s4)' }}>
+            <TeamSide logo={game.awayLogo} abbr={game.awayAbbr} full={game.awayFull}
+              score={game.awayScore} won={awayWon} />
+
+            <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center',
+              gap: 'var(--s2)', flexShrink: 0, padding: '0 var(--s2)' }}>
               <StatusBadge status={statusLabel} />
+              <div className="piq-label" style={{ fontSize: 'var(--fs-lg)', color: 'var(--faint)', letterSpacing: 0 }}>
+                {hasScore ? '·' : '@'}
+              </div>
+              {game.statusDetail && (
+                <div style={{ fontSize: 'var(--fs-micro)', color: isLive ? 'var(--green)' : 'var(--muted)',
+                  fontFamily: 'Space Mono, monospace', whiteSpace: 'nowrap', fontWeight: 700 }}>
+                  {game.statusDetail}
+                </div>
+              )}
             </div>
-            <div style={{ fontSize: 'var(--fs-xs)', color: 'var(--muted)', fontFamily: 'Space Mono, monospace', lineHeight: 1.6 }}>
-              {game.awayFull} · {game.homeFull}{game.venue ? ` · ${game.venue}` : ''}
-            </div>
+
+            <TeamSide logo={game.homeLogo} abbr={game.homeAbbr} full={game.homeFull}
+              score={game.homeScore} won={homeWon} />
           </div>
+
+          {game.venue && (
+            <div style={{ textAlign: 'center', marginTop: 'var(--s4)', paddingTop: 'var(--s3)',
+              borderTop: '1px solid var(--line)', fontSize: 'var(--fs-micro)',
+              color: 'var(--dim)', fontFamily: 'Space Mono, monospace', letterSpacing: '0.1em' }}>
+              ⌖ {game.venue}
+            </div>
+          )}
+        </HudCard>
+
+        <div style={{ marginTop: 'var(--s3)', display: 'flex', justifyContent: 'center' }}>
           <OddsStrip game={game} />
         </div>
       </header>
