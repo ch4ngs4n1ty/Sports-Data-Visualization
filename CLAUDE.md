@@ -403,3 +403,41 @@ entirely from *when* fetches start and *how many* run, never from changing what
 is computed. `$CLAUDE_JOB_DIR` scratch tests deep-compared old vs new
 `game-bvp` + `prop-model` JSON across 4 live games and found them identical —
 do the same before landing further changes here.
+
+---
+
+## Design system v2 — the theme engine (Sep 2026)
+
+The app used to paint everything in one cyan. It is now **per-sport themed**,
+and the mechanism matters more than the colors:
+
+- **`--accent-h` / `--accent-s` / `--accent-l` in `:root` are the source of
+  truth.** `--accent` is built from them, and **`--cyan` is now an ALIAS for
+  `--accent`.** That alias is the whole trick: ~4,000 lines of sport tabs
+  already paint with `var(--cyan)`, so they re-theme for free.
+- **Setting `data-sport` on `<html>` re-themes the entire application** — nav,
+  cards, charts, gauges, glows, the backdrop. `App` does this from the current
+  view; `HomeScreen` also sets it on card hover to preview a sport.
+  `:root[data-sport="…"]` blocks in `index.html` define the six themes.
+- **Never write `--cyan` directly** (inline style, JS, or CSS). It shadows the
+  theme and freezes the app on one color. Write the `--accent-h/s/l` channels
+  instead — that is exactly what the tweaks panel's `applyAccentHex` does, and
+  it keeps every derived value (tints, lines, glows, `--accent-2`) coherent.
+- `--cyan-fixed` exists for the rare case where you genuinely mean cyan and
+  not "the current accent".
+
+### Motion
+Keyframes + a `.stagger` container class live in `index.html`. Charts draw
+themselves (`growUp` / `growRight`, sparkline stroke-dash, gauge sweep) and
+`useCountUp` (exported from `ui-atoms.jsx`) animates numbers; `StatTile` and
+`OpsGauge` use it already. Everything is inside the existing
+`prefers-reduced-motion` guard — verified rendering at 390 / 820 / 1440px and
+with reduced motion on: no horizontal scroll, no nav overflow, zero errors.
+
+### HudCard
+Now draws a top-lit gradient, layered shadows, expanding corner brackets and a
+**cursor-tracked spotlight**. The spotlight writes CSS custom properties on the
+DOM node rather than calling `setState`, so pointer movement never re-renders —
+keep it that way or the slate grid will thrash. Pass `glow={false}` to opt out.
+`accent` accepts a hex or a `var(…)`; the internal `at()` helper picks
+`color-mix` for vars and the `+alpha` suffix for hex.
