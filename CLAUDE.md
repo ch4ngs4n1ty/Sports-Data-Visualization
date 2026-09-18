@@ -441,3 +441,20 @@ DOM node rather than calling `setState`, so pointer movement never re-renders �
 keep it that way or the slate grid will thrash. Pass `glow={false}` to opt out.
 `accent` accepts a hex or a `var(…)`; the internal `at()` helper picks
 `color-mix` for vars and the `+alpha` suffix for hex.
+
+### Color + alpha: the one rule that breaks charts silently
+
+`${color}88` (hex + alpha suffix) is used widely in the sport tabs and is
+fine **only where `color` is a hex literal**. Most shared atoms receive CSS
+variables instead — `var(--green)`, `var(--cyan)`, a team-color var — and
+`"var(--green)88"` is invalid.
+
+Where that lands matters:
+- In `background` / `linear-gradient(...)` it voids the **whole** declaration,
+  so the element paints nothing. This is what made every Edge Finder bar
+  render as an empty outline (fixed in `9b19ccd`).
+- In `boxShadow` / `filter` it fails quietly — the glow just doesn't draw.
+
+So: in an atom, never build a `background` by concatenating alpha onto a
+color prop. Use the flat color, or `color-mix(in srgb, ${color} 40%, transparent)`,
+which works for hex and var alike — `HudCard`'s `at()` helper is the pattern.
