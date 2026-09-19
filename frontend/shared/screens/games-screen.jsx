@@ -3,6 +3,72 @@
    Multi-sport schedule view
    ============================================================ */
 
+/* ── Loading placeholders ────────────────────────────────
+   MLB cards carry two backend-fed strips (readiness + hot-play signal) that
+   arrive seconds AFTER the ESPN slate paints. Rendering nothing while they
+   load made the card look finished, then jump as each strip popped in — the
+   user read that as the app being broken/empty on open.
+
+   So: while a source is in flight we render a placeholder of the SAME height
+   as the real thing. The card's final layout is claimed on first paint and
+   nothing reflows when the data lands. Placeholders are `aria-hidden` and
+   inherit the reduced-motion guard in index.html. */
+function SkelBar({ w, h = 18, r = 99, delay = 0, style }) {
+  return (
+    <span aria-hidden="true" style={{
+      display: 'inline-block', width: w, height: h, borderRadius: r,
+      background: 'var(--surface)', border: '1px solid var(--line)',
+      position: 'relative', overflow: 'hidden', flexShrink: 0,
+      animation: `skeletonPulse 1.6s ease-in-out ${delay}s infinite`,
+      ...style,
+    }}>
+      <span style={{ position: 'absolute', top: 0, left: '-100%', width: '55%', height: '100%',
+        background: 'linear-gradient(90deg, transparent, var(--accent-soft), transparent)',
+        animation: `shimmer 1.9s ease-in-out ${delay + 0.2}s infinite` }} />
+    </span>
+  );
+}
+
+// Matches MlbReadyRow's height: one row of chips under the matchup.
+function MlbReadyRowSkeleton() {
+  // 22px === a Chip's rendered height (3px padding top/bottom around an
+  // 11px/--fs-micro line). Keep these in sync with Chip or the strip shifts
+  // by the difference when the real pills replace it.
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--s2)', marginTop: 'var(--s3)' }}>
+      <SkelBar w={54} h={22} delay={0} />
+      <SkelBar w={78} h={22} delay={0.12} />
+    </div>
+  );
+}
+
+// Matches SignalBadge's two-line box so a badge landing doesn't push the
+// footer down. Height is the badge's: ~2 lines + padding.
+function SignalBadgeSkeleton() {
+  return (
+    <div aria-hidden="true" style={{
+      marginTop: 'var(--s3)', padding: '7px 9px', borderRadius: 'var(--r-sm)',
+      background: 'var(--surface)', border: '1px solid var(--line)',
+    }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--s2)' }}>
+        <SkelBar w={12} h={12} r={3} delay={0} />
+        {/* Line heights mirror the real badge: a --fs-micro tier label (~14px
+            line box) over a --fs-xs player line (~16px), so the two-line block
+            measures the same before and after the data lands. */}
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <SkelBar w="42%" h={14} delay={0.1} style={{ display: 'block' }} />
+          <SkelBar w="68%" h={16} delay={0.2} style={{ display: 'block', marginTop: 2 }} />
+        </div>
+      </div>
+      {/* Matches the AngleChip row: 2px+2px padding around a --fs-micro line. */}
+      <div style={{ display: 'flex', gap: 4, marginTop: 5, paddingLeft: 20 }}>
+        <SkelBar w={84} h={18} r={6} delay={0.3} />
+        <SkelBar w={64} h={18} r={6} delay={0.38} />
+      </div>
+    </div>
+  );
+}
+
 // Research-readiness strip for pre-game MLB cards: are the starters and batting
 // lineups set? Lets the user skip games that aren't ready to analyze yet.
 function MlbReadyRow({ r }) {
@@ -159,7 +225,7 @@ function SignalBadge({ sig }) {
 /* ── One game card ──────────────────────────────────────── */
 const weekdayOf = iso => new Date(iso).toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
 
-function GameCard({ g, onSelect, readiness, signals, formatTime }) {
+function GameCard({ g, onSelect, readiness, signals, formatTime, readinessPending, signalsPending }) {
   const isLive  = g.statusState === 'in';
   const isFinal = g.statusState === 'post';
   const showScore = isLive || isFinal;
@@ -221,8 +287,15 @@ function GameCard({ g, onSelect, readiness, signals, formatTime }) {
         <Side abbr={g.homeAbbr} logo={g.homeLogo} score={g.homeScore} won={homeWon} align="right" />
       </div>
 
-      {g.sportKey === 'mlb' && !isLive && !isFinal && <MlbReadyRow r={readiness} />}
-      {g.sportKey === 'mlb' && !isLive && !isFinal && <SignalBadge sig={signals} />}
+      {/* Pre-game MLB only. While the slate endpoints are in flight we hold the
+          space with a skeleton instead of rendering nothing, so the card doesn't
+          reflow when SP/LINEUP and the hot-play badge land a few seconds later. */}
+      {g.sportKey === 'mlb' && !isLive && !isFinal && (
+        readinessPending ? <MlbReadyRowSkeleton /> : <MlbReadyRow r={readiness} />
+      )}
+      {g.sportKey === 'mlb' && !isLive && !isFinal && (
+        signalsPending ? <SignalBadgeSkeleton /> : <SignalBadge sig={signals} />
+      )}
 
       {/* footer: odds + CTA */}
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 'var(--s2)',
@@ -246,6 +319,13 @@ function GamesScreen({ onSelectGame, onBack }) {
   const [filter, setFilter] = React.useState('all');
   const [mlbReadiness, setMlbReadiness] = React.useState([]);
   const [mlbSignals, setMlbSignals] = React.useState([]);
+  // `[]` can't tell "still fetching" apart from "backend returned nothing", and
+  // the two must look different: the first shows a skeleton, the second shows
+  // the bare card. Tracked separately per source because readiness (~1s) and
+  // signals (~4s, or a Render cold start) resolve far apart — the readiness
+  // strip should settle as soon as it can rather than wait on signals.
+  const [readinessPending, setReadinessPending] = React.useState(true);
+  const [signalsPending, setSignalsPending] = React.useState(true);
   const [hotOnly, setHotOnly] = React.useState(false);
 
   React.useEffect(() => {
@@ -254,6 +334,8 @@ function GamesScreen({ onSelectGame, onBack }) {
     setLoading(true);
     setMlbReadiness([]);
     setMlbSignals([]);
+    setReadinessPending(true);
+    setSignalsPending(true);
     fetchAllGames(date).then(g => { setGames(g); setLoading(false); });
 
     // Slate readiness (SP + lineups) for MLB cards. fetchMlbSlateReadiness
@@ -261,9 +343,14 @@ function GamesScreen({ onSelectGame, onBack }) {
     // updates live as lineups post through the evening. Guard against stale
     // writes when the date changes / the screen unmounts.
     let cancelled = false;
+    // `.finally` clears the skeleton on BOTH paths: fetchMlbSlateReadiness
+    // already swallows failures into [], but if it ever rejects the cards must
+    // still settle rather than shimmer forever. Polls re-enter this function
+    // with pending already false, so a refresh never re-skeletons a live card.
     const loadReadiness = () => fetchMlbSlateReadiness(date)
       .then(r => { if (!cancelled) setMlbReadiness(r); })
-      .catch(() => {});
+      .catch(() => {})
+      .finally(() => { if (!cancelled) setReadinessPending(false); });
     loadReadiness();
     const pollId = setInterval(loadReadiness, 120000);
 
@@ -272,7 +359,8 @@ function GamesScreen({ onSelectGame, onBack }) {
     // rather than every 2 min with readiness.
     const loadSignals = () => fetchMlbSlateSignals(date)
       .then(s => { if (!cancelled) setMlbSignals(s); })
-      .catch(() => {});
+      .catch(() => {})
+      .finally(() => { if (!cancelled) setSignalsPending(false); });
     loadSignals();
     const sigPollId = setInterval(loadSignals, 600000);
 
@@ -328,7 +416,13 @@ function GamesScreen({ onSelectGame, onBack }) {
                 {liveCount} LIVE
               </Chip>
             )}
-            {hotCount > 0 && (
+            {/* The signals call is the slow one, so this toggle would otherwise
+                appear several seconds after the toolbar. Reserve its width with
+                a placeholder while the slate has MLB games still to be scored. */}
+            {signalsPending && games.some(g => g.sportKey === 'mlb' && g.statusState === 'pre') && (
+              <SkelBar w={116} h={22} />
+            )}
+            {!signalsPending && hotCount > 0 && (
               <button
                 onClick={() => setHotOnly(v => !v)}
                 aria-pressed={hotOnly}
@@ -389,7 +483,9 @@ function GamesScreen({ onSelectGame, onBack }) {
                 {sportGames.map((g, i) => (
                   <GameCard key={g.eventId || i} g={g} onSelect={onSelectGame} formatTime={formatTime}
                     readiness={findMlbReadiness(mlbReadiness, g.awayFull, g.homeFull)}
-                    signals={signalFor(g)} />
+                    signals={signalFor(g)}
+                    readinessPending={readinessPending}
+                    signalsPending={signalsPending} />
                 ))}
               </div>
             </section>
