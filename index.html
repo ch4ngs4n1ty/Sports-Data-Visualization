@@ -222,6 +222,66 @@
       animation: scanDown 13s linear infinite; mix-blend-mode: screen;
     }
 
+    /* ── 3D floor ──────────────────────────────────────────────
+       A real perspective plane, not a faked gradient: the grid is a flat
+       element rotated back on X inside a `perspective` parent, so the rows
+       genuinely converge at a horizon. Translating it along Z (toward the
+       camera) makes the floor scroll under the UI — the Tron/HUD cue.
+
+       Two details keep it from looking cheap:
+       - `background-position` is NOT animated; the element itself moves in Z.
+         Animating position gives even row spacing (flat scroll). Moving in Z
+         gives accelerating rows, which is what reads as depth.
+       - it is masked to fade out AT the horizon, so the convergence point is
+         a glow rather than a hard moiré line. */
+    .piq-floor {
+      position: fixed; left: 0; right: 0; bottom: 0; height: 34vh;
+      z-index: 0; pointer-events: none; overflow: hidden;
+      perspective: 200px; perspective-origin: 50% 0%;
+      /* Faded hard at BOTH ends: at the top so the horizon is a glow rather
+         than a hairline, and at the bottom so the nearest (largest, brightest)
+         rows don't compete with real UI at the foot of the page. */
+      -webkit-mask-image: linear-gradient(180deg, transparent 0%, #000 55%, #000 82%, transparent 100%);
+      mask-image: linear-gradient(180deg, transparent 0%, #000 55%, #000 82%, transparent 100%);
+      opacity: var(--floor-opacity, 1);
+      transition: opacity var(--dur-2) ease;
+    }
+    .piq-floor::before {
+      content: ''; position: absolute;
+      /* Oversized and centred so the plane still covers the viewport once
+         it is rotated away — a 100%-wide plane would leave bare corners. */
+      left: -75%; width: 250%; top: 0; height: 320%;
+      background-image:
+        linear-gradient(hsl(var(--accent-h) var(--accent-s) 62% / 0.13) 1px, transparent 1px),
+        linear-gradient(90deg, hsl(var(--accent-h) var(--accent-s) 62% / 0.09) 1px, transparent 1px);
+      background-size: 60px 60px, 60px 60px;
+      transform-origin: 50% 0%;
+      transform: rotateX(78deg);
+      animation: floorRun 6s linear infinite;
+      will-change: transform;
+    }
+    /* Horizon bloom — the line the floor converges into. Without it the grid
+       just stops; with it the plane reads as receding into distance. */
+    .piq-floor::after {
+      content: ''; position: absolute; left: 0; right: 0; top: 0; height: 46%;
+      background:
+        radial-gradient(56% 100% at 50% 0%,
+          hsl(var(--accent-h) var(--accent-s) 60% / 0.13), transparent 72%);
+      mix-blend-mode: screen;
+    }
+
+    /* ── Particle field ────────────────────────────────────────
+       Canvas because the effect needs per-frame distance math (each mote has
+       a z, is projected to 2D, and respawns at the back when it passes the
+       camera). CSS can't do that for ~90 independent bodies without ~90
+       animated elements. It draws only when the tab is visible, and it is the
+       one piece that reads as genuinely volumetric rather than layered. */
+    .piq-particles {
+      position: fixed; inset: 0; z-index: 0; pointer-events: none;
+      opacity: var(--particles-opacity, 0.85);
+      transition: opacity var(--dur-2) ease;
+    }
+
     #root { position: relative; z-index: 1; min-height: 100vh; }
 
     /* Scrollbar */
@@ -259,6 +319,14 @@
       0%   { transform: translate3d(-4%, -2%, 0) scale(1.05); }
       50%  { transform: translate3d( 4%,  3%, 0) scale(1.18); }
       100% { transform: translate3d(-4%, -2%, 0) scale(1.05); }
+    }
+    /* The floor plane travelling toward the camera. It moves exactly ONE grid
+       cell (60px) in the plane's own space, so the loop point lands on the
+       next row and the motion is seamless — any other distance would visibly
+       jump every cycle. */
+    @keyframes floorRun {
+      from { transform: rotateX(78deg) translate3d(0, 0, 0); }
+      to   { transform: rotateX(78deg) translate3d(0, 60px, 0); }
     }
     @keyframes borderRun { to { background-position: 200% 0; } }
     @keyframes popIn { from { opacity:0; transform: scale(0.82); } to { opacity:1; transform: scale(1); } }
@@ -646,6 +714,129 @@ function hexToHsl(hex) {
   return { h: Math.round(h), s: Math.round(s * 100), l: Math.round(l * 100) };
 }
 
+/* ── PARTICLE FIELD ──────────────────────────────────────
+   A drifting 3D mote field behind the UI, projected by hand:
+   each mote carries (x, y, z) in camera space and is drawn at
+   screen = centre + (x, y) * (FOCAL / z). Moving z toward 0 makes a mote
+   swell and accelerate outward, which is what sells depth — a 2D field of
+   dots moving at one speed reads as dust on the lens instead.
+
+   Deliberate choices worth not re-deriving:
+   - It reads --accent-h EVERY frame from the computed root style, so the
+     field re-colors with the sport theme for free (the theme engine animates
+     that channel; a colour captured once would desync mid-transition).
+   - It respects prefers-reduced-motion by painting ONE static frame rather
+     than rendering nothing — the depth still reads, the motion doesn't.
+   - The RAF is suspended on tab hide (visibilitychange), so a backgrounded
+     PlayIQ costs nothing.
+   - DPR is capped at 2: past that this is pure fill-rate for no visible gain
+     on a field of soft dots. */
+function ParticleField() {
+  const ref = React.useRef(null);
+
+  React.useEffect(() => {
+    const canvas = ref.current;
+    if (!canvas) return;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+
+    const reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    const FOCAL = 520;
+    const DEPTH = 1400;
+    const root = document.documentElement;
+
+    let w = 0, h = 0, dpr = 1, motes = [], raf = 0, running = true;
+
+    /* Count scales with area so a phone doesn't render a desktop's worth of
+       motes, and is clamped so an ultrawide doesn't melt. */
+    const targetCount = () => Math.max(28, Math.min(110, Math.round((w * h) / 24000)));
+
+    const spawn = (atBack) => ({
+      x: (Math.random() - 0.5) * w * 1.9,
+      y: (Math.random() - 0.5) * h * 1.9,
+      z: atBack ? DEPTH : 40 + Math.random() * DEPTH,
+      r: 0.6 + Math.random() * 1.7,
+      /* Per-mote speed keeps the field from moving as one rigid sheet. */
+      v: 0.55 + Math.random() * 1.5,
+      a: 0.18 + Math.random() * 0.55,
+    });
+
+    const resize = () => {
+      dpr = Math.min(window.devicePixelRatio || 1, 2);
+      w = window.innerWidth; h = window.innerHeight;
+      canvas.width = Math.round(w * dpr);
+      canvas.height = Math.round(h * dpr);
+      canvas.style.width = w + 'px';
+      canvas.style.height = h + 'px';
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      const want = targetCount();
+      while (motes.length < want) motes.push(spawn(false));
+      if (motes.length > want) motes.length = want;
+    };
+
+    const draw = () => {
+      const cs = getComputedStyle(root);
+      const hue = parseFloat(cs.getPropertyValue('--accent-h')) || 193;
+      const sat = cs.getPropertyValue('--accent-s').trim() || '100%';
+      const cx = w / 2, cy = h / 2;
+
+      ctx.clearRect(0, 0, w, h);
+
+      for (const m of motes) {
+        if (!reduced) {
+          m.z -= m.v;
+          /* Past the camera plane: recycle to the back rather than allocate. */
+          if (m.z < 40) { Object.assign(m, spawn(true)); }
+        }
+        const k = FOCAL / m.z;
+        const sx = cx + m.x * k;
+        const sy = cy + m.y * k;
+        if (sx < -40 || sx > w + 40 || sy < -40 || sy > h + 40) continue;
+
+        const size = m.r * k * 1.6;
+        /* Fade in from the far plane so motes don't pop into existence, and
+           fade out again as they rush past, so none vanish mid-screen. */
+        const depthFade = Math.min(1, (DEPTH - m.z) / 320) * Math.min(1, m.z / 260);
+        const alpha = m.a * depthFade;
+        if (alpha <= 0.004 || size < 0.15) continue;
+
+        /* Near motes get a soft halo; far ones stay flat dots — the halo is
+           the expensive part, so only the few large ones pay for it. */
+        if (size > 1.6) {
+          const g = ctx.createRadialGradient(sx, sy, 0, sx, sy, size * 4);
+          g.addColorStop(0, `hsl(${hue} ${sat} 72% / ${alpha * 0.55})`);
+          g.addColorStop(1, `hsl(${hue} ${sat} 72% / 0)`);
+          ctx.fillStyle = g;
+          ctx.beginPath(); ctx.arc(sx, sy, size * 4, 0, Math.PI * 2); ctx.fill();
+        }
+        ctx.fillStyle = `hsl(${hue} ${sat} 82% / ${alpha})`;
+        ctx.beginPath(); ctx.arc(sx, sy, size, 0, Math.PI * 2); ctx.fill();
+      }
+    };
+
+    const loop = () => { if (!running) return; draw(); raf = requestAnimationFrame(loop); };
+
+    const onVisibility = () => {
+      if (document.hidden) { running = false; cancelAnimationFrame(raf); }
+      else if (!reduced && !running) { running = true; loop(); }
+    };
+
+    resize();
+    window.addEventListener('resize', resize);
+    document.addEventListener('visibilitychange', onVisibility);
+    if (reduced) { running = false; draw(); } else { loop(); }
+
+    return () => {
+      running = false;
+      cancelAnimationFrame(raf);
+      window.removeEventListener('resize', resize);
+      document.removeEventListener('visibilitychange', onVisibility);
+    };
+  }, []);
+
+  return <canvas ref={ref} className="piq-particles" aria-hidden="true" />;
+}
+
 /* ── API KEY INPUT ───────────────────────────────────── */
 /* Desktop: inline field. Mobile (<=720px): a key toggle that opens a popover,
    so the nav can never overflow on a 375px viewport. */
@@ -756,7 +947,14 @@ function App() {
     setTweaks(next);
     window.parent.postMessage({ type: '__edit_mode_set_keys', edits: next }, '*');
     if (key === 'accentColor') applyAccentHex(val);
-    if (key === 'gridLines')   document.documentElement.style.setProperty('--grid-line', val ? '' : 'transparent');
+    if (key === 'gridLines') {
+      document.documentElement.style.setProperty('--grid-line', val ? '' : 'transparent');
+      /* The perspective floor is the other half of "grid lines" — leaving it
+         on would make the toggle look broken (flat grid gone, 3D one still
+         running). Its colour is accent-derived, not --grid-line, so it needs
+         its own switch. */
+      document.documentElement.style.setProperty('--floor-opacity', val ? '' : '0');
+    }
   };
 
   // Persist nav
@@ -786,6 +984,12 @@ function App() {
       {/* Ambient backdrop — drifting accent blooms + a crawling scan bar.
           Purely decorative, inert to pointers, and hidden from a11y tools. */}
       <div className="piq-aurora" aria-hidden="true"><span /><span /><i /></div>
+
+      {/* Depth layers, back to front: a perspective grid floor running toward
+          the camera, then a projected 3D mote field. Both are accent-themed,
+          inert to pointers, and sit under #root at z-index 0. */}
+      <div className="piq-floor" aria-hidden="true" />
+      <ParticleField />
 
       {/* Nav */}
       <nav className="topnav">
