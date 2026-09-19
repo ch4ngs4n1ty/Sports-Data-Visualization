@@ -354,6 +354,68 @@ returned 0 batters.
   empty card. Once the lineup posts, the response carries `inPostedLineup` +
   `order` so the tab agrees with the official lineup instead of contradicting it.
 
+### Recent-form module (Sep 2026)
+
+The lookup panel carries the same visual analysis the Edge Finder gives a
+batter, so one hitter's page isn't thinner than the board he'd appear on:
+
+- **Last 5 games (season)** — a `GameLogChart` over H/HR/R/RBI/K/BB, plus a
+  trend line (hit streak, H/G, "trending up" / "cooling off").
+- **Every meeting** — a second `GameLogChart` over the career BvP games, next
+  to the existing game-by-game rows (the rows keep the weather pills, which a
+  bar chart can't show).
+- **Hot/cold badge** — `HotBadge` in the identity header, the same tier the
+  Edge Finder assigns.
+
+Three things worth not re-deriving:
+
+- **No backend change.** `/api/mlb/player-lookup` already returns career BvP;
+  the only missing piece was a per-game SEASON log, which the Edge Finder
+  already fetches client-side. The tab calls the same `fetchPlayerGameLog` +
+  `attachWeatherToGameLog`, so there is no new endpoint and no second parser.
+- **The tier scorer is shared, not copied.** `scoreMlbBatterForm(gameLog,
+  bvpOps)` in `frontend/data/mlb/index.js` is the block that used to sit inline
+  in `buildMlbEdgeData`; both callers use it, so the two boards can't disagree
+  about who is hot. Verified identical on 40k randomized logs.
+- **An empty log is `neutral`, not `cold`.** The old inline code hit its cold
+  branch on `l5Avg === 0`, so a batter with no games scored COLD on zero
+  evidence — which here would also flash a false badge in the gap before the
+  log fetch resolves. Absence of data is now explicitly neutral. This is the
+  ONE intentional behaviour change to the Edge Finder's tiers.
+- **The log loads after the panel.** The projection and BvP cards render from
+  the lookup response immediately; the form module fills in behind them rather
+  than holding up first paint.
+
+### Bar labels: dates carry the year, opponents are logos (Sep 2026)
+
+`GameLogChart` labels every bar with the full date **including the year** and,
+where the opponent is a team, its logo instead of a text abbreviation.
+
+- **Dates come from `rawDate`**, via `gameLogDateParts()` in `ui-atoms.jsx`.
+  Every producer already carried it; `date` remains the fallback, so a game
+  object without `rawDate` renders exactly as before.
+- **`rawDate` has TWO shapes and they need OPPOSITE handling** — this is the
+  trap, and it is verified in both directions:
+  - `YYYY-MM-DD` (MLB box scores) is a calendar date. `new Date()` reads it as
+    UTC midnight, which renders as the PREVIOUS day west of Greenwich, so the
+    digits are read literally.
+  - A full ISO stamp (ESPN hoops gamelogs) is the **tipoff instant in UTC** — a
+    May 11, 7:30pm ET game is stored `2026-05-12T02:30Z`. This one MUST be
+    converted to local time, or every night game shows the wrong day (and a New
+    Year's Eve game shows the wrong *year*).
+- **MLB opponent logos** are attached by the data layer, not the server:
+  `fetchPlayerGameLog` sets `oppLogo` for the batter logs (Edge Finder + Player
+  Lookup), and `withMlbOppLogos()` stamps the pitcher `gameLog` / `vsOpp.games`
+  as `/api/mlb/pitcher-props` comes back. The backend stays dependency-free and
+  knows nothing about ESPN's CDN. A logo is only set when the abbreviation
+  resolved — `'?'` would build a guaranteed 404, and the text fallback is more
+  useful than a broken image. All 30 MLB abbreviations were checked against the
+  CDN (30/30 → HTTP 200).
+- **BvP bars are not team games.** Each one is a meeting with the same pitcher,
+  so `shapeBvpForChart` marks them `vsPitcher: true`: no logo, and the label is
+  the pitcher's name with no "vs"/"@" prefix (it previously hardcoded
+  `home: false`, which rendered a misleading "@Burns" on every bar).
+
 
 ## Style Guide
 - CSS variables only — no hardcoded hex colors except in component-local styles where you need a specific channel value (e.g. `'#00ff88'` for a win color)
