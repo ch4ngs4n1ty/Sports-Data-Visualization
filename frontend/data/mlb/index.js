@@ -116,6 +116,26 @@ async function fetchMlbLineups(gameInfo, pitchers) {
   }
 }
 
+// Attach an opponent logo URL to every game in a pitcher-props payload, so the
+// bar charts can label starts with a team logo instead of a text abbreviation.
+// Only set when the abbr resolved: `teamLogoUrl` would happily build a URL for
+// '?' and render a broken image, and the chart's text fallback is better.
+function withMlbOppLogos(data) {
+  if (!data) return data;
+  const stamp = g => (g && g.opp && g.opp !== '?' && !g.oppLogo)
+    ? { ...g, oppLogo: teamLogoUrl('mlb', g.opp) }
+    : g;
+  // The payload is keyed by SIDE (`away`/`home`), each carrying the starter's
+  // last-10 `gameLog` plus `vsOpp.games` (his starts against today's club).
+  for (const side of ['away', 'home']) {
+    const p = data[side];
+    if (!p || typeof p !== 'object') continue;
+    if (Array.isArray(p.gameLog)) p.gameLog = p.gameLog.map(stamp);
+    if (Array.isArray(p.vsOpp?.games)) p.vsOpp.games = p.vsOpp.games.map(stamp);
+  }
+  return data;
+}
+
 async function fetchMlbPitcherProps(gameInfo, pitchers) {
   try {
     const date = mlbBusinessDate(gameInfo.date);
@@ -127,7 +147,10 @@ async function fetchMlbPitcherProps(gameInfo, pitchers) {
       + (pitchers?.home?.name ? `&homePitcher=${encodeURIComponent(pitchers.home.name)}` : '');
     const r = await fetch(url);
     if (!r.ok) return null;
-    return await r.json();
+    // Bar charts label each start with the opponent's logo. The backend sends
+    // `opp` (abbr) but no logo URL; adding it here keeps the server untouched
+    // and dependency-free rather than teaching it about ESPN's CDN.
+    return withMlbOppLogos(await r.json());
   } catch {
     return null;
   }
@@ -232,6 +255,11 @@ async function fetchPlayerGameLog(playerId, { count = 5, season } = {}) {
       date: s.date ? new Date(s.date + 'T00:00:00Z').toLocaleDateString('en-US', { month: 'short', day: 'numeric', timeZone: 'UTC' }) : '',
       rawDate: s.date || '',
       opp: oppAbbr,
+      // Charts label each bar with the opponent's logo instead of a text abbr
+      // (same as the hoops logs). Only set it when the abbreviation actually
+      // resolved — '?' would build a guaranteed 404, and the chart's text
+      // fallback is more useful than a broken image.
+      oppLogo: oppAbbr && oppAbbr !== '?' ? teamLogoUrl('mlb', oppAbbr) : null,
       home: s.isHome === true,
       gamePk: s.game?.gamePk || null,
       hits: Number(st.hits ?? 0),
@@ -430,6 +458,6 @@ Object.assign(window, {
   fetchMlbLineups,
   fetchMlbSlateReadiness, findMlbReadiness,
   fetchMlbSlateSignals, findMlbSignals,
-  fetchPlayerGameLog, attachWeatherToGameLog, scoreMlbBatterForm,
+  fetchPlayerGameLog, attachWeatherToGameLog, scoreMlbBatterForm, withMlbOppLogos,
   buildMlbEdgeData, fetchMlbStarters, MLB_TEAM_ABBR,
 });

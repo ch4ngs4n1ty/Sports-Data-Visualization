@@ -528,6 +528,50 @@ const defaultStatColorFor = (v, sk) => {
   return v === 0 ? 'var(--orange)' : v === 1 ? 'var(--cyan)' : 'var(--green)';
 };
 
+// ── Game-log date labels ──────────────────────────────────────────────────
+// Bars are labelled with the real calendar date INCLUDING the year, because a
+// BvP chart can span seasons and "Sep 16" alone doesn't say which one.
+//
+// Parsing is deliberately manual for the YYYY-MM-DD case: `new Date('2026-09-16')`
+// is parsed as UTC midnight, which renders as Sep 15 anywhere west of Greenwich.
+// Splitting the string keeps the date the box score actually reports.
+function gameLogDateParts(g) {
+  const raw = g?.rawDate;
+  if (typeof raw === 'string' && raw) {
+    const MON = ['JAN','FEB','MAR','APR','MAY','JUN','JUL','AUG','SEP','OCT','NOV','DEC'];
+
+    // Two different shapes reach this function, and they need OPPOSITE handling:
+    //
+    //  * `YYYY-MM-DD` (MLB box scores) is a calendar date with no time. Parsing
+    //    it with `new Date()` treats it as UTC midnight, which renders as the
+    //    PREVIOUS day anywhere west of Greenwich — so read the digits directly.
+    //
+    //  * A full ISO stamp (ESPN hoops gamelogs) is the TIPOFF INSTANT in UTC:
+    //    a May 11, 7:30pm ET game is stored as `2026-05-12T02:30Z`. Taking the
+    //    date prefix would report the wrong day for every night game, so this
+    //    one must be converted to local time.
+    const dateOnly = raw.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+    if (dateOnly) {
+      const [, y, m, d] = dateOnly;
+      return { md: `${MON[Number(m) - 1] || '?'} ${Number(d)}`, year: y };
+    }
+
+    const t = new Date(raw);
+    if (!Number.isNaN(t.getTime())) {
+      return { md: `${MON[t.getMonth()]} ${t.getDate()}`, year: String(t.getFullYear()) };
+    }
+  }
+  return { md: g?.date || '', year: null };        // pre-formatted, no year known
+}
+
+function gameLogFullDate(g) {
+  const { md, year } = gameLogDateParts(g);
+  const when = year ? `${md} ${year}` : md;
+  if (!g?.opp) return when;
+  if (g.vsPitcher) return `${when} · vs ${g.opp}`;
+  return `${when} · ${g.home ? 'vs' : '@'} ${g.opp}`;
+}
+
 function GameLogChart({ games, stats, defaultStat, emptyLabel = 'NO GAMES', accent = 'var(--cyan)', chartHeight = 130, maxBarW = 64, colorFor = defaultStatColorFor }) {
   const [statKey, setStatKey] = React.useState(defaultStat || stats[0].key);
   if (!games?.length) {
@@ -600,8 +644,10 @@ function GameLogChart({ games, stats, defaultStat, emptyLabel = 'NO GAMES', acce
       <div style={{ display: 'flex', gap: 'var(--s4)', marginTop: 'var(--s2)', padding: '0 var(--s1)' }}>
         {games.map((g, i) => (
           <Cell key={i}>
-            {/* Opponent as a logo when the game carries one, text abbr otherwise
-                (MLB logs don't set `oppLogo`, so they keep the old label).
+            {/* Opponent as a logo when the game carries one, text abbr
+                otherwise. Both hoops and MLB logs now set `oppLogo`; the text
+                branch remains for BvP bars (a pitcher, not a team) and for any
+                game whose abbreviation didn't resolve.
                 Away games are dimmed slightly — that's the only remaining
                 home/away cue once the "vs"/"@" prefix is gone, so the title
                 attribute spells it out for anyone who needs it. */}
@@ -615,11 +661,24 @@ function GameLogChart({ games, stats, defaultStat, emptyLabel = 'NO GAMES', acce
               </div>
             ) : (
               <div style={{ fontFamily: 'Space Mono, monospace', fontSize: 'var(--fs-xs)', color: 'var(--muted)', textAlign: 'center', height: 22, lineHeight: '22px' }}>
-                {g.home ? 'vs' : '@'}{g.opp || '?'}
+                {/* A BvP bar is a meeting with one pitcher, not a road/home
+                    game against a team — no vs/@ prefix belongs on it. */}
+                {g.vsPitcher ? (g.opp || 'SP') : `${g.home ? 'vs' : '@'}${g.opp || '?'}`}
               </div>
             )}
-            <div style={{ fontFamily: 'Space Mono, monospace', fontSize: 'var(--fs-micro)', color: 'var(--dim)', textAlign: 'center', marginTop: -2 }}>
-              {g.date}
+            {/* Full date, year included: these charts mix a current-season
+                last-5 with career BvP going back years, and "Sep 16" alone
+                can't tell you which season you're looking at. Every producer
+                already carries `rawDate` (YYYY-MM-DD, or an ISO stamp for
+                hoops); `date` stays the fallback. */}
+            <div title={gameLogFullDate(g)}
+              style={{ fontFamily: 'Space Mono, monospace', fontSize: 'var(--fs-micro)', color: 'var(--dim)', textAlign: 'center', marginTop: -2, lineHeight: 1.35 }}>
+              {(() => {
+                const parts = gameLogDateParts(g);
+                return parts.year
+                  ? <>{parts.md}<br /><span style={{ opacity: 0.75 }}>{parts.year}</span></>
+                  : parts.md;
+              })()}
             </div>
           </Cell>
         ))}
@@ -705,6 +764,7 @@ Object.assign(window, {
   OddsStrip, FormDots, GameLogChart, TabLoader,
   // new atoms
   Chip, StatTile, EmptyState,
+  gameLogDateParts, gameLogFullDate,
   // hooks
   useCountUp,
 });

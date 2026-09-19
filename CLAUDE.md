@@ -386,6 +386,36 @@ Three things worth not re-deriving:
   the lookup response immediately; the form module fills in behind them rather
   than holding up first paint.
 
+### Bar labels: dates carry the year, opponents are logos (Sep 2026)
+
+`GameLogChart` labels every bar with the full date **including the year** and,
+where the opponent is a team, its logo instead of a text abbreviation.
+
+- **Dates come from `rawDate`**, via `gameLogDateParts()` in `ui-atoms.jsx`.
+  Every producer already carried it; `date` remains the fallback, so a game
+  object without `rawDate` renders exactly as before.
+- **`rawDate` has TWO shapes and they need OPPOSITE handling** — this is the
+  trap, and it is verified in both directions:
+  - `YYYY-MM-DD` (MLB box scores) is a calendar date. `new Date()` reads it as
+    UTC midnight, which renders as the PREVIOUS day west of Greenwich, so the
+    digits are read literally.
+  - A full ISO stamp (ESPN hoops gamelogs) is the **tipoff instant in UTC** — a
+    May 11, 7:30pm ET game is stored `2026-05-12T02:30Z`. This one MUST be
+    converted to local time, or every night game shows the wrong day (and a New
+    Year's Eve game shows the wrong *year*).
+- **MLB opponent logos** are attached by the data layer, not the server:
+  `fetchPlayerGameLog` sets `oppLogo` for the batter logs (Edge Finder + Player
+  Lookup), and `withMlbOppLogos()` stamps the pitcher `gameLog` / `vsOpp.games`
+  as `/api/mlb/pitcher-props` comes back. The backend stays dependency-free and
+  knows nothing about ESPN's CDN. A logo is only set when the abbreviation
+  resolved — `'?'` would build a guaranteed 404, and the text fallback is more
+  useful than a broken image. All 30 MLB abbreviations were checked against the
+  CDN (30/30 → HTTP 200).
+- **BvP bars are not team games.** Each one is a meeting with the same pitcher,
+  so `shapeBvpForChart` marks them `vsPitcher: true`: no logo, and the label is
+  the pitcher's name with no "vs"/"@" prefix (it previously hardcoded
+  `home: false`, which rendered a misleading "@Burns" on every bar).
+
 
 ## Style Guide
 - CSS variables only — no hardcoded hex colors except in component-local styles where you need a specific channel value (e.g. `'#00ff88'` for a win color)

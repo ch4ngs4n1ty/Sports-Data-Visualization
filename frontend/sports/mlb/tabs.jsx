@@ -180,7 +180,11 @@ function shapeBvpForChart(gameByGame, pitcherName) {
     date: g.date ? new Date(g.date + 'T00:00:00Z').toLocaleDateString('en-US', { month: 'short', day: 'numeric', timeZone: 'UTC' }) : '',
     rawDate: g.date,
     opp: pitcherName ? pitcherName.split(' ').slice(-1)[0] : 'SP',
-    home: false,
+    // Each bar is a meeting with the SAME pitcher, not a team, so there's no
+    // opponent logo to show and no home/away sense to the matchup. `vsPitcher`
+    // tells the chart to label it "vs <Pitcher>" rather than "@ <Pitcher>".
+    home: true,
+    vsPitcher: true,
     gamePk: g.gamePk,
     hits: Number(g.h ?? 0), h: Number(g.h ?? 0),
     hr: Number(g.hr ?? 0),
