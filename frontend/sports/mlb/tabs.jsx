@@ -2296,4 +2296,657 @@ function MlbPlayerLookupTab({ gameData }) {
   );
 }
 
-Object.assign(window, { EdgeFinderTab, PitchingEdgeTab, HighContactTab, LowHrModelTab, MlbLineupFieldTab, MlbPlayerLookupTab, MlbDataLoader, useMlbLoadGate });
+Object.assign(window, {
+  EdgeFinderTab, PitchingEdgeTab, HighContactTab, LowHrModelTab, MlbLineupFieldTab, MlbPlayerLookupTab, MlbDataLoader, useMlbLoadGate });
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   LIVE (IN-PLAY) TAB
+
+   Reads /api/mlb/live and renders four things, in the order a live bettor
+   actually needs them:
+
+     1. THE MOVE      — what to bet, at what number, how much, and why.
+     2. THE PRICE     — our fair line vs the book's posted live line.
+     3. THE STATE     — diamond, count, score, who is due up.
+     4. THE CONTEXT   — pitcher workload, bullpen, checkpoints.
+
+   Two things this tab is deliberately careful about, both of which come from
+   real measurements taken while building it (see server/mlb/live-*.js):
+
+     * It NEVER implies you can race the book. We poll a feed that is ~10s
+       behind, and books hold a 3-8s void window. The latency line is shown
+       permanently in the header, not buried in a tooltip.
+     * It refuses to show a move when there is no live line, or downgrades it
+       when the posted line looks frozen. A stale line manufactures fake edge.
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+const LIVE_POLL_MS = 15000;
+
+/* ── Diamond: the base-out state at a glance ─────────────────────────────── */
+function LiveDiamond({ bases, outs }) {
+  const on = (b) => (bases & b) !== 0;
+  /* Compact on purpose: at 84px with 15px bases the four squares read as
+     scattered dots rather than a diamond. 58px with 13px bases keeps the
+     shape legible next to the score. */
+  const S = 58, B = 13, H = B / 2;
+  const base = (x, y, lit) => (
+    <div style={{
+      position: 'absolute', left: x, top: y, width: B, height: B,
+      transform: 'rotate(45deg)',
+      background: lit ? 'var(--accent)' : 'transparent',
+      border: `1.5px solid ${lit ? 'var(--accent)' : 'var(--line-strong)'}`,
+      boxShadow: lit ? '0 0 9px var(--accent-glow)' : 'none',
+      transition: 'all 180ms var(--ease-out)',
+    }} />
+  );
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--s4)' }}>
+      <div style={{ position: 'relative', width: S, height: S, flexShrink: 0 }}>
+        {/* Diamond as seen on a broadcast: 2B top, 1B right, 3B left, home bottom.
+            bases is a bit mask — bit0 = 1B, bit1 = 2B, bit2 = 3B. */}
+        {base(S / 2 - H, 0, on(2))}          {/* 2B top   */}
+        {base(S - B, S / 2 - H, on(1))}      {/* 1B right */}
+        {base(0, S / 2 - H, on(4))}          {/* 3B left  */}
+        {base(S / 2 - H, S - B, false)}      {/* home     */}
+      </div>
+      <div>
+        <div className="piq-label" style={{ color: 'var(--muted)', fontSize: 'var(--fs-micro)' }}>OUTS</div>
+        <div style={{ display: 'flex', gap: 5, marginTop: 4 }}>
+          {[0, 1, 2].map(i => (
+            <span key={i} style={{
+              width: 11, height: 11, borderRadius: '50%',
+              background: i < outs ? 'var(--orange)' : 'transparent',
+              border: `1.5px solid ${i < outs ? 'var(--orange)' : 'var(--line-strong)'}`,
+            }} />
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ── A single recommended move ───────────────────────────────────────────── */
+function MoveCard({ move, onAdd, added, unavailable }) {
+  const tone = move.confidence === 'HIGH' ? 'var(--green)'
+    : move.confidence === 'MED' ? 'var(--gold)' : 'var(--muted)';
+  return (
+    <HudCard accent={tone} style={{ padding: 'var(--s4)' }}>
+      <div style={{ display: 'flex', alignItems: 'flex-start', gap: 'var(--s3)', flexWrap: 'wrap' }}>
+        <div style={{ flex: '1 1 210px', minWidth: 0 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+            <Chip color={tone} strong>{move.confidence}</Chip>
+            <Chip color="var(--muted)">{move.market}</Chip>
+          </div>
+          <div style={{
+            fontFamily: 'Orbitron, monospace', fontSize: 'var(--fs-lg)', fontWeight: 800,
+            color: 'var(--text)', marginTop: 8, letterSpacing: '0.04em',
+          }}>{move.label}</div>
+        </div>
+        <div style={{ display: 'flex', gap: 'var(--s3)', flexWrap: 'wrap' }}>
+          <StatTile label="EDGE" value={`${move.edgePts > 0 ? '+' : ''}${move.edgePts}`} sub="pts" color={tone} countUp={false} />
+          <StatTile label="EV" value={`${move.evPct > 0 ? '+' : ''}${move.evPct}%`} sub="per $1" color={tone} countUp={false} />
+          <StatTile label="STAKE" value={`${move.stakeUnits}u`} sub="¼ Kelly" color="var(--text)" countUp={false} />
+        </div>
+      </div>
+
+      <div style={{
+        marginTop: 'var(--s3)', paddingTop: 'var(--s3)', borderTop: '1px solid var(--line)',
+        fontSize: 'var(--fs-sm)', color: 'var(--text)', lineHeight: 1.65,
+      }}>{move.why}</div>
+
+      <div style={{ marginTop: 8, display: 'flex', gap: 'var(--s4)', flexWrap: 'wrap',
+        fontSize: 'var(--fs-micro)', color: 'var(--muted)', fontFamily: 'Space Mono, monospace' }}>
+        <span>MODEL {(move.modelProb * 100).toFixed(1)}%</span>
+        <span>MARKET {(move.marketProb * 100).toFixed(1)}% (de-vigged)</span>
+        <span>FAIR {move.fairOdds > 0 ? '+' : ''}{move.fairOdds}</span>
+      </div>
+
+      {onAdd && <button disabled={added || unavailable} onClick={() => onAdd(move)} style={{ marginTop: 14, padding: "10px 14px", fontFamily: "Space Mono, monospace", background: "var(--surface)", border: "1px solid var(--accent)", borderRadius: "var(--r-md)", color: "var(--accent)", cursor: "pointer", opacity: unavailable ? .45 : 1 }}>{added ? "✓ IN SLIP" : "+ ADD TO SLIP"}</button>}
+
+      {move.caveats && move.caveats.length > 0 && (
+        <ul style={{ margin: 'var(--s3) 0 0', paddingLeft: 18,
+          fontSize: 'var(--fs-micro)', color: 'var(--muted)', lineHeight: 1.7 }}>
+          {move.caveats.map((c, i) => <li key={i}>{c}</li>)}
+        </ul>
+      )}
+    </HudCard>
+  );
+}
+
+/* ── Fair price vs posted line ───────────────────────────────────────────── */
+function PriceCompare({ model, market, state }) {
+  const live = market && market.live;
+  const pre = market && market.pregame;
+  const row = (label, fair, posted, extra) => (
+    <div style={{ display: 'flex', alignItems: 'baseline', gap: 'var(--s3)', padding: '9px 0',
+      borderBottom: '1px solid var(--line)', flexWrap: 'wrap' }}>
+      <div className="piq-label" style={{ width: 96, color: 'var(--muted)', fontSize: 'var(--fs-micro)' }}>{label}</div>
+      <div style={{ fontFamily: 'Orbitron, monospace', fontSize: 'var(--fs-md)', color: 'var(--accent)', minWidth: 74 }}>{fair}</div>
+      <div style={{ fontFamily: 'Orbitron, monospace', fontSize: 'var(--fs-md)',
+        color: posted == null ? 'var(--dim)' : 'var(--text)', minWidth: 74 }}>{posted == null ? '—' : posted}</div>
+      {extra && <div style={{ fontSize: 'var(--fs-micro)', color: 'var(--muted)' }}>{extra}</div>}
+    </div>
+  );
+  const fmt = (o) => o == null ? '—' : (o > 0 ? `+${o}` : `${o}`);
+
+  return (
+    <HudCard style={{ padding: 'var(--s4)' }}>
+      <SectionHeader label="FAIR PRICE vs POSTED LINE"
+        sub="Our model, then the book's live number. Edges are computed after removing the vig." />
+      <div style={{ display: 'flex', gap: 'var(--s3)', padding: '0 0 6px', borderBottom: '1px solid var(--line-strong)' }}>
+        <div style={{ width: 96 }} />
+        <div className="piq-label" style={{ width: 74, color: 'var(--accent)', fontSize: 'var(--fs-micro)' }}>MODEL</div>
+        <div className="piq-label" style={{ width: 74, color: 'var(--muted)', fontSize: 'var(--fs-micro)' }}>BOOK</div>
+      </div>
+      {row(`${state.away.abbr} ML`, fmt(model.awayFairOdds), live ? fmt(live.awayMoneyline) : null)}
+      {row(`${state.home.abbr} ML`, fmt(model.homeFairOdds), live ? fmt(live.homeMoneyline) : null)}
+      {row('TOTAL', model.fairTotal, live && live.total != null ? live.total : null,
+        live && live.total != null
+          ? `${(model.fairTotal - live.total) > 0 ? 'model leans OVER' : 'model leans UNDER'} by ${Math.abs(model.fairTotal - live.total).toFixed(2)}`
+          : null)}
+
+      <div style={{ marginTop: 'var(--s3)', fontSize: 'var(--fs-micro)', color: 'var(--muted)', lineHeight: 1.7 }}>
+        {pre && <div>Pregame was <strong style={{ color: 'var(--text)' }}>{pre.details}</strong>, total {pre.total}.</div>}
+        <div>
+          Model win prob moves <strong style={{ color: 'var(--text)' }}>
+            {model.pitchingAdjustmentPts > 0 ? '+' : ''}{model.pitchingAdjustmentPts} pts
+          </strong> vs a league-average run environment, from who is actually pitching the rest of the way.
+        </div>
+        {live && live.stale && (
+          <div style={{ color: 'var(--orange)', marginTop: 5 }}>
+            ⚠ The posted line has not changed in {live.ageSec}s of polling — treat any edge against it as suspect.
+          </div>
+        )}
+      </div>
+    </HudCard>
+  );
+}
+
+/* ── Pitcher workload + bullpen for the side currently pitching ──────────── */
+function LiveContext({ data }) {
+  const { state, workload, bullpen, dueUp } = data;
+  const defSide = state.battingTeam === 'away' ? 'home' : 'away';
+  const w = workload && workload[defSide];
+  const bp = bullpen && bullpen[defSide];
+  const fatiguePct = w ? Math.round(w.fatigue * 100) : 0;
+
+  return (
+    <div style={{ display: 'grid', gap: 'var(--s4)', gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))' }}>
+      <HudCard style={{ padding: 'var(--s4)' }}>
+        <SectionHeader label="ON THE MOUND" sub={`${state[defSide].abbr} pitching`} />
+        {w ? (
+          <>
+            <div style={{ fontFamily: 'Orbitron, monospace', fontSize: 'var(--fs-lg)', color: 'var(--text)' }}>{w.name}</div>
+            <div style={{ display: 'flex', gap: 'var(--s3)', flexWrap: 'wrap', marginTop: 'var(--s3)' }}>
+              <StatTile label="PITCHES" value={w.pitches} countUp={false} />
+              <StatTile label="IP" value={w.inningsPitched} countUp={false} />
+              <StatTile label="TIMES THRU" value={w.timesThroughOrder} countUp={false} />
+            </div>
+            <div style={{ marginTop: 'var(--s3)' }}>
+              <div className="piq-label" style={{ color: 'var(--muted)', fontSize: 'var(--fs-micro)', marginBottom: 5 }}>
+                FATIGUE {fatiguePct}%
+              </div>
+              <div style={{ height: 6, background: 'var(--surface)', borderRadius: 99, overflow: 'hidden' }}>
+                <div style={{ width: `${fatiguePct}%`, height: '100%', borderRadius: 99,
+                  background: fatiguePct > 60 ? 'var(--orange)' : 'var(--accent)', transition: 'width 300ms var(--ease-out)' }} />
+              </div>
+              <div style={{ fontSize: 'var(--fs-micro)', color: 'var(--dim)', marginTop: 6, lineHeight: 1.6 }}>
+                Continuous from pitch count + times through the order — not a "3rd time through" cliff,
+                which the current research disputes.
+              </div>
+            </div>
+          </>
+        ) : <EmptyState title="NO PITCHER DATA" />}
+      </HudCard>
+
+      <HudCard style={{ padding: 'var(--s4)' }}>
+        <SectionHeader label="BULLPEN" sub={`${state[defSide].abbr} — what's left`} />
+        {bp ? (
+          <>
+            <div style={{ display: 'flex', gap: 'var(--s3)', flexWrap: 'wrap' }}>
+              <StatTile label="AVAILABLE" value={bp.availableCount} sub="arms" countUp={false}
+                color={bp.availableCount <= 4 ? 'var(--orange)' : 'var(--text)'} />
+              <StatTile label="USED" value={bp.usedCount} countUp={false} />
+              <StatTile label="ERA" value={bp.era} countUp={false} />
+            </div>
+            {bp.eraIsTeamWide && (
+              <div style={{ fontSize: 'var(--fs-micro)', color: 'var(--muted)', marginTop: 'var(--s3)', lineHeight: 1.6 }}>
+                ERA shown is team-wide pitching, not a bullpen-only split — the run-environment
+                adjustment is approximate.
+              </div>
+            )}
+          </>
+        ) : <EmptyState title="NO BULLPEN DATA" />}
+      </HudCard>
+
+      <HudCard style={{ padding: 'var(--s4)' }}>
+        <SectionHeader label="BATTING ORDER" sub="Current hitter, on deck, in the hole" />
+        {dueUp && dueUp.current && dueUp.current.length ? (
+          <ol style={{ margin: 0, paddingLeft: 20, color: 'var(--text)', fontSize: 'var(--fs-sm)', lineHeight: 2 }}>
+            {dueUp.current.map(p => <li key={p.id}>{p.name}</li>)}
+          </ol>
+        ) : <EmptyState title="ORDER NOT AVAILABLE" />}
+        <div style={{ fontSize: 'var(--fs-micro)', color: 'var(--dim)', marginTop: 'var(--s3)', lineHeight: 1.6 }}>
+          Follow the current batting order alongside pitcher workload. The next inning’s
+          leadoff hitter depends on how this half-inning ends.
+        </div>
+      </HudCard>
+    </div>
+  );
+}
+
+/* ── The tab ─────────────────────────────────────────────────────────────── */
+function MlbLiveTab({ gameData, gameInfo }) {
+  const [gamePk, setGamePk] = React.useState(null);
+  const [data, setData] = React.useState(null);
+  const [err, setErr] = React.useState(null);
+  const [loading, setLoading] = React.useState(true);
+  const [auto, setAuto] = React.useState(true);
+  const [selected, setSelected] = React.useState([]);
+  const [refreshKey, setRefreshKey] = React.useState(0);
+  const [resolveKey, setResolveKey] = React.useState(0);
+  const [updatedAt, setUpdatedAt] = React.useState(null);
+
+  /* Resolve the gamePk once. */
+  React.useEffect(() => {
+    let dead = false;
+    setGamePk(null); setData(null); setSelected([]); setLoading(true); setErr(null);
+    (async () => {
+      /* `gameData.mlbLineups` is where Phase 2 parks the resolved gamePk. If
+         it has already landed we use it for free; if not we resolve it
+         ourselves rather than waiting on Phase 2 — the LIVE tab must paint on
+         first open, and the lineups fetch is cheap and usually cached. */
+      const pk = await window.resolveMlbGamePk(gameInfo, gameData && gameData.mlbLineups);
+      if (!dead) { setGamePk(pk); if (!pk) { setErr('Could not resolve this game in the MLB feed.'); setLoading(false); } }
+    })();
+    return () => { dead = true; };
+  }, [gameInfo && gameInfo.eventId, resolveKey]);
+
+  /* Schedule after completion: a slow provider cannot overlap requests. */
+  React.useEffect(() => {
+    if (!gamePk) return;
+    let dead = false, timer;
+    const load = async () => {
+      if (document.hidden) { timer = setTimeout(load, LIVE_POLL_MS); return; }
+      const r = await window.fetchMlbLive(gamePk);
+      if (dead) return;
+      if (!r || r._error) setErr((r && r.message) || 'Live data unavailable.');
+      else { setData(r); setErr(null); setUpdatedAt(new Date()); }
+      setLoading(false);
+      if (auto && !r?.state?.isFinal) timer = setTimeout(load, LIVE_POLL_MS);
+    };
+    load();
+    return () => { dead = true; clearTimeout(timer); };
+  }, [gamePk, auto, refreshKey]);
+
+  const addSelection = (move) => {
+    const state = data.state;
+    setSelected(prev => {
+      if (prev.some(m => liveSelectionKey(m) === liveSelectionKey(move))) return prev;
+      return [...prev, { ...move, label: move.market === 'MONEYLINE' ? `${state[move.side.toLowerCase()].abbr} ML` : `${move.side} ${move.line}`, snapshot: { inning: state.inning, half: state.half,
+        outs: state.outs, bases: state.bases, score: `${state.awayScore}-${state.homeScore}` },
+        selectedAt: new Date().toISOString(), feedTimestamp: state.feedTimestamp }];
+    });
+  };
+
+  if (loading) return <TabLoader source="MLB live feed" label="Reading game state" rows={3} />;
+  /* Only a HARD failure (no data at all) replaces the tab. If we already have
+     a payload, the error becomes a banner over the last good numbers. */
+  if (err && !data) return <div><EmptyState title="LIVE UNAVAILABLE" hint={err} /><button onClick={() => { setLoading(true); if (gamePk) setRefreshKey(k => k + 1); else setResolveKey(k => k + 1); }}>RETRY LIVE FEED</button></div>;
+  if (!data) return <EmptyState title="NO LIVE DATA" />;
+
+  if (!data.live) {
+    return <div><EmptyState title={data.state?.isFinal ? "FINAL" : "NOT IN PROGRESS"} hint={data.message} /><LiveTrackerPanel data={data} gameInfo={gameInfo} /></div>;
+  }
+
+  const { state, model, market, moves, blocked, blockedReason, checkpoints, meta } = data;
+  const unavailable = !!err || !auto || !market?.hasLive || !!market?.live?.stale;
+
+  return (
+    <div className="stagger" style={{ display: 'grid', gap: 'var(--s5)' }}>
+
+      {err && (
+        <div style={{ padding: '9px 13px', borderRadius: 'var(--r-md)',
+          background: 'color-mix(in srgb, var(--orange) 10%, transparent)',
+          border: '1px solid var(--orange)', color: 'var(--orange)',
+          fontSize: 'var(--fs-micro)', fontFamily: 'Space Mono, monospace', lineHeight: 1.6 }}>
+          ⚠ Last refresh failed: {err} — showing the most recent good read
+          (feed {state.feedTimestamp || '—'}).
+        </div>
+      )}
+
+      {/* ── Header: state + latency honesty ── */}
+      <HudCard style={{ padding: 'var(--s4)' }}>
+        <div style={{ display: 'flex', gap: 'var(--s5)', flexWrap: 'wrap', alignItems: 'center' }}>
+          <div>
+            <div className="piq-label" style={{ color: 'var(--muted)', fontSize: 'var(--fs-micro)' }}>
+              {state.betweenInnings ? 'BREAK · NEXT ' : ''}{state.half === 'top' ? '▲ TOP' : '▼ BOT'} {state.inning}
+            </div>
+            <div style={{ fontFamily: 'Orbitron, monospace', fontSize: 'var(--fs-xl)', color: 'var(--text)', marginTop: 4 }}>
+              {state.away.abbr} {state.awayScore} — {state.homeScore} {state.home.abbr}
+            </div>
+          </div>
+          <LiveDiamond bases={state.bases} outs={state.outs} />
+          <div style={{ marginLeft: 'auto', textAlign: 'right' }}>
+            <button onClick={() => setAuto(a => !a)} style={{
+              fontFamily: 'Space Mono, monospace', fontSize: 'var(--fs-micro)', letterSpacing: '0.12em',
+              padding: '6px 12px', borderRadius: 99, cursor: 'pointer',
+              background: auto ? 'color-mix(in srgb, var(--green) 14%, transparent)' : 'var(--surface)',
+              border: `1px solid ${auto ? 'var(--green)' : 'var(--line-strong)'}`,
+              color: auto ? 'var(--green)' : 'var(--muted)',
+            }}>{err ? '⚠ FEED DELAYED' : auto ? '● AUTO · 15s' : '❚❚ PAUSED'}</button>
+            <button aria-label="Refresh live feed" onClick={() => setRefreshKey(k => k + 1)} style={{ marginLeft: 8, padding: 8, color: 'var(--accent)', background: 'var(--surface)', border: '1px solid var(--line-strong)', borderRadius: 6 }}>↻ REFRESH</button>
+            <div style={{ fontSize: 'var(--fs-micro)', color: 'var(--dim)', marginTop: 6 }}>
+              Checked {updatedAt ? updatedAt.toLocaleTimeString() : '—'} · feed {state.feedTimestamp || '—'}
+            </div>
+          </div>
+        </div>
+        <div style={{ marginTop: 'var(--s3)', paddingTop: 'var(--s3)', borderTop: '1px solid var(--line)',
+          fontSize: 'var(--fs-micro)', color: 'var(--muted)', lineHeight: 1.7 }}>
+          ⏱ {meta.latencyNote}
+        </div>
+      </HudCard>
+
+      {/* ── THE MOVES ── */}
+      <div>
+        <SectionHeader label="MOVES"
+          sub={blocked ? 'Nothing to price against right now'
+            : moves.length ? `${moves.length} edge${moves.length === 1 ? '' : 's'} over the de-vigged market`
+            : 'No edge clears the threshold'} />
+        {blocked ? (
+          <EmptyState title="NO LIVE LINE" hint={blockedReason} />
+        ) : moves.length === 0 ? (
+          <EmptyState title="NO PLAY"
+            hint={`The model and the market agree within ${data.thresholds ? data.thresholds.minEdgePts : 4.5} points. That is the normal state of a fairly-priced game — no bet is the correct move.`} />
+        ) : (
+          <div style={{ display: 'grid', gap: 'var(--s4)' }}>
+            {moves.map((m, i) => <MoveCard key={i} move={m} onAdd={addSelection} unavailable={unavailable} added={selected.some(s => liveSelectionKey(s) === liveSelectionKey(m))} />)}
+          </div>
+        )}
+      </div>
+
+      <LiveTrackerPanel key={data.gamePk} data={data} gameInfo={gameInfo}
+        selected={selected} onAdd={addSelection} unavailable={unavailable}
+        onRemove={key => setSelected(prev => prev.filter(m => liveSelectionKey(m) !== key))}
+        onClear={() => setSelected([])} />
+      <LivePlayFeed data={data} />
+
+      {/* ── PRICE ── */}
+      <PriceCompare model={model} market={market} state={state} />
+
+      {/* ── CHECKPOINTS ── */}
+      {checkpoints && checkpoints.length > 0 && (
+        <HudCard style={{ padding: 'var(--s4)' }} accent="var(--gold)">
+          <SectionHeader label="WATCH FOR" sub="Moments where a structural edge appears and holds for minutes" />
+          <div style={{ display: 'grid', gap: 'var(--s3)' }}>
+            {checkpoints.map((c, i) => (
+              <div key={i} style={{ display: 'flex', gap: 'var(--s3)', alignItems: 'flex-start' }}>
+                <Chip color="var(--gold)">{c.kind.replace(/-/g, ' ').toUpperCase()}</Chip>
+                <div style={{ fontSize: 'var(--fs-sm)', color: 'var(--text)', lineHeight: 1.65, flex: 1 }}>{c.text}</div>
+              </div>
+            ))}
+          </div>
+        </HudCard>
+      )}
+
+      {/* ── CONTEXT ── */}
+      <LiveContext data={data} />
+    </div>
+  );
+}
+
+/* LIVE tab exports (defined above, after the original export block). */
+Object.assign(window, { MlbLiveTab, LiveDiamond, MoveCard, PriceCompare, LiveContext,
+  LiveTrackerPanel, trackerSummary, calibration, loadBets, saveBets });
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   LIVE BET TRACKER  (localStorage, per-browser)
+
+   Logs what you actually bet and then grades it. Two scorecards, and the
+   distinction is the whole point:
+
+     P&L        — did this bet win? High variance; needs thousands of bets
+                  before it says anything about skill.
+     CALIBRATION — when the model said 60%, did those bets win ~60% of the
+                  time? This converges in dozens of bets, not thousands, and
+                  it is the only honest way to know whether the model above is
+                  actually any good. Scored with a Brier score.
+
+   We cannot compute true closing-line value here: in-play there is no
+   meaningful "close" — the market for a given game state exists for seconds.
+   So instead of faking CLV, the tracker records the state and the model
+   probability at bet time and scores calibration directly. That is a real
+   validation loop that needs no odds history.
+
+   Storage is localStorage under `piq_live_bets`. It is per-browser and is
+   never sent anywhere. Every write is try/caught: a private window or blocked
+   site data must degrade to "tracker unavailable", never break the tab.
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+const BETS_KEY = 'piq_live_bets';
+
+function loadBets() {
+  try {
+    const raw = localStorage.getItem(BETS_KEY);
+    const arr = raw ? JSON.parse(raw) : [];
+    return Array.isArray(arr) ? arr : [];
+  } catch { return []; }
+}
+
+function saveBets(bets) {
+  try { localStorage.setItem(BETS_KEY, JSON.stringify(bets)); return true; }
+  catch { return false; }
+}
+
+/* Profit on a 1-unit stake at American odds. */
+function unitProfit(odds) {
+  const o = Number(odds);
+  if (!Number.isFinite(o) || o === 0) return 0;
+  return o > 0 ? o / 100 : 100 / -o;
+}
+
+/* Brier score: mean squared error of the probability forecast. Lower is
+   better; 0.25 is what you get by always guessing 50%. */
+function calibration(settled) {
+  if (!settled.length) return null;
+  let brier = 0, n = 0;
+  const buckets = new Map();
+  for (const b of settled) {
+    if (b.modelProb == null) continue;
+    const p = Number(b.modelProb);
+    if (!Number.isFinite(p) || p < 0 || p > 1) continue;
+    const won = b.result === 'WIN' ? 1 : 0;
+    brier += (p - won) ** 2;
+    n++;
+    const key = Math.min(9, Math.floor(p * 10));
+    const cur = buckets.get(key) || { n: 0, wins: 0, pSum: 0 };
+    cur.n++; cur.wins += won; cur.pSum += p;
+    buckets.set(key, cur);
+  }
+  if (!n) return null;
+  return {
+    brier: Number((brier / n).toFixed(4)),
+    n,
+    /* 0.25 = the Brier score of always saying 50%. Beating it means the model
+       is carrying real information. */
+    vsCoinFlip: Number((0.25 - brier / n).toFixed(4)),
+    buckets: [...buckets.entries()].sort((a, b) => a[0] - b[0]).map(([k, v]) => ({
+      band: `${k * 10}-${k * 10 + 10}%`,
+      predicted: Number(((v.pSum / v.n) * 100).toFixed(1)),
+      actual: Number(((v.wins / v.n) * 100).toFixed(1)),
+      n: v.n,
+    })),
+  };
+}
+
+function trackerSummary(bets) {
+  const settled = bets.filter(b => b.result === 'WIN' || b.result === 'LOSS');
+  const open = bets.filter(b => b.result === 'OPEN');
+  let staked = 0, profit = 0;
+  for (const b of settled) {
+    const st = Number(b.stakeUnits) || 0;
+    staked += st;
+    profit += b.result === 'WIN' ? st * unitProfit(b.odds) : -st;
+  }
+  const avgEdge = settled.length
+    ? settled.reduce((a, b) => a + (Number(b.edgePts) || 0), 0) / settled.length : 0;
+  return {
+    total: bets.length,
+    open: open.length,
+    settled: settled.length,
+    wins: settled.filter(b => b.result === 'WIN').length,
+    staked: Number(staked.toFixed(2)),
+    profit: Number(profit.toFixed(2)),
+    roi: staked > 0 ? Number(((profit / staked) * 100).toFixed(1)) : 0,
+    avgEdgePts: Number(avgEdge.toFixed(1)),
+    calibration: calibration(settled),
+  };
+}
+
+/* ── The tracker panel ───────────────────────────────────────────────────── */
+function LiveTrackerPanel({ data, gameInfo, selected, onAdd, onRemove, onClear, unavailable }) {
+  const [bets, setBets] = React.useState(loadBets);
+  const [failed, setFailed] = React.useState(false);
+  const [open, setOpen] = React.useState(false);
+
+  const commit = (next) => {
+    if (!saveBets(next)) { setFailed(true); return false; }
+    setBets(next); setFailed(false); return true;
+  };
+
+  const logSlip = (rows) => {
+    const records = rows.map((m, i) => ({
+      id: `${Date.now()}_${i}_${Math.random().toString(36).slice(2, 7)}`,
+      ts: new Date().toISOString(), selectedAt: m.selectedAt,
+      gamePk: data.gamePk, matchup: `${data.state.away.abbr} @ ${data.state.home.abbr}`,
+      market: m.market, side: m.side, label: m.label, odds: Number(m.odds),
+      line: m.line, stakeUnits: Number(m.stakeUnits), modelProb: m.modelProb ?? null,
+      marketProb: m.marketProb ?? null, edgePts: m.edgePts ?? null,
+      confidence: m.confidence, state: m.snapshot, feedTimestamp: m.feedTimestamp, result: 'OPEN',
+    }));
+    return commit([...records, ...bets]);
+  };
+
+  const settle = (id, result) => commit(bets.map(b => b.id === id ? { ...b, result } : b));
+  const remove = (id) => commit(bets.filter(b => b.id !== id));
+
+  const s = trackerSummary(bets);
+
+  return (
+    <>
+    {selected && <LiveSlipBuilder data={data} selected={selected} onAdd={onAdd} onRemove={onRemove} onClear={onClear} onLog={logSlip} unavailable={unavailable} />}
+    <HudCard style={{ padding: 'var(--s4)' }}>
+      <SectionHeader label="TRACKER"
+        sub="Log what you actually bet, then let it grade the model"
+        right={
+          <button onClick={() => setOpen(o => !o)} style={{
+            fontFamily: 'Space Mono, monospace', fontSize: 'var(--fs-micro)', letterSpacing: '0.1em',
+            padding: '5px 11px', borderRadius: 99, cursor: 'pointer', background: 'var(--surface)',
+            border: '1px solid var(--line-strong)', color: 'var(--muted)',
+          }}>{open ? 'HIDE LOG' : `LOG (${s.total})`}</button>
+        } />
+
+      {failed && (
+        <div style={{ fontSize: 'var(--fs-micro)', color: 'var(--orange)', marginBottom: 'var(--s3)' }}>
+          Could not write to local storage — the log will not persist in this browser.
+        </div>
+      )}
+
+      {/* Scorecard */}
+      <div style={{ display: 'flex', gap: 'var(--s3)', flexWrap: 'wrap' }}>
+        <StatTile label="LOGGED" value={s.total} countUp={false} />
+        <StatTile label="OPEN" value={s.open} countUp={false} />
+        <StatTile label="RECORD" value={`${s.wins}-${s.settled - s.wins}`} countUp={false} />
+        <StatTile label="P&L" value={`${s.profit > 0 ? '+' : ''}${s.profit}u`} countUp={false}
+          color={s.profit > 0 ? 'var(--green)' : s.profit < 0 ? 'var(--orange)' : 'var(--text)'} />
+        <StatTile label="ROI" value={`${s.roi > 0 ? '+' : ''}${s.roi}%`} countUp={false}
+          color={s.roi > 0 ? 'var(--green)' : s.roi < 0 ? 'var(--orange)' : 'var(--text)'} />
+        <StatTile label="AVG EDGE" value={`${s.avgEdgePts}`} sub="pts" countUp={false} />
+      </div>
+
+      {/* Calibration — the scorecard that actually matters early on. */}
+      {s.calibration ? (
+        <div style={{ marginTop: 'var(--s4)', paddingTop: 'var(--s3)', borderTop: '1px solid var(--line)' }}>
+          <div className="piq-label" style={{ color: 'var(--muted)', fontSize: 'var(--fs-micro)' }}>
+            MODEL CALIBRATION · BRIER {s.calibration.brier}
+            <span style={{ color: s.calibration.vsCoinFlip > 0 ? 'var(--green)' : 'var(--orange)', marginLeft: 8 }}>
+              {s.calibration.vsCoinFlip > 0 ? '▲' : '▼'} {Math.abs(s.calibration.vsCoinFlip)} vs a coin flip
+            </span>
+          </div>
+          <div style={{ fontSize: 'var(--fs-micro)', color: 'var(--dim)', marginTop: 6, lineHeight: 1.6 }}>
+            Lower Brier is better; 0.25 is the constant 50% baseline. Small samples are noisy.
+            Only settled picks with a model probability are included; pushes and voids are excluded.
+          </div>
+          {s.calibration.buckets.length > 0 && (
+            <div style={{ marginTop: 'var(--s3)', display: 'grid', gap: 4 }}>
+              {s.calibration.buckets.map(b => (
+                <div key={b.band} style={{ display: 'flex', gap: 'var(--s3)', alignItems: 'center',
+                  fontSize: 'var(--fs-micro)', fontFamily: 'Space Mono, monospace' }}>
+                  <span style={{ width: 62, color: 'var(--muted)' }}>{b.band}</span>
+                  <span style={{ width: 92, color: 'var(--accent)' }}>said {b.predicted}%</span>
+                  <span style={{ width: 92, color: 'var(--text)' }}>won {b.actual}%</span>
+                  <span style={{ color: 'var(--dim)' }}>n={b.n}</span>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      ) : (
+        <div style={{ marginTop: 'var(--s4)', fontSize: 'var(--fs-micro)', color: 'var(--dim)', lineHeight: 1.6 }}>
+          Settle a few bets and this becomes a calibration report — whether the model's 60%s actually
+          win 60% of the time. That is the measurement that tells you if any of this works.
+        </div>
+      )}
+
+      {/* The log */}
+      {open && (
+        <div style={{ marginTop: 'var(--s4)', paddingTop: 'var(--s3)', borderTop: '1px solid var(--line)' }}>
+          {bets.length === 0 ? (
+            <EmptyState title="NOTHING LOGGED" hint="Take a move above and it lands here with the exact game state you bet it from." />
+          ) : (
+            <div style={{ display: 'grid', gap: 'var(--s2)' }}>
+              {bets.slice(0, 40).map(b => (
+                <div key={b.id} style={{ display: 'flex', gap: 'var(--s3)', alignItems: 'center', flexWrap: 'wrap',
+                  padding: '8px 10px', background: 'var(--surface)', borderRadius: 6,
+                  border: '1px solid var(--line)', fontSize: 'var(--fs-micro)', fontFamily: 'Space Mono, monospace' }}>
+                  <span style={{ color: 'var(--muted)', width: 78 }}>{b.matchup}</span>
+                  <span style={{ color: 'var(--text)', flex: '1 1 130px' }}>{b.label}</span>
+                  <span style={{ color: 'var(--dim)' }}>
+                    {b.state ? `${b.state.half === 'top' ? 'T' : 'B'}${b.state.inning} ${b.state.outs}o ${b.state.score}` : ''}
+                  </span>
+                  <span style={{ color: 'var(--text)' }}>{Number(b.odds) > 0 ? '+' : ''}{b.odds}</span>
+                  <span style={{ color: 'var(--muted)' }}>{b.stakeUnits}u</span>
+                  <span style={{ color: 'var(--accent)' }}>{b.modelProb == null ? '—' : `${(b.modelProb * 100).toFixed(0)}%`}</span>
+                  {b.result === 'OPEN' ? (
+                    <span style={{ display: 'flex', gap: 4 }}>
+                      <button aria-label="Mark win" onClick={() => settle(b.id, 'WIN')} style={miniBtn('var(--green)')}>W</button>
+                      <button aria-label="Mark loss" onClick={() => settle(b.id, 'LOSS')} style={miniBtn('var(--orange)')}>L</button>
+                      <button aria-label="Mark push" onClick={() => settle(b.id, 'PUSH')} style={miniBtn('var(--muted)')}>P</button>
+                      <button aria-label="Mark void" onClick={() => settle(b.id, 'VOID')} style={miniBtn('var(--muted)')}>V</button>
+                      <button aria-label={`Remove logged ${b.label}`} onClick={() => remove(b.id)} style={miniBtn('var(--dim)')}>×</button>
+                    </span>
+                  ) : (
+                    <span style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+                      <Chip color={b.result === 'WIN' ? 'var(--green)' : 'var(--orange)'} strong>{b.result}</Chip>
+                      <button aria-label={`Remove logged ${b.label}`} onClick={() => remove(b.id)} style={miniBtn('var(--dim)')}>×</button>
+                    </span>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+    </HudCard>
+    </>
+  );
+}
+
+function miniBtn(color) {
+  return {
+    fontFamily: 'Space Mono, monospace', fontSize: 10, fontWeight: 700,
+    width: 22, height: 22, borderRadius: 4, cursor: 'pointer',
+    background: 'transparent', border: `1px solid ${color}`, color,
+    display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+  };
+}

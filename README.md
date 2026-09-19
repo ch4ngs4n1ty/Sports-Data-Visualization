@@ -18,6 +18,12 @@ matchup, form, roster, and sport-specific modeling tabs.
   Pitching (K/Outs/ER/HR projections with per-start charts), Low HR model,
   High Contact report, a 3D CSS lineup diamond, and a player lookup that works
   *before* the batting order posts.
+- **MLB Live** — open a game’s `◉ LIVE` tab for periodically refreshed game state,
+  recent completed plays, pitcher workload, and model-vs-reference price analysis.
+  Build a singles slip, edit actual sportsbook prices and stakes, copy a callout,
+  and log/settle picks locally (win, loss, push, void). No wagers are submitted.
+  Stale or missing reference odds disable new selections; same-game parlay odds
+  must come from the sportsbook and are never synthesized.
 - **NBA / WNBA** — Edge Finder with a per-player threshold projection model,
   lineups (WNBA gets a 3D court view), and defense-vs-position.
 - **NFL** — season offense/defense matchup board, with weekly-slate handling so

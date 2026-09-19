@@ -22,6 +22,7 @@ const {
   getGamePlayerDirectory,
 } = require('./mlb/service');
 const { getSlateSignals } = require('./mlb/slate-signals');
+const { getLiveGame } = require('./mlb/live-service');
 const {
   getNbaStartingLineups,
   findGameLineup: findNbaGameLineup,
@@ -108,6 +109,20 @@ const server = http.createServer(async (req, res) => {
       const resolvedDate = date || (games[0]?.startTime || '').slice(0, 10) || undefined;
       const signals = await getSlateSignals(resolvedDate, games);
       return sendJson(res, { date: resolvedDate, signals });
+    }
+
+    // GET /api/mlb/live?gamePk=...  — IN-PLAY fair price + edge vs the posted
+    //   live line + ranked "moves". Cached only briefly on purpose: this is
+    //   the one genuinely live endpoint in the app. See server/mlb/live-*.js
+    //   for the two honesty constraints (we are ~10s behind the book, and a
+    //   stale posted line manufactures fake edge).
+    if (path === '/api/mlb/live') {
+      const gamePk = url.searchParams.get('gamePk');
+      if (!gamePk) return sendError(res, 'gamePk required');
+      const refresh = url.searchParams.get('refresh') === '1';
+      const season = url.searchParams.get('season') || undefined;
+      const data = await getLiveGame(gamePk, { refresh, season: season ? Number(season) : undefined });
+      return sendJson(res, data);
     }
 
     // GET /api/mlb/lineups?gamePk=... OR ?away=...&home=...&date=YYYY-MM-DD

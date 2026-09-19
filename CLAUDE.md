@@ -520,3 +520,119 @@ Where that lands matters:
 So: in an atom, never build a `background` by concatenating alpha onto a
 color prop. Use the flat color, or `color-mix(in srgb, ${color} 40%, transparent)`,
 which works for hex and var alike — `HudCard`'s `at()` helper is the pattern.
+
+---
+
+## LIVE (in-play) tab — MLB
+
+Added Sep 2026. The first tab whose numbers change by the minute, and the
+first that compares a PlayIQ model against a real posted market price.
+
+`frontend/sports/mlb/tabs.jsx` → `MlbLiveTab`, backed by
+`GET /api/mlb/live?gamePk=` (`server/mlb/live-{model,service,moves}.js`).
+
+### The pipeline
+1. **State** — MLB StatsAPI `v1.1/game/{pk}/feed/live` gives inning, half,
+   outs, exact baserunners, score, pitcher, **pitch counts**, batters faced,
+   and the full unused-`bullpen` array in ONE call.
+2. **Run environment** — blends the current pitcher (for the innings he is
+   likely to cover, from pitch count) with the bullpen for the rest. This is
+   why the model is a Markov chain and not a WE-table lookup: a table assumes
+   league-average scoring for both sides for the remainder, which is exactly
+   wrong the moment an ace is relieved.
+3. **Price** — `winProbability` / `expectedRemainingRuns` / a full
+   remaining-runs distribution (a mean cannot answer "P(total > 6.5)").
+4. **Market** — ESPN's CORE api publishes a provider literally named
+   **`"DraftKings - Live Odds"`** that tracks the game (verified: CHW -136 /
+   O-U 8 pregame vs -253 / 6.5 once they led 1-0).
+5. **Moves** — ranked, with edge, EV, ¼-Kelly stake, a checkable `why`, and
+   explicit `caveats`.
+
+### Things that are load-bearing — do not "simplify" them
+
+- **DE-VIG BEFORE COMPARING.** The observed DraftKings live hold was **6.5%**.
+  Comparing a model probability to the RAW implied probability of -253 invents
+  ~3-4 points of edge on the favourite out of nothing.
+- **The posted line refreshes PER HALF-INNING, not per pitch.** Measured over
+  a 20-minute 60s poll: the number moved exactly once, at the inning break,
+  and sat still through every out and baserunner in between. So a mid-inning
+  "edge" is largely the book's number lagging the game, not a mispricing —
+  `buildMove` caps confidence mid-inning and says so, and `checkpoints` points
+  the user at the boundary instead.
+- **We are ~10-12s behind the book, permanently.** The feed's own
+  `metaData.wait` is 10. Books run ~1-2s feeds and hold a 3-8s acceptance
+  window they can void into. The tab therefore never implies a race; the
+  latency note is rendered permanently in the header, not hidden in a tooltip.
+- **A stale line manufactures fake edge.** ESPN's row carries no
+  `lastModified`, so `getLiveOdds` fingerprints it and reports `ageSec` from
+  OUR first sighting (a lower bound). Over 150s → `stale: true` → any move
+  built on it drops to LOW with the reason attached.
+- **`ABSURD_EDGE` (25 pts) is a bug detector, not a filter.** No real market is
+  25 points wrong. A malformed remaining-runs distribution once produced a
+  confident "UNDER 8.5, +47.7 pts, stake 2u" — the math was right and the
+  input was wrong. An edge that good is a symptom; drop it.
+- **NO third-time-through-the-order cliff.** The classical TTO3 penalty is
+  disputed by a 2022 Bayesian re-analysis (Brill et al., arXiv:2210.06724),
+  which finds no strong discontinuity once batter/pitcher quality are
+  controlled. Fatigue is modelled as a CONTINUOUS function of pitch count
+  plus a small times-faced term.
+
+### The model, and how it is actually validated
+
+`live-model.js` is a 24-state (8 base configs x 3 outs) Markov chain solved by
+forward propagation. `runSelfTest()` — **28/28 passing** — checks it against
+things that are observable and stable: the published RE24 matrix and real
+P(>=1 run scores this half-inning) rates, plus internal-consistency and
+monotonicity properties.
+
+It deliberately does **NOT** assert against remembered win-probability table
+values. Two "Tango WE" reference points used from memory during development
+were simply WRONG, e.g. a claimed .813 for (bottom 9, tied, runner on 1st, 0
+out). That is internally impossible: with a ~.535 home edge in extras it
+requires P(score this inning) = .598, while the real league rate from 1B/0-out
+is .441. Chasing it would have meant breaking a correct model to hit a bad
+target. **If you add WE assertions, scrape the table and commit it** — do not
+type the numbers from memory, and check each against
+`P(score) + (1 - P(score)) * P(win in extras)` first.
+
+Three transition details the RE24 test caught, all of which a naive version
+gets wrong and none of which fail loudly:
+- **Sac fly.** Without a "runner on 3rd scores on an out" branch, 3B and 2B are
+  worth *identically* the same (both were RE 1.057), since every hit scores
+  both. Largest single structural error available here.
+- **First-to-third** on a single, or a runner on 1B is undervalued.
+- **Free advancement** (steal/WP/PB/balk/error). Bases-empty P(score) was
+  correct while every occupied state was 3-6 points low — the fingerprint of
+  missing non-hit advancement, not of a bad event mix.
+
+### Tracker
+
+`LiveTrackerPanel` logs bets to `localStorage.piq_live_bets` (per-browser,
+never transmitted; every access try/caught). It records the **game state at
+bet time** — inning, outs, bases, score, feed timestamp — which is what lets
+you tell a bad model from a bad beat later.
+
+It scores two things, and the distinction is the point: **P&L** (high variance,
+needs thousands of bets) and **calibration via Brier score** (converges in
+dozens). True CLV is not computable in-play — there is no meaningful "close"
+when the market for a given game state exists for seconds — so rather than
+fake it, the tracker scores the model's probabilities directly against
+outcomes. 0.25 is the Brier score of always saying 50%; beating it means the
+model carries real information.
+
+### Gotchas found the hard way
+
+- **`site.api.espn.com` 403s server-side** regardless of User-Agent, while
+  `sports.core.api.espn.com` returns 200. The browser can still use the site
+  API; the backend cannot. Map games via the core `events` listing.
+- **Match ESPN games on FULL TEAM NAME, not abbreviation** — MLB says `CWS`,
+  ESPN says `CHW`, and an abbreviation join silently returns null.
+- **`linescore.defense.pitcher` is whoever is on the mound RIGHT NOW**, so
+  reading it for both sides returns the same id twice (it produced a "HOME
+  pitcher" of the AWAY starter, named "Unknown"). Each side's own current
+  pitcher is the LAST entry in its boxscore `pitchers` array.
+- **`inningState` has four values**, not two: `Top`/`Bottom`/**`Middle`**/
+  **`End`**. Middle/End must be normalised to the start of the next half or
+  the model prices a half-inning that already finished.
+- **An unknown gamePk returns a well-formed EMPTY feed**, not a 404 — detect
+  it by absent team ids.

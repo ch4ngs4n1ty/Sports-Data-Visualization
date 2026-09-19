@@ -451,6 +451,49 @@ async function fetchMlbGamePlayers(gameInfo) {
   }
 }
 
+/* ── LIVE (in-play) ────────────────────────────────────────────────────────
+   One call returns game state, the model's fair price, the posted live line,
+   and the ranked moves. `gamePk` is required — the LIVE tab only runs on a
+   game that is actually in progress, and the backend resolves everything else.
+
+   Deliberately NOT cached client-side: the whole point is freshness, and the
+   backend already caches the upstream feed for 15s. */
+async function fetchMlbLive(gamePk, { refresh = false } = {}) {
+  if (!gamePk) return null;
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 30000);
+  try {
+    const url = `${API_BASE}/api/mlb/live?gamePk=${encodeURIComponent(gamePk)}`
+      + (refresh ? '&refresh=1' : '');
+    const r = await fetch(url, { cache: 'no-store', signal: controller.signal });
+    /* Surface WHY rather than collapsing every failure to null. A 429 from
+       our own rate limiter is the common one while a tab is polling, and
+       "Live data unavailable" is a misleading thing to show for it — the
+       data is fine, we just asked too often. */
+    if (!r.ok) {
+      let msg = `Backend returned ${r.status}.`;
+      try { const j = await r.json(); if (j && j.error) msg = j.error; } catch {}
+      return { _error: true, status: r.status, message: msg };
+    }
+    return await r.json();
+  } catch (e) {
+    return { _error: true, status: 0, message: e.name === 'AbortError' ? 'Live feed request timed out.' : 'Could not reach the PlayIQ backend.' };
+  } finally { clearTimeout(timeout); }
+}
+
+/* Resolve a gamePk for a game the detail screen is showing. The LIVE data all
+   hangs off MLB's gamePk, but `gameInfo` is ESPN-shaped, so we reuse the
+   lineups endpoint's team+date resolution rather than duplicating a matcher. */
+async function resolveMlbGamePk(gameInfo, lineupsData) {
+  if (lineupsData && lineupsData.gamePk) return lineupsData.gamePk;
+  try {
+    const lu = await fetchMlbLineups(gameInfo);
+    return (lu && lu.gamePk) || null;
+  } catch {
+    return null;
+  }
+}
+
 Object.assign(window, {
   fetchMlbPlayerLookup, fetchMlbGamePlayers,
   fetchGameBvp, fetchWeather, fetchHighContactReport, fetchLowHrReport, fetchMlbPropModel,
@@ -458,6 +501,7 @@ Object.assign(window, {
   fetchMlbLineups,
   fetchMlbSlateReadiness, findMlbReadiness,
   fetchMlbSlateSignals, findMlbSignals,
+  fetchMlbLive, resolveMlbGamePk,
   fetchPlayerGameLog, attachWeatherToGameLog, scoreMlbBatterForm, withMlbOppLogos,
   buildMlbEdgeData, fetchMlbStarters, MLB_TEAM_ABBR,
 });

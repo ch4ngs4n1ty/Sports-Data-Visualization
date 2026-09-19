@@ -4,6 +4,10 @@
    ============================================================ */
 
 const TABS_MLB = [
+  // LIVE leads the list: once a game is in progress it is the only tab whose
+  // numbers change by the minute. It renders an explanation (not an error) for
+  // a game that has not started or is already final.
+  { id: 'live', label: '◉ LIVE' },
   { id: 'overview', label: 'OVERVIEW' },
   { id: 'h2h', label: 'HEAD-TO-HEAD' },
   { id: 'form', label: 'LAST 5' },
@@ -65,6 +69,7 @@ const TABS_OTHER = [
 function GameDetailScreen({ game, onBack }) {
   const [tab, setTab] = React.useState(() => {
     const saved = sessionStorage.getItem('piq_tab');
+    if (saved === 'live' && game.sportKey !== 'mlb') return 'overview';
     // 'lookup' was folded into 'roster'; a session persisted before that
     // change would otherwise restore onto a tab that no longer renders.
     return saved === 'lookup' ? 'roster' : (saved || 'overview');
@@ -377,6 +382,7 @@ function GameDetailScreen({ game, onBack }) {
           </div>
 
           <div id="tabpanel" role="tabpanel" aria-labelledby={`tab-${tab}`} tabIndex={-1} style={{ minHeight: 400 }}>
+            {tab === 'live' && game.sportKey === 'mlb' && <MlbLiveTab key={game.eventId} gameData={gameData} gameInfo={game} />}
             {tab === 'overview' && <OverviewTab gameData={gameData} />}
             {tab === 'h2h' && <H2HTab gameData={gameData} />}
             {tab === 'form' && <FormTab gameData={gameData} />}
