@@ -587,6 +587,16 @@ function GameLogChart({ games, stats, defaultStat, emptyLabel = 'NO GAMES', acce
   const avg = total / vals.length;
   const hasWeather = games.some(g => g.weather);
 
+  // A single-season chart (a last-5, a season game log) repeats the SAME year
+  // under every bar, which is noise that also makes correct multi-year charts
+  // harder to spot. So the year drops out of the per-bar labels and is stated
+  // once above the chart. A chart that genuinely spans years (career BvP, a
+  // pitcher's starts vs one club) keeps the year on every bar, where it is the
+  // whole point. Unknown years (a game with no `rawDate`) are ignored here:
+  // those bars render their pre-formatted `date` and have no year to hoist.
+  const chartYears = [...new Set(games.map(g => gameLogDateParts(g).year).filter(Boolean))];
+  const soleYear = chartYears.length === 1 ? chartYears[0] : null;
+
   const Cell = ({ children }) => (
     <div style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 7, minWidth: 0 }}>
       {children}
@@ -604,6 +614,15 @@ function GameLogChart({ games, stats, defaultStat, emptyLabel = 'NO GAMES', acce
             </button>
           ))}
         </div>
+        {/* Every bar is from this one season — stated once here instead of
+            repeated under all of them. Multi-year charts show no chip and
+            label each bar with its own year instead. */}
+        {soleYear && (
+          <span className="piq-num tabular" style={{ marginLeft: 'auto', fontSize: 'var(--fs-micro)',
+            color: 'var(--muted)', letterSpacing: '0.12em' }}>
+            {soleYear}
+          </span>
+        )}
       </div>
 
       <div style={{ display: 'flex', gap: 'var(--s4)', alignItems: 'flex-end', padding: '0 var(--s1)' }}>
@@ -675,7 +694,9 @@ function GameLogChart({ games, stats, defaultStat, emptyLabel = 'NO GAMES', acce
               style={{ fontFamily: 'Space Mono, monospace', fontSize: 'var(--fs-micro)', color: 'var(--dim)', textAlign: 'center', marginTop: -2, lineHeight: 1.35 }}>
               {(() => {
                 const parts = gameLogDateParts(g);
-                return parts.year
+                // soleYear !== null → every bar shares it and it is shown once
+                // in the header, so repeating it here would be noise.
+                return (parts.year && !soleYear)
                   ? <>{parts.md}<br /><span style={{ opacity: 0.75 }}>{parts.year}</span></>
                   : parts.md;
               })()}
