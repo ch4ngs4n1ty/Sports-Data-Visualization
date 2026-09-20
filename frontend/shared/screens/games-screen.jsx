@@ -327,6 +327,18 @@ function GamesScreen({ onSelectGame, onBack }) {
   const [readinessPending, setReadinessPending] = React.useState(true);
   const [signalsPending, setSignalsPending] = React.useState(true);
   const [hotOnly, setHotOnly] = React.useState(false);
+  const [liveStatus, setLiveStatus] = React.useState('connecting');
+  const liveSlate = React.useRef(null);
+  React.useEffect(() => {
+    liveSlate.current = null;
+    return window.subscribeMlbLive({ date }, update => {
+      setLiveStatus(update.status);
+      if (update.snapshot) {
+        liveSlate.current = update.snapshot;
+        setGames(g => window.mergeMlbSlate(g, update.snapshot));
+      }
+    });
+  }, [date]);
 
   React.useEffect(() => {
     // Mirror prewarm here in case the user lands on Games via deep link.
@@ -336,13 +348,23 @@ function GamesScreen({ onSelectGame, onBack }) {
     setMlbSignals([]);
     setReadinessPending(true);
     setSignalsPending(true);
-    fetchAllGames(date).then(g => { setGames(g); setLoading(false); });
+    let cancelled = false;
+    let gamesTimer;
+    const loadGames = async () => {
+      if (document.hidden) { gamesTimer = setTimeout(loadGames, 60000); return; }
+      try {
+        const g = await fetchAllGames(date);
+        if (!cancelled) { setGames(prev => window.mergeMlbSlate(g.length ? g : prev, liveSlate.current)); setLoading(false); }
+      } catch { if (!cancelled) setLoading(false); }
+      finally { if (!cancelled) gamesTimer = setTimeout(loadGames, 60000); }
+    };
+    setGames([]);
+    loadGames();
 
     // Slate readiness (SP + lineups) for MLB cards. fetchMlbSlateReadiness
     // retries through a Render cold start; poll every 2 min so the strip also
     // updates live as lineups post through the evening. Guard against stale
     // writes when the date changes / the screen unmounts.
-    let cancelled = false;
     // `.finally` clears the skeleton on BOTH paths: fetchMlbSlateReadiness
     // already swallows failures into [], but if it ever rejects the cards must
     // still settle rather than shimmer forever. Polls re-enter this function
@@ -364,7 +386,7 @@ function GamesScreen({ onSelectGame, onBack }) {
     loadSignals();
     const sigPollId = setInterval(loadSignals, 600000);
 
-    return () => { cancelled = true; clearInterval(pollId); clearInterval(sigPollId); };
+    return () => { cancelled = true; clearTimeout(gamesTimer); clearInterval(pollId); clearInterval(sigPollId); };
   }, [date]);
 
   const sports = ['all', ...new Set(games.map(g => g.sportKey))];
@@ -399,6 +421,9 @@ function GamesScreen({ onSelectGame, onBack }) {
 
   return (
     <div style={{ maxWidth: 'var(--maxw)', margin: '0 auto', padding: 'var(--s5)' }}>
+      <div role="status" style={{ fontSize: 'var(--fs-micro)', color: 'var(--muted)', marginBottom: 'var(--s3)' }}>
+        MLB updates · {liveStatus === 'live' ? 'connected' : liveStatus === 'polling' ? 'polling' : liveStatus} · free public feed
+      </div>
       {/* ── Toolbar ──────────────────────────────────────── */}
       <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--s3)', marginBottom: 'var(--s5)', flexWrap: 'wrap' }}>
         <button onClick={onBack} className="piq-btn piq-btn-ghost">← SPORTS</button>

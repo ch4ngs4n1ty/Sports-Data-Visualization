@@ -18,12 +18,11 @@ matchup, form, roster, and sport-specific modeling tabs.
   Pitching (K/Outs/ER/HR projections with per-start charts), Low HR model,
   High Contact report, a 3D CSS lineup diamond, and a player lookup that works
   *before* the batting order posts.
-- **MLB Live** — open a game’s `◉ LIVE` tab for periodically refreshed game state,
-  recent completed plays, pitcher workload, and model-vs-reference price analysis.
-  Build a singles slip, edit actual sportsbook prices and stakes, copy a callout,
-  and log/settle picks locally (win, loss, push, void). No wagers are submitted.
-  Stale or missing reference odds disable new selections; same-game parlay odds
-  must come from the sportsbook and are never synthesized.
+- **MLB Live** — compact scoreboard, bases, current matchup, measured pitch locations,
+  play feed and player stats. Live indicators cover moneylines, run lines, totals,
+  and approximate hitter-hit projections. Click an indicator to follow its original
+  line with a changing probability and trend. No slips, paper trading or wager
+  submission in the live experience ([workflow](docs/mlb-live.md)).
 - **NBA / WNBA** — Edge Finder with a per-player threshold projection model,
   lineups (WNBA gets a 3D court view), and defense-vs-position.
 - **NFL** — season offense/defense matchup board, with weekly-slate handling so
@@ -48,7 +47,8 @@ Space Mono (everything else).
 
 **Backend — zero dependencies.**
 Pure Node `http` + `https` on port 3001. No npm packages at all, in-memory caching
-(2 min for live data, 15 min for historical BvP).
+(10-second minimum for the live game feed, 2 min for other MLB data,
+15 min for historical BvP). Live updates use SSE with a polling fallback.
 
 **Data sources.** ESPN's public API (no key), the MLB Stats API, and Baseball Savant.
 Claude (Haiku) is called directly from the browser with a user-supplied key.

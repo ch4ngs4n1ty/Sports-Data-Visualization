@@ -22,7 +22,11 @@ const {
   getGamePlayerDirectory,
 } = require('./mlb/service');
 const { getSlateSignals } = require('./mlb/slate-signals');
-const { getLiveGame } = require('./mlb/live-service');
+const { getLiveGame, getLiveSnapshot } = require('./mlb/live-service');
+const { getLiveSlate } = require('./mlb/live-slate');
+const { createLiveHub } = require('./shared/live-stream');
+const liveHub = createLiveHub({ load: key => key.startsWith('game:')
+  ? getLiveSnapshot(key.slice(5)) : getLiveSlate(key.slice(6)) });
 const {
   getNbaStartingLineups,
   findGameLineup: findNbaGameLineup,
@@ -87,6 +91,18 @@ const server = http.createServer(async (req, res) => {
     for (const p of ['awayLineup', 'homeLineup']) {
       const v = url.searchParams.get(p);
       if (v != null) { const c = cleanText(v, 600); c ? url.searchParams.set(p, c) : url.searchParams.delete(p); }
+    }
+
+    // The stream and REST fallback share the same upstream cache.
+    if (path === '/api/mlb/stream' || path === '/api/mlb/snapshot') {
+      const gamePk = url.searchParams.get('gamePk');
+      const date = url.searchParams.get('date');
+      if (!gamePk && !date) return sendError(res, 'gamePk or date required');
+      if (path === '/api/mlb/snapshot') {
+        res.setHeader('Cache-Control', 'no-store');
+        return sendJson(res, gamePk ? await getLiveSnapshot(gamePk) : await getLiveSlate(date));
+      }
+      return liveHub.attach(req, res, gamePk ? `game:${gamePk}` : `slate:${date}`, getClientIp(req));
     }
 
     // GET /api/mlb/games?date=2026-04-13 — games for a date (defaults to today)

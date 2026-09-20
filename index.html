@@ -30,6 +30,8 @@
   <!-- Shared + sport-specific data layer -->
   <script src="frontend/data/shared/core.js"></script>
   <script src="frontend/data/mlb/index.js"></script>
+  <script src="frontend/data/mlb/live-stream.js"></script>
+  <script src="frontend/data/mlb/indicators.js"></script>
   <script src="frontend/data/nba/index.js"></script>
   <script src="frontend/data/wnba/index.js"></script>
   <script src="frontend/data/nfl/index.js"></script>
@@ -670,6 +672,7 @@
       .bc-item { font-size: var(--fs-micro); letter-spacing: 0.08em; }
     }
   </style>
+  <link rel="stylesheet" href="frontend/sports/mlb/live-indicators.css?v=pitch-colors-2">
 </head>
 <body>
 <a class="skip-link" href="#main">Skip to content</a>
@@ -678,13 +681,13 @@
 <!-- Component scripts (Babel-transpiled in the browser) -->
 <script type="text/babel" src="frontend/shared/ui-atoms.jsx"></script>
 <script type="text/babel" src="frontend/shared/tabs/common-tabs.jsx"></script>
-<script type="text/babel" src="frontend/sports/mlb/live-slip.jsx"></script>
-<script type="text/babel" src="frontend/sports/mlb/tabs.jsx"></script>
+<script type="text/babel" src="frontend/sports/mlb/live-indicators.jsx?v=pitch-colors-2"></script>
+<script type="text/babel" src="frontend/sports/mlb/tabs.jsx?v=live-indicators-1"></script>
 <script type="text/babel" src="frontend/sports/nba/tabs.jsx"></script>
 <script type="text/babel" src="frontend/sports/nfl/tabs.jsx"></script>
 <script type="text/babel" src="frontend/shared/screens/home-screen.jsx"></script>
 <script type="text/babel" src="frontend/shared/screens/games-screen.jsx"></script>
-<script type="text/babel" src="frontend/shared/screens/game-detail-screen.jsx"></script>
+<script type="text/babel" src="frontend/shared/screens/game-detail-screen.jsx?v=live-indicators-1"></script>
 
 <script type="text/babel">
 /* ── TWEAK DEFAULTS ──────────────────────────────────── */

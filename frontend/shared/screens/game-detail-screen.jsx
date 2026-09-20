@@ -66,13 +66,25 @@ const TABS_OTHER = [
   { id: 'ai', label: '◆ AI PLAYS' },
 ];
 
-function GameDetailScreen({ game, onBack }) {
+function GameDetailScreen({ game: initialGame, onBack }) {
+  const [liveUpdate, setLiveUpdate] = React.useState(null);
+  const game = liveUpdate?.eventId === initialGame.eventId
+    ? window.applyMlbSnapshot(initialGame, liveUpdate.snapshot) : initialGame;
+  React.useEffect(() => {
+    let dead = false, unsubscribe;
+    setLiveUpdate(null);
+    if (initialGame.sportKey === 'mlb') window.resolveMlbGamePk(initialGame).then(pk => {
+      if (!dead && pk) unsubscribe = window.subscribeMlbLive({ gamePk: pk }, update =>
+        setLiveUpdate({ ...update, eventId: initialGame.eventId }));
+    });
+    return () => { dead = true; unsubscribe?.(); };
+  }, [initialGame.eventId]);
   const [tab, setTab] = React.useState(() => {
     const saved = sessionStorage.getItem('piq_tab');
     if (saved === 'live' && game.sportKey !== 'mlb') return 'overview';
     // 'lookup' was folded into 'roster'; a session persisted before that
     // change would otherwise restore onto a tab that no longer renders.
-    return saved === 'lookup' ? 'roster' : (saved || 'overview');
+    return saved === 'lookup' ? 'roster' : (saved || (game.sportKey === 'mlb' ? 'live' : 'overview'));
   });
   const [gameData, setGameData] = React.useState(null);
   const [loading, setLoading] = React.useState(true);
@@ -293,7 +305,8 @@ function GameDetailScreen({ game, onBack }) {
           A broadcast-style scoreboard rather than a text line: both marks at
           equal weight either side of the status, scores when the game is
           under way, and the betting lines directly beneath. */}
-      <header style={{ padding: 'var(--s5) 0 var(--s4)' }}>
+      {tab === 'live' && game.sportKey === 'mlb' && <button onClick={onBack} className="piq-btn piq-btn-ghost" style={{ margin: '16px 0' }}>← GAMES</button>}
+      {!(tab === 'live' && game.sportKey === 'mlb') && <header style={{ padding: 'var(--s5) 0 var(--s4)' }}>
         <button onClick={onBack} className="piq-btn piq-btn-ghost" style={{ marginBottom: 'var(--s4)' }}>← GAMES</button>
 
         <HudCard glow={false} style={{ padding: 'var(--s5)', overflow: 'hidden' }}>
@@ -313,6 +326,9 @@ function GameDetailScreen({ game, onBack }) {
             <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center',
               gap: 'var(--s2)', flexShrink: 0, padding: '0 var(--s2)' }}>
               <StatusBadge status={statusLabel} />
+              {game.sportKey === 'mlb' && <span role="status" style={{ fontSize: 'var(--fs-micro)', color: 'var(--muted)' }}>
+                Updates: {liveUpdate?.status || 'connecting'}
+              </span>}
               <div className="piq-label" style={{ fontSize: 'var(--fs-lg)', color: 'var(--faint)', letterSpacing: 0 }}>
                 {hasScore ? '·' : '@'}
               </div>
@@ -340,9 +356,9 @@ function GameDetailScreen({ game, onBack }) {
         <div style={{ marginTop: 'var(--s3)', display: 'flex', justifyContent: 'center' }}>
           <OddsStrip game={game} />
         </div>
-      </header>
+      </header>}
 
-      {loading ? (
+      {loading && !(game.sportKey === 'mlb' && tab === 'live') ? (
         <div style={{ padding: 'var(--s6) 0' }}>
           <Loader text={steps[stepIdx] || 'LOADING'} />
           <ol style={{ display: 'flex', justifyContent: 'center', gap: 'var(--s2)', marginTop: 'var(--s4)',

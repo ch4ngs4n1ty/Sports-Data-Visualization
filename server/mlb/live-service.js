@@ -66,6 +66,8 @@
 const { fetchJson } = require('../shared/http');
 const { cacheGet, cacheSet, dedupe } = require('../shared/cache');
 const M = require('./live-model');
+const { finalScoreDistribution } = require('./live-indicators');
+const { createHash } = require('node:crypto');
 
 const MLB11 = 'https://statsapi.mlb.com/api/v1.1';
 const MLB1 = 'https://statsapi.mlb.com/api/v1';
@@ -77,15 +79,16 @@ const LEAGUE_RPI = 4.3 / 9;      // ~0.478
 const LEAGUE_BULLPEN_ERA = 4.15;
 
 /* ── Live feed ────────────────────────────────────────────────────────────
-   Cached only 15s: this is the one genuinely live thing in the app, and the
-   feed itself asks for a 10s floor. */
+   Shared by the snapshot stream and analysis. Respect the provider wait hint
+   with a minimum 10-second interval; this is not a latency guarantee. */
 async function getLiveFeed(gamePk, { refresh = false } = {}) {
   const key = `livefeed_${gamePk}`;
   if (!refresh) { const c = cacheGet(key); if (c) return c; }
   return dedupe(`${refresh ? 'refresh_' : ''}${key}`, async () => {
     if (!refresh) { const c = cacheGet(key); if (c) return c; }
     const data = await fetchJson(`${MLB11}/game/${gamePk}/feed/live`);
-    cacheSet(key, data, 15 * 1000);
+    data._piqReceivedAt = new Date().toISOString();
+    cacheSet(key, data, Math.max(10, Number(data.metaData?.wait) || 10) * 1000);
     return data;
   });
 }
@@ -125,6 +128,8 @@ function parseState(feed) {
     status: detailed,
     isLive: abstract === 'Live' && !/delay|suspend|postpon|cancel/i.test(detailed),
     isFinal: abstract === 'Final',
+    hasStarted: abstract === 'Live' || abstract === 'Final',
+    automaticRunner: ['R', 'S'].includes(gd.game?.type),
     inning, half, outs, bases,
     betweenInnings: st === 'middle' || st === 'end',
     balls: Number(ls.balls || 0),
@@ -145,6 +150,53 @@ function parseState(feed) {
       num: i.num, away: i.away?.runs ?? null, home: i.home?.runs ?? null,
     })),
   };
+}
+
+// Hash actual content, not the provider heartbeat timestamp. Corrections produce
+// a new revision even if the at-bat index and score have not changed.
+function snapshotFromFeed(feed) {
+  const state = parseState(feed);
+  const players = ['away', 'home'].flatMap(side =>
+    Object.values(feed.liveData?.boxscore?.teams?.[side]?.players || {})
+      .filter(p => Object.keys(p.stats?.batting || {}).length || Object.keys(p.stats?.pitching || {}).length)
+      .map(p => ({ id: p.person?.id, name: p.person?.fullName, side,
+        batting: p.stats?.batting || {}, pitching: p.stats?.pitching || {},
+        seasonBatting: { avg: p.seasonStats?.batting?.avg, hits: p.seasonStats?.batting?.hits,
+          plateAppearances: p.seasonStats?.batting?.plateAppearances },
+        active: (feed.liveData?.boxscore?.teams?.[side]?.battingOrder || []).includes(p.person?.id),
+        battingOrder: Number(p.battingOrder) || null })));
+  const recentPlays = (feed.liveData?.plays?.allPlays || [])
+    .filter(p => p.about?.isComplete).slice(-12).reverse().map(p => ({
+      id: p.about.atBatIndex, inning: p.about.inning, half: p.about.halfInning,
+      description: p.result?.description || p.result?.event || 'Play completed',
+      scoring: !!p.about.isScoringPlay, awayScore: p.result?.awayScore,
+      homeScore: p.result?.homeScore, endedAt: p.about.endTime || null,
+    }));
+  const play = feed.liveData?.plays?.currentPlay;
+  const currentAtBat = play ? {
+    id: play.about?.atBatIndex, complete: !!play.about?.isComplete,
+    batter: play.matchup?.batter, pitcher: play.matchup?.pitcher,
+    batSide: play.matchup?.batSide?.code, pitchHand: play.matchup?.pitchHand?.code,
+    pitches: (play.playEvents || []).filter(e => e.isPitch).map(e => ({
+      id: e.playId || e.index, number: e.pitchNumber,
+      description: e.details?.description, type: e.details?.type?.description,
+      speed: e.pitchData?.startSpeed ?? null,
+      kind: e.details?.isInPlay ? 'inplay' : /foul/i.test(e.details?.description || '') ? 'foul' : e.details?.isBall ? 'ball' : 'strike',
+      x: e.pitchData?.coordinates?.pX ?? null, z: e.pitchData?.coordinates?.pZ ?? null,
+      zoneTop: e.pitchData?.strikeZoneTop ?? null, zoneBottom: e.pitchData?.strikeZoneBottom ?? null,
+    })),
+  } : null;
+  const { feedTimestamp, ...contentState } = state;
+  const revision = createHash('sha256').update(JSON.stringify({ state: contentState, players, recentPlays, currentAtBat })).digest('hex').slice(0, 20);
+  return { gamePk: state.gamePk, state, players, recentPlays, currentAtBat, revision,
+    receivedAt: feed._piqReceivedAt || null, checkedAt: new Date().toISOString(),
+    pollSeconds: Math.max(state.isFinal ? 60 : state.isLive ? 10 : 30, Number(feed.metaData?.wait) || 10),
+    source: 'MLB StatsAPI', sourceTimestamp: feedTimestamp };
+}
+async function getLiveSnapshot(gamePk) {
+  const snapshot = snapshotFromFeed(await getLiveFeed(gamePk));
+  if (!snapshot.state.away.id || !snapshot.state.home.id) throw new Error('Game unavailable');
+  return snapshot;
 }
 
 /* ── Pitcher workload: continuous fatigue, NOT a TTO3 cliff ───────────────
@@ -329,6 +381,11 @@ async function getLiveOdds(espnEventId) {
      is far more likely to be our own staleness than a book error. */
   live.stale = live.ageSec > 150;
   live.ageIsLowerBound = true;
+  live.observedAt = new Date().toISOString();
+  live.firstObservedAt = new Date(seen.firstSeen).toISOString();
+  live.sourceUpdatedAt = null;
+  live.freshness = 'unknown';
+  live.executable = false;
 
   const out = { hasLive: true, live, pregame: pre ? shapeOddsRow(pre) : null };
   cacheSet(key, out, 20 * 1000);
@@ -374,12 +431,18 @@ async function espnEventIdFor(state, dateYmd) {
         if (!e?.id || !e?.name) continue;
         // "Detroit Tigers at Chicago White Sox"
         const m = String(e.name).split(' at ');
-        if (m.length === 2) map[`${norm(m[0])}@${norm(m[1])}`] = e.id;
+        if (m.length === 2) {
+          const matchup = `${norm(m[0])}@${norm(m[1])}`;
+          (map[matchup] ||= []).push(e.id);
+        }
       }
       cacheSet(key, map, 10 * 60 * 1000);
     } catch { /* no odds is a degraded mode, not an error */ }
   }
-  return map[`${norm(state.away.name)}@${norm(state.home.name)}`] || null;
+  const ids = map[`${norm(state.away.name)}@${norm(state.home.name)}`] || [];
+  // A team-name-only join cannot distinguish doubleheader games. Refuse a
+  // reference quote rather than silently attach the other game's market.
+  return ids.length === 1 ? ids[0] : null;
 }
 
 function norm(s) {
@@ -472,9 +535,10 @@ function dueUp(feed, state) {
   return { current: now, nextInning };
 }
 
-async function getLiveGame(gamePk, { refresh = false, season } = {}) {
+async function buildLiveGame(gamePk, { refresh = false, season } = {}) {
   const feed = await getLiveFeed(gamePk, { refresh });
-  const state = parseState(feed);
+  const snapshot = snapshotFromFeed(feed);
+  const state = snapshot.state;
   const yr = season || Number((feed.gameData?.datetime?.originalDate || '').slice(0, 4)) || new Date().getFullYear();
 
   /* MLB answers an unknown gamePk with a well-formed but EMPTY feed rather
@@ -482,14 +546,14 @@ async function getLiveGame(gamePk, { refresh = false, season } = {}) {
      instead of rendering a hollow pre-game card. */
   if (!state.away.id || !state.home.id) {
     return {
-      gamePk, live: false, state, notFound: true,
+      ...snapshot, gamePk, live: false, state, notFound: true,
       message: `No MLB game found for gamePk ${gamePk}.`,
     };
   }
 
   if (!state.isLive) {
     return {
-      gamePk, live: false, state,
+      ...snapshot, gamePk, live: false, state,
       message: state.isFinal
         ? 'This game is final — there is no live market to price.'
         : `Live analysis is paused (${state.status || 'not in progress'}). It resumes when play is in progress.`,
@@ -510,14 +574,22 @@ async function getLiveGame(gamePk, { refresh = false, season } = {}) {
   const envHome = forwardRunEnv(state, workload.away, bullpen.away);
 
   const modelEnv = { awayRpi: envAway.rpi, homeRpi: envHome.rpi, innings: state.scheduledInnings };
-  const pHome = M.winProbability(state, modelEnv);
-  const expRemaining = M.expectedRemainingRuns(state, modelEnv);
-  const remainingDist = remainingRunsDistribution(state, envAway.rpi, envHome.rpi);
-
-  /* Neutral baseline = same state priced at league-average run environment.
-     The gap is exactly the value our pitching/bullpen adjustment is adding,
-     which is what makes the number auditable instead of a black box. */
-  const neutral = M.winProbability(state, { awayRpi: LEAGUE_RPI, homeRpi: LEAGUE_RPI, innings: state.scheduledInnings });
+  // Cache the arithmetic by the exact game revision and pitching environment.
+  // Odds can refresh independently without rerunning the probability model.
+  const modelKey = `live_math_${gamePk}_${snapshot.revision}_${envAway.rpi}_${envHome.rpi}`;
+  let math = cacheGet(modelKey);
+  if (!math) {
+    math = {
+      pHome: M.winProbability(state, modelEnv),
+      expRemaining: M.expectedRemainingRuns(state, modelEnv),
+      remainingDist: remainingRunsDistribution(state, envAway.rpi, envHome.rpi),
+      finalScores: finalScoreDistribution(state, modelEnv),
+      neutral: M.winProbability(state, { awayRpi: LEAGUE_RPI, homeRpi: LEAGUE_RPI, innings: state.scheduledInnings }),
+      calculatedAt: new Date().toISOString(),
+    };
+    cacheSet(modelKey, math, 60000);
+  }
+  const { pHome, expRemaining, remainingDist, neutral } = math;
 
   const dateYmd = (feed.gameData?.datetime?.originalDate) || new Date().toISOString().slice(0, 10);
   let market = null;
@@ -535,8 +607,11 @@ async function getLiveGame(gamePk, { refresh = false, season } = {}) {
   const moveOut = buildMoves(ctx);
 
   return {
-    gamePk, live: true, state,
+    ...snapshot, gamePk, live: true, state,
     model: {
+      version: 'mlb-live-markov-v1', calculatedAt: math.calculatedAt,
+      remainingRunsDistribution: Array.from(remainingDist),
+      finalScores: math.finalScores,
       homeWinProb: Number(pHome.toFixed(4)),
       awayWinProb: Number((1 - pHome).toFixed(4)),
       homeFairOdds: M.probToAmerican(pHome),
@@ -549,25 +624,22 @@ async function getLiveGame(gamePk, { refresh = false, season } = {}) {
     },
     workload, bullpen,
     dueUp: dueUp(feed, state),
-    recentPlays: (feed.liveData?.plays?.allPlays || [])
-      .filter(p => p.about?.isComplete).slice(-6).reverse().map(p => ({
-        id: p.about.atBatIndex, inning: p.about.inning, half: p.about.halfInning,
-        description: p.result?.description || p.result?.event || 'Play completed',
-        scoring: !!p.about.isScoringPlay,
-        awayScore: p.result?.awayScore, homeScore: p.result?.homeScore,
-      })),
     market,
     ...moveOut,
     meta: {
       feedTimestamp: state.feedTimestamp,
-      /* Stated plainly and on every response: we are behind the book, always. */
-      latencyNote: 'MLB StatsAPI polls ~10s behind live; books run ~1-2s feeds and hold a 3-8s '
-        + 'acceptance window. This tool is for structural edges that persist for minutes, not for racing a pitch.',
-      pollSeconds: 15,
+      latencyNote: 'Free public feed. Update delay varies and is not guaranteed. Reference odds have unknown publication time; paper results do not represent sportsbook execution.',
+      pollSeconds: snapshot.pollSeconds,
     },
   };
 }
 
+async function getLiveGame(gamePk, options = {}) {
+  return dedupe(`analysis_${gamePk}_${options.season || ''}_${!!options.refresh}`,
+    () => buildLiveGame(gamePk, options));
+}
 module.exports.getLiveGame = getLiveGame;
+module.exports.getLiveSnapshot = getLiveSnapshot;
+module.exports.snapshotFromFeed = snapshotFromFeed;
 module.exports.remainingRunsDistribution = remainingRunsDistribution;
 module.exports.dueUp = dueUp;

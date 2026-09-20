@@ -457,7 +457,7 @@ async function fetchMlbGamePlayers(gameInfo) {
    game that is actually in progress, and the backend resolves everything else.
 
    Deliberately NOT cached client-side: the whole point is freshness, and the
-   backend already caches the upstream feed for 15s. */
+   backend shares the provider-aware upstream cache. */
 async function fetchMlbLive(gamePk, { refresh = false } = {}) {
   if (!gamePk) return null;
   const controller = new AbortController();
@@ -485,6 +485,7 @@ async function fetchMlbLive(gamePk, { refresh = false } = {}) {
    hangs off MLB's gamePk, but `gameInfo` is ESPN-shaped, so we reuse the
    lineups endpoint's team+date resolution rather than duplicating a matcher. */
 async function resolveMlbGamePk(gameInfo, lineupsData) {
+  if (gameInfo?.gamePk) return gameInfo.gamePk;
   if (lineupsData && lineupsData.gamePk) return lineupsData.gamePk;
   try {
     const lu = await fetchMlbLineups(gameInfo);

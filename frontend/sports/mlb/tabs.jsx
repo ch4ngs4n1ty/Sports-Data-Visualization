@@ -2538,19 +2538,27 @@ function LiveContext({ data }) {
 /* ── The tab ─────────────────────────────────────────────────────────────── */
 function MlbLiveTab({ gameData, gameInfo }) {
   const [gamePk, setGamePk] = React.useState(null);
-  const [data, setData] = React.useState(null);
+  const [analysis, setData] = React.useState(null);
   const [err, setErr] = React.useState(null);
   const [loading, setLoading] = React.useState(true);
   const [auto, setAuto] = React.useState(true);
-  const [selected, setSelected] = React.useState([]);
   const [refreshKey, setRefreshKey] = React.useState(0);
   const [resolveKey, setResolveKey] = React.useState(0);
-  const [updatedAt, setUpdatedAt] = React.useState(null);
+
+  const [liveUpdate, setLiveUpdate] = React.useState(null);
+  const snapshot = liveUpdate?.snapshot;
+  const analysisMatches = !!analysis && !!snapshot && analysis.revision === snapshot.revision;
+  const data = snapshot ? { ...analysis, ...snapshot, live: snapshot.state.isLive,
+    model: analysisMatches ? analysis.model : null, moves: analysisMatches ? analysis.moves : [],
+    blocked: !analysisMatches || analysis.blocked,
+    blockedReason: !analysisMatches ? 'Updating analysis for the latest game state.' : analysis.blockedReason,
+    message: snapshot.state.isFinal ? 'Game final.' : snapshot.state.status } : analysis;
+  const feedHealthy = auto && ['live', 'polling'].includes(liveUpdate?.status);
 
   /* Resolve the gamePk once. */
   React.useEffect(() => {
     let dead = false;
-    setGamePk(null); setData(null); setSelected([]); setLoading(true); setErr(null);
+    setGamePk(null); setData(null); setLiveUpdate(null); setLoading(true); setErr(null);
     (async () => {
       /* `gameData.mlbLineups` is where Phase 2 parks the resolved gamePk. If
          it has already landed we use it for free; if not we resolve it
@@ -2562,137 +2570,44 @@ function MlbLiveTab({ gameData, gameInfo }) {
     return () => { dead = true; };
   }, [gameInfo && gameInfo.eventId, resolveKey]);
 
-  /* Schedule after completion: a slow provider cannot overlap requests. */
+  // Lightweight snapshots arrive independently of model/odds work. Analysis
+  // requests are serial and their revisions must match before a pick is enabled.
   React.useEffect(() => {
     if (!gamePk) return;
-    let dead = false, timer;
+    let dead = false, timer, running = false, pending = false;
+    let lastRevision = null;
     const load = async () => {
-      if (document.hidden) { timer = setTimeout(load, LIVE_POLL_MS); return; }
+      if (dead || document.hidden) return;
+      if (running) { pending = true; return; }
+      clearTimeout(timer); running = true;
       const r = await window.fetchMlbLive(gamePk);
+      running = false;
       if (dead) return;
-      if (!r || r._error) setErr((r && r.message) || 'Live data unavailable.');
-      else { setData(r); setErr(null); setUpdatedAt(new Date()); }
+      if (!r || r._error) setErr(r?.message || 'Analysis unavailable.');
+      else { setData(r); setErr(null); }
       setLoading(false);
-      if (auto && !r?.state?.isFinal) timer = setTimeout(load, LIVE_POLL_MS);
+      if (pending) { pending = false; timer = setTimeout(load, 250); }
+      else if (auto) timer = setTimeout(load, LIVE_POLL_MS);
     };
-    load();
-    return () => { dead = true; clearTimeout(timer); };
+    let unsubscribe;
+    if (auto) unsubscribe = window.subscribeMlbLive({ gamePk }, update => {
+      if (dead) return;
+      setLiveUpdate(update);
+      if (update.snapshot) setLoading(false);
+      if (['live', 'polling'].includes(update.status) && update.snapshot?.revision !== lastRevision) {
+        lastRevision = update.snapshot.revision; load();
+      }
+    });
+    else setLiveUpdate(u => u ? { ...u, status: 'paused' } : u);
+    if (!running) load();
+    return () => { dead = true; clearTimeout(timer); unsubscribe?.(); };
   }, [gamePk, auto, refreshKey]);
 
-  const addSelection = (move) => {
-    const state = data.state;
-    setSelected(prev => {
-      if (prev.some(m => liveSelectionKey(m) === liveSelectionKey(move))) return prev;
-      return [...prev, { ...move, label: move.market === 'MONEYLINE' ? `${state[move.side.toLowerCase()].abbr} ML` : `${move.side} ${move.line}`, snapshot: { inning: state.inning, half: state.half,
-        outs: state.outs, bases: state.bases, score: `${state.awayScore}-${state.homeScore}` },
-        selectedAt: new Date().toISOString(), feedTimestamp: state.feedTimestamp }];
-    });
-  };
-
   if (loading) return <TabLoader source="MLB live feed" label="Reading game state" rows={3} />;
-  /* Only a HARD failure (no data at all) replaces the tab. If we already have
-     a payload, the error becomes a banner over the last good numbers. */
-  if (err && !data) return <div><EmptyState title="LIVE UNAVAILABLE" hint={err} /><button onClick={() => { setLoading(true); if (gamePk) setRefreshKey(k => k + 1); else setResolveKey(k => k + 1); }}>RETRY LIVE FEED</button></div>;
-  if (!data) return <EmptyState title="NO LIVE DATA" />;
-
-  if (!data.live) {
-    return <div><EmptyState title={data.state?.isFinal ? "FINAL" : "NOT IN PROGRESS"} hint={data.message} /><LiveTrackerPanel data={data} gameInfo={gameInfo} /></div>;
-  }
-
-  const { state, model, market, moves, blocked, blockedReason, checkpoints, meta } = data;
-  const unavailable = !!err || !auto || !market?.hasLive || !!market?.live?.stale;
-
-  return (
-    <div className="stagger" style={{ display: 'grid', gap: 'var(--s5)' }}>
-
-      {err && (
-        <div style={{ padding: '9px 13px', borderRadius: 'var(--r-md)',
-          background: 'color-mix(in srgb, var(--orange) 10%, transparent)',
-          border: '1px solid var(--orange)', color: 'var(--orange)',
-          fontSize: 'var(--fs-micro)', fontFamily: 'Space Mono, monospace', lineHeight: 1.6 }}>
-          ⚠ Last refresh failed: {err} — showing the most recent good read
-          (feed {state.feedTimestamp || '—'}).
-        </div>
-      )}
-
-      {/* ── Header: state + latency honesty ── */}
-      <HudCard style={{ padding: 'var(--s4)' }}>
-        <div style={{ display: 'flex', gap: 'var(--s5)', flexWrap: 'wrap', alignItems: 'center' }}>
-          <div>
-            <div className="piq-label" style={{ color: 'var(--muted)', fontSize: 'var(--fs-micro)' }}>
-              {state.betweenInnings ? 'BREAK · NEXT ' : ''}{state.half === 'top' ? '▲ TOP' : '▼ BOT'} {state.inning}
-            </div>
-            <div style={{ fontFamily: 'Orbitron, monospace', fontSize: 'var(--fs-xl)', color: 'var(--text)', marginTop: 4 }}>
-              {state.away.abbr} {state.awayScore} — {state.homeScore} {state.home.abbr}
-            </div>
-          </div>
-          <LiveDiamond bases={state.bases} outs={state.outs} />
-          <div style={{ marginLeft: 'auto', textAlign: 'right' }}>
-            <button onClick={() => setAuto(a => !a)} style={{
-              fontFamily: 'Space Mono, monospace', fontSize: 'var(--fs-micro)', letterSpacing: '0.12em',
-              padding: '6px 12px', borderRadius: 99, cursor: 'pointer',
-              background: auto ? 'color-mix(in srgb, var(--green) 14%, transparent)' : 'var(--surface)',
-              border: `1px solid ${auto ? 'var(--green)' : 'var(--line-strong)'}`,
-              color: auto ? 'var(--green)' : 'var(--muted)',
-            }}>{err ? '⚠ FEED DELAYED' : auto ? '● AUTO · 15s' : '❚❚ PAUSED'}</button>
-            <button aria-label="Refresh live feed" onClick={() => setRefreshKey(k => k + 1)} style={{ marginLeft: 8, padding: 8, color: 'var(--accent)', background: 'var(--surface)', border: '1px solid var(--line-strong)', borderRadius: 6 }}>↻ REFRESH</button>
-            <div style={{ fontSize: 'var(--fs-micro)', color: 'var(--dim)', marginTop: 6 }}>
-              Checked {updatedAt ? updatedAt.toLocaleTimeString() : '—'} · feed {state.feedTimestamp || '—'}
-            </div>
-          </div>
-        </div>
-        <div style={{ marginTop: 'var(--s3)', paddingTop: 'var(--s3)', borderTop: '1px solid var(--line)',
-          fontSize: 'var(--fs-micro)', color: 'var(--muted)', lineHeight: 1.7 }}>
-          ⏱ {meta.latencyNote}
-        </div>
-      </HudCard>
-
-      {/* ── THE MOVES ── */}
-      <div>
-        <SectionHeader label="MOVES"
-          sub={blocked ? 'Nothing to price against right now'
-            : moves.length ? `${moves.length} edge${moves.length === 1 ? '' : 's'} over the de-vigged market`
-            : 'No edge clears the threshold'} />
-        {blocked ? (
-          <EmptyState title="NO LIVE LINE" hint={blockedReason} />
-        ) : moves.length === 0 ? (
-          <EmptyState title="NO PLAY"
-            hint={`The model and the market agree within ${data.thresholds ? data.thresholds.minEdgePts : 4.5} points. That is the normal state of a fairly-priced game — no bet is the correct move.`} />
-        ) : (
-          <div style={{ display: 'grid', gap: 'var(--s4)' }}>
-            {moves.map((m, i) => <MoveCard key={i} move={m} onAdd={addSelection} unavailable={unavailable} added={selected.some(s => liveSelectionKey(s) === liveSelectionKey(m))} />)}
-          </div>
-        )}
-      </div>
-
-      <LiveTrackerPanel key={data.gamePk} data={data} gameInfo={gameInfo}
-        selected={selected} onAdd={addSelection} unavailable={unavailable}
-        onRemove={key => setSelected(prev => prev.filter(m => liveSelectionKey(m) !== key))}
-        onClear={() => setSelected([])} />
-      <LivePlayFeed data={data} />
-
-      {/* ── PRICE ── */}
-      <PriceCompare model={model} market={market} state={state} />
-
-      {/* ── CHECKPOINTS ── */}
-      {checkpoints && checkpoints.length > 0 && (
-        <HudCard style={{ padding: 'var(--s4)' }} accent="var(--gold)">
-          <SectionHeader label="WATCH FOR" sub="Moments where a structural edge appears and holds for minutes" />
-          <div style={{ display: 'grid', gap: 'var(--s3)' }}>
-            {checkpoints.map((c, i) => (
-              <div key={i} style={{ display: 'flex', gap: 'var(--s3)', alignItems: 'flex-start' }}>
-                <Chip color="var(--gold)">{c.kind.replace(/-/g, ' ').toUpperCase()}</Chip>
-                <div style={{ fontSize: 'var(--fs-sm)', color: 'var(--text)', lineHeight: 1.65, flex: 1 }}>{c.text}</div>
-              </div>
-            ))}
-          </div>
-        </HudCard>
-      )}
-
-      {/* ── CONTEXT ── */}
-      <LiveContext data={data} />
-    </div>
-  );
+  if (!data) return <div><EmptyState title="LIVE UNAVAILABLE" hint={err || 'Waiting for the game feed.'} /><button className="piq-btn" onClick={() => { setLoading(true); if (gamePk) setRefreshKey(k => k + 1); else setResolveKey(k => k + 1); }}>RETRY</button></div>;
+  return <LiveIndicatorBoard key={data.gamePk} data={data} gameInfo={gameInfo}
+    status={liveUpdate?.status || 'connecting'} healthy={feedHealthy} error={err}
+    auto={auto} onToggle={() => setAuto(a => !a)} onRefresh={() => setRefreshKey(k => k + 1)} />;
 }
 
 /* LIVE tab exports (defined above, after the original export block). */
@@ -2804,8 +2719,9 @@ function trackerSummary(bets) {
 }
 
 /* ── The tracker panel ───────────────────────────────────────────────────── */
-function LiveTrackerPanel({ data, gameInfo, selected, onAdd, onRemove, onClear, unavailable }) {
+function LiveTrackerPanel({ data, gameInfo, selected, onAdd, onRemove, onClear, unavailable, simulationUnavailable = true }) {
   const [bets, setBets] = React.useState(loadBets);
+  const [trackerMode, setTrackerMode] = React.useState('PAPER');
   const [failed, setFailed] = React.useState(false);
   const [open, setOpen] = React.useState(false);
 
@@ -2822,22 +2738,28 @@ function LiveTrackerPanel({ data, gameInfo, selected, onAdd, onRemove, onClear, 
       market: m.market, side: m.side, label: m.label, odds: Number(m.odds),
       line: m.line, stakeUnits: Number(m.stakeUnits), modelProb: m.modelProb ?? null,
       marketProb: m.marketProb ?? null, edgePts: m.edgePts ?? null,
+      mode: m.mode || 'ACTUAL', revision: m.revision || null, modelVersion: m.modelVersion || null,
+      audit: m.audit ? { ...m.audit, priceEdited: Number(m.odds) !== Number(m.number) } : null,
       confidence: m.confidence, state: m.snapshot, feedTimestamp: m.feedTimestamp, result: 'OPEN',
     }));
-    return commit([...records, ...bets]);
+    const saved = commit([...records, ...bets]);
+    if (saved && records.length) setTrackerMode(records[0].mode);
+    return saved;
   };
 
-  const settle = (id, result) => commit(bets.map(b => b.id === id ? { ...b, result } : b));
+  const settle = (id, result) => commit(bets.map(b => b.id === id ? { ...b, result, settledAt: new Date().toISOString() } : b));
   const remove = (id) => commit(bets.filter(b => b.id !== id));
 
-  const s = trackerSummary(bets);
+  const visibleBets = bets.filter(b => (b.mode || 'ACTUAL') === trackerMode);
+  const s = trackerSummary(visibleBets);
 
   return (
     <>
+    {data.live && <PaperSimulation data={data} unavailable={simulationUnavailable} onLog={logSlip} />}
     {selected && <LiveSlipBuilder data={data} selected={selected} onAdd={onAdd} onRemove={onRemove} onClear={onClear} onLog={logSlip} unavailable={unavailable} />}
     <HudCard style={{ padding: 'var(--s4)' }}>
       <SectionHeader label="TRACKER"
-        sub="Log what you actually bet, then let it grade the model"
+        sub={trackerMode === 'PAPER' ? 'Hypothetical results · manual settlement · saved decision snapshots' : 'Your existing manually logged bets'}
         right={
           <button onClick={() => setOpen(o => !o)} style={{
             fontFamily: 'Space Mono, monospace', fontSize: 'var(--fs-micro)', letterSpacing: '0.1em',
@@ -2852,6 +2774,16 @@ function LiveTrackerPanel({ data, gameInfo, selected, onAdd, onRemove, onClear, 
         </div>
       )}
 
+      <div style={{ display: 'flex', gap: 12, marginBottom: 16 }}>
+        {['PAPER', 'ACTUAL'].map(mode => <button key={mode} className="piq-btn piq-btn-ghost" onClick={() => setTrackerMode(mode)} aria-pressed={trackerMode === mode}>{mode}</button>)}
+        <button className="piq-btn piq-btn-ghost" onClick={() => {
+          const blob = new Blob([JSON.stringify({ exportedAt: new Date().toISOString(), mode: trackerMode,
+            records: visibleBets, replay: window.paperReplay(visibleBets) }, null, 2)], { type: 'application/json' });
+          const url = URL.createObjectURL(blob), a = document.createElement('a');
+          a.href = url; a.download = `playiq-${trackerMode.toLowerCase()}-decisions.json`; a.click();
+          setTimeout(() => URL.revokeObjectURL(url), 1000);
+        }}>EXPORT DECISIONS</button>
+      </div>
       {/* Scorecard */}
       <div style={{ display: 'flex', gap: 'var(--s3)', flexWrap: 'wrap' }}>
         <StatTile label="LOGGED" value={s.total} countUp={false} />
@@ -2898,14 +2830,20 @@ function LiveTrackerPanel({ data, gameInfo, selected, onAdd, onRemove, onClear, 
         </div>
       )}
 
+      {open && trackerMode === 'PAPER' && visibleBets.length > 0 && <div style={{ marginTop: 16, fontSize: 'var(--fs-micro)' }}>
+        <SectionHeader label="DECISION REPLAY" sub="Recorded picks in order · current manually settled outcomes · no reconstructed historical odds" />
+        {window.paperReplay(visibleBets).slice(-20).map(r => <div key={r.id} style={{ padding: '8px 0', borderTop: '1px solid var(--line)' }}>
+          {new Date(r.ts).toLocaleTimeString()} · {r.label} · {r.result} · cumulative {r.profit.toFixed(2)}u
+        </div>)}
+      </div>}
       {/* The log */}
       {open && (
         <div style={{ marginTop: 'var(--s4)', paddingTop: 'var(--s3)', borderTop: '1px solid var(--line)' }}>
-          {bets.length === 0 ? (
+          {visibleBets.length === 0 ? (
             <EmptyState title="NOTHING LOGGED" hint="Take a move above and it lands here with the exact game state you bet it from." />
           ) : (
             <div style={{ display: 'grid', gap: 'var(--s2)' }}>
-              {bets.slice(0, 40).map(b => (
+              {visibleBets.slice(0, 40).map(b => (
                 <div key={b.id} style={{ display: 'flex', gap: 'var(--s3)', alignItems: 'center', flexWrap: 'wrap',
                   padding: '8px 10px', background: 'var(--surface)', borderRadius: 6,
                   border: '1px solid var(--line)', fontSize: 'var(--fs-micro)', fontFamily: 'Space Mono, monospace' }}>

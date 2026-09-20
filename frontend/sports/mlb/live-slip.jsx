@@ -103,7 +103,7 @@ function LiveSlipBuilder({ data, selected, onAdd, onRemove, onClear, onLog, unav
 function LivePlayFeed({ data }) {
   const s = data.state;
   return <HudCard style={{ padding: 'var(--s4)' }}>
-    <SectionHeader label="AT THE PLATE" sub={`${s.currentBatter?.name || 'Batter pending'} · ${s.balls}–${s.strikes} count`} />
+    <SectionHeader label={s.isFinal ? "FINAL PLAYS" : "AT THE PLATE"} sub={`${s.currentBatter?.name || 'Batter pending'} · ${s.balls}–${s.strikes} count`} />
     <div style={{ display: 'flex', gap: 'var(--s3)', flexWrap: 'wrap', marginBottom: 'var(--s3)' }}>
       <Chip color="var(--accent)">{s.currentPitcher?.name || 'Pitcher pending'} pitching</Chip>
       {s.onDeck && <Chip color="var(--muted)">ON DECK · {s.onDeck.name}</Chip>}
@@ -115,3 +115,79 @@ function LivePlayFeed({ data }) {
   </HudCard>;
 }
 Object.assign(window, { LiveSlipBuilder, LivePlayFeed, liveSelectionKey, liveValidOdds, liveSlipReturn, liveMarketSelections });
+
+function LivePlayerBoard({ data }) {
+  const players = data.players || [];
+  return <HudCard style={{ padding: 'var(--s4)' }}>
+    <SectionHeader label="LIVE PLAYER PERFORMANCES" sub="Current game box score · updates with the play feed" />
+    {!players.length ? <EmptyState title="PLAYER STATS PENDING" /> : <div style={{ overflowX: 'auto' }}>
+      <table style={{ width: '100%', fontSize: 'var(--fs-micro)', textAlign: 'left', borderCollapse: 'collapse' }}>
+        <thead><tr>{['Player', 'AB', 'H', 'R', 'RBI', 'HR', 'IP', 'K', 'Pitches'].map(h => <th key={h} style={{ padding: 8 }}>{h}</th>)}</tr></thead>
+        <tbody>{players.map(p => <tr key={`${p.side}-${p.id}`} style={{ borderTop: '1px solid var(--line)' }}>
+          <td style={{ padding: 8 }}>{p.name} <span style={{ color: 'var(--muted)' }}>{data.state[p.side]?.abbr}</span></td>
+          {['atBats', 'hits', 'runs', 'rbi', 'homeRuns'].map(k => <td key={k} style={{ padding: 8 }}>{p.batting[k] ?? '—'}</td>)}
+          {['inningsPitched', 'strikeOuts', 'numberOfPitches'].map(k => <td key={k} style={{ padding: 8 }}>{p.pitching[k] ?? '—'}</td>)}
+        </tr>)}</tbody>
+      </table>
+    </div>}
+  </HudCard>;
+}
+
+function PaperSimulation({ data, unavailable, onLog }) {
+  const [market, setMarket] = React.useState('MONEYLINE');
+  const [side, setSide] = React.useState('HOME');
+  const [line, setLine] = React.useState('8.5');
+  const [odds, setOdds] = React.useState('');
+  const [stake, setStake] = React.useState('1');
+  const [priceSource, setPriceSource] = React.useState('manual');
+  const [draft, setDraft] = React.useState(null);
+  const [notice, setNotice] = React.useState('');
+  const [now, setNow] = React.useState(Date.now());
+  React.useEffect(() => { const t = setInterval(() => setNow(Date.now()), 1000); return () => clearInterval(t); }, []);
+  const price = window.paperPrice(data.model, data.state, market, side, line, odds);
+  const quote = data.market?.live;
+  const reference = market === 'MONEYLINE' ? (side === 'HOME' ? quote?.homeMoneyline : quote?.awayMoneyline)
+    : Number(line) === Number(quote?.total) ? (side === 'OVER' ? quote?.overOdds : quote?.underOdds) : null;
+  const input = { padding: 10, color: 'var(--text)', background: 'var(--surface)', border: '1px solid var(--line-strong)', borderRadius: 6, width: '100%', boxSizing: 'border-box' };
+  const changed = fn => e => { fn(e.target.value); setDraft(null); setNotice(''); };
+  const current = draft && draft.revision === data.revision;
+  const remaining = draft ? Math.max(0, Math.ceil((Date.parse(draft.selectedAt) + 5000 - now) / 1000)) : 0;
+  const blocked = unavailable || !data.model || !data.state.isLive;
+  return <HudCard style={{ padding: 'var(--s4)', marginBottom: 'var(--s4)' }} accent="var(--gold)">
+    <SectionHeader label="PAPER SIMULATOR" sub="Moneyline or total · manual price · no wager submission" />
+    <div style={{ display: 'grid', gap: 12, gridTemplateColumns: 'repeat(auto-fit, minmax(115px, 1fr))', fontSize: 'var(--fs-micro)' }}>
+      <label>MARKET<select style={input} value={market} onChange={e => { setMarket(e.target.value); setSide(e.target.value === 'TOTAL' ? 'OVER' : 'HOME'); setDraft(null); }}><option>MONEYLINE</option><option>TOTAL</option></select></label>
+      <label>SIDE<select style={input} value={side} onChange={changed(setSide)}>{(market === 'TOTAL' ? ['OVER', 'UNDER'] : ['HOME', 'AWAY']).map(v => <option key={v}>{v}</option>)}</select></label>
+      {market === 'TOTAL' && <label>TOTAL<input style={input} type="number" min="0" step="0.5" value={line} onChange={changed(setLine)} /></label>}
+      <label>AMERICAN ODDS<input style={input} type="number" placeholder="e.g. -110" value={odds} onChange={e => { setOdds(e.target.value); setPriceSource('manual'); setDraft(null); }} /></label>
+      <label>PAPER UNITS<input style={input} type="number" min="0.01" step="0.25" value={stake} onChange={changed(setStake)} /></label>
+    </div>
+    {liveValidOdds(reference) && <button style={{ ...input, width: 'auto', marginTop: 12 }} onClick={() => { setOdds(String(reference)); setPriceSource('unverified-reference'); setDraft(null); }}>USE UNVERIFIED REFERENCE {reference > 0 ? '+' : ''}{reference}</button>}
+    <p style={{ fontSize: 'var(--fs-micro)', color: 'var(--muted)', lineHeight: 1.7 }}>
+      The model uses inning, runners, outs, and pitching assumptions; it does not model the current count or player props. Enter a price to test a scenario. Publication time and market availability are unknown. A five-second review delay tests whether the game state stays unchanged; it does not simulate a sportsbook accepting the price.
+    </p>
+    {price && <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
+      <StatTile label="MODEL WIN" value={`${(price.win * 100).toFixed(1)}%`} countUp={false} />
+      <StatTile label="PUSH" value={`${(price.push * 100).toFixed(1)}%`} countUp={false} />
+      <StatTile label="HYPOTHETICAL EV" value={`${price.ev >= 0 ? '+' : ''}${(price.ev * 100).toFixed(1)}%`} countUp={false} />
+      <Chip color={price.ev > 0 ? 'var(--gold)' : 'var(--muted)'}>{price.ev > 0 ? 'MODEL-POSITIVE · UNVERIFIED PRICE' : 'NO PLAY AT THIS PRICE'}</Chip>
+    </div>}
+    {blocked && <p role="status" style={{ color: 'var(--orange)', fontSize: 'var(--fs-micro)' }}>Simulation paused until the live feed and model agree.</p>}
+    <div style={{ display: 'flex', gap: 12, marginTop: 12, flexWrap: 'wrap' }}>
+      <button style={{ ...input, width: 'auto' }} disabled={blocked || !price || !(Number(stake) > 0)} onClick={() => {
+        const label = market === 'MONEYLINE' ? `${data.state[side.toLowerCase()].abbr} ML` : `${side} ${line}`;
+        setDraft(window.paperSnapshot(data, { market, side, line: market === 'TOTAL' ? Number(line) : null,
+          odds: Number(odds), stakeUnits: Number(stake), label, priceSource }));
+        setNow(Date.now()); setNotice('');
+      }}>PREPARE PAPER PICK</button>
+      {draft && <button style={{ ...input, width: 'auto' }} disabled={blocked || !current || remaining > 0} onClick={() => {
+        if (blocked || !current || Date.now() < Date.parse(draft.selectedAt) + 5000) return;
+        const record = { ...draft, audit: { ...draft.audit, decisionDelayMs: Date.now() - Date.parse(draft.selectedAt) } };
+        if (onLog([record])) { setDraft(null); setNotice('Paper pick saved. Settle it in the paper tracker after the result.'); }
+        else setNotice('Could not save locally. Your prepared pick is still here.');
+      }}>{!current ? 'STATE CHANGED — PREPARE AGAIN' : remaining ? `REVIEW · ${remaining}s` : 'SAVE PAPER PICK'}</button>}
+    </div>
+    <div role="status" style={{ marginTop: 12, fontSize: 'var(--fs-micro)', color: 'var(--gold)' }}>{notice}</div>
+  </HudCard>;
+}
+Object.assign(window, { LivePlayerBoard, PaperSimulation });
