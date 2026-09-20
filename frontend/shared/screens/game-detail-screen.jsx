@@ -50,6 +50,7 @@ const TABS_WNBA = [
 // NFL: the five sport-agnostic tabs plus a season MATCHUP board. No edge /
 // props tabs yet — those are a separate per-sport analytical build.
 const TABS_NFL = [
+  { id: 'live', label: '◉ LIVE' },
   { id: 'overview', label: 'OVERVIEW' },
   { id: 'h2h', label: 'HEAD-TO-HEAD' },
   { id: 'form', label: 'LAST 5' },
@@ -81,10 +82,10 @@ function GameDetailScreen({ game: initialGame, onBack }) {
   }, [initialGame.eventId]);
   const [tab, setTab] = React.useState(() => {
     const saved = sessionStorage.getItem('piq_tab');
-    if (saved === 'live' && game.sportKey !== 'mlb') return 'overview';
+    if (saved === 'live' && !['mlb','nfl'].includes(game.sportKey)) return 'overview';
     // 'lookup' was folded into 'roster'; a session persisted before that
     // change would otherwise restore onto a tab that no longer renders.
-    return saved === 'lookup' ? 'roster' : (saved || (game.sportKey === 'mlb' ? 'live' : 'overview'));
+    return saved === 'lookup' ? 'roster' : (saved || (['mlb','nfl'].includes(game.sportKey) ? 'live' : 'overview'));
   });
   const [gameData, setGameData] = React.useState(null);
   const [loading, setLoading] = React.useState(true);
@@ -305,8 +306,8 @@ function GameDetailScreen({ game: initialGame, onBack }) {
           A broadcast-style scoreboard rather than a text line: both marks at
           equal weight either side of the status, scores when the game is
           under way, and the betting lines directly beneath. */}
-      {tab === 'live' && game.sportKey === 'mlb' && <button onClick={onBack} className="piq-btn piq-btn-ghost" style={{ margin: '16px 0' }}>← GAMES</button>}
-      {!(tab === 'live' && game.sportKey === 'mlb') && <header style={{ padding: 'var(--s5) 0 var(--s4)' }}>
+      {tab === 'live' && ['mlb','nfl'].includes(game.sportKey) && <button onClick={onBack} className="piq-btn piq-btn-ghost" style={{ margin: '16px 0' }}>← GAMES</button>}
+      {!(tab === 'live' && ['mlb','nfl'].includes(game.sportKey)) && <header style={{ padding: 'var(--s5) 0 var(--s4)' }}>
         <button onClick={onBack} className="piq-btn piq-btn-ghost" style={{ marginBottom: 'var(--s4)' }}>← GAMES</button>
 
         <HudCard glow={false} style={{ padding: 'var(--s5)', overflow: 'hidden' }}>
@@ -358,7 +359,7 @@ function GameDetailScreen({ game: initialGame, onBack }) {
         </div>
       </header>}
 
-      {loading && !(game.sportKey === 'mlb' && tab === 'live') ? (
+      {loading && !(['mlb','nfl'].includes(game.sportKey) && tab === 'live') ? (
         <div style={{ padding: 'var(--s6) 0' }}>
           <Loader text={steps[stepIdx] || 'LOADING'} />
           <ol style={{ display: 'flex', justifyContent: 'center', gap: 'var(--s2)', marginTop: 'var(--s4)',
@@ -399,6 +400,7 @@ function GameDetailScreen({ game: initialGame, onBack }) {
 
           <div id="tabpanel" role="tabpanel" aria-labelledby={`tab-${tab}`} tabIndex={-1} style={{ minHeight: 400 }}>
             {tab === 'live' && game.sportKey === 'mlb' && <MlbLiveTab key={game.eventId} gameData={gameData} gameInfo={game} />}
+            {tab === 'live' && game.sportKey === 'nfl' && <NflLiveTab key={game.eventId} gameInfo={game} />}
             {tab === 'overview' && <OverviewTab gameData={gameData} />}
             {tab === 'h2h' && <H2HTab gameData={gameData} />}
             {tab === 'form' && <FormTab gameData={gameData} />}
