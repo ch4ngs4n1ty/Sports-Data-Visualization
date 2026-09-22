@@ -126,7 +126,7 @@ function streamBrowser() {
     send(snapshot) { this.handlers.snapshot({ data: JSON.stringify(snapshot) }); }
   }
   let requests = 0;
-  const context = vm.createContext({ window: { EventSource: Source }, EventSource: Source, document,
+  const context = vm.createContext({ window: { EventSource: Source, addEventListener: (name,fn)=>events.set(name,fn), removeEventListener: name=>events.delete(name) }, EventSource: Source, document,
     API_BASE: 'http://localhost:3011', URLSearchParams, AbortController,
     setTimeout: clock.schedule, clearTimeout: clock.cancel,
     fetch: async () => { requests++; return { ok: true, json: async () => ({ revision: 'rest', checkedAt: new Date().toISOString() }) }; } });
@@ -166,4 +166,13 @@ test('ambiguous doubleheader odds are withheld instead of attached to the wrong 
   cacheSet('espnmap_2026-09-20', { 'away@home': ['first'] });
   assert.equal(await espnEventIdFor(state, '2026-09-20'), 'first');
   cache.delete('espnmap_2026-09-20');
+});
+
+test('browser recovers on network restore and page return without visibility change', () => {
+  const b=streamBrowser(), stop=b.subscribe({gamePk:3},()=>{});
+  for(const event of ['online','pageshow','focus']) {
+    const old=b.sources.at(-1); b.events.get(event)();
+    assert.equal(old.closed,true); assert.notEqual(b.sources.at(-1),old);
+  }
+  stop();assert.equal(b.events.size,0);assert.equal(b.clock.tasks.size,0);
 });

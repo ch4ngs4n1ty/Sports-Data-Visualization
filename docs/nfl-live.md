@@ -1,6 +1,6 @@
 # NFL Live
 
-The NFL game-detail Live tab reads the free public ESPN summary endpoint directly in the browser. No key, paid odds provider, AI call, bet slip, or transaction is involved. Requests run serially every 15 seconds with a 12-second timeout; hidden tabs stop polling and resume when visible. Failures retain old data with a stale notice and disable following. Provider freshness is unknown; the age shown is our last successful retrieval, not the source's publication time.
+The NFL game-detail Live tab reads the free public ESPN summary endpoint directly in the browser. No key, paid odds provider, AI call, bet slip, or transaction is involved. One shared subscription per game runs serial requests five seconds after each live-game response, 30 seconds before kickoff, and 60 seconds after final, with a 12-second timeout. Failures back off up to 60 seconds and respect Retry-After. Focus, page return and network recovery trigger a refresh; hidden tabs stop polling and resume when visible. Failures retain old data with a stale notice and disable following. Provider freshness is unknown; the age shown is our last successful retrieval, not the source's publication time.
 
 The field shows the last play's ending position relative to the possessing team's own goal line (offense always moves right), the line of scrimmage, and first-down/goal marker. It is a schematic, not a player-tracking feed. Halftime may retain the previous play's position.
 
@@ -11,3 +11,5 @@ Passing, rushing, and receiving yardage estimates extrapolate current game pace 
 Selections retain the entered line in per-game `piq_nfl_follows_<eventId>` browser storage, up to 12. Probability change tracks the current visit only. No odds comparison or claim of positive expected value is made.
 
 Validation: `node --test tests/nfl-live.test.js` covers probability mass, complement/push accounting, spread signs, regulation/OT separation, unavailable inputs, negative player yardage, and field normalization.
+
+The stadium view uses lightweight CSS 3D perspective over SVG, home-team colors and logos in both end zones, a midfield logo and feed-provided venue name. A top view is available. It is a stylized design rather than an architectural replica; neutral venues are labeled.

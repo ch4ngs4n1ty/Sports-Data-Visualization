@@ -26,7 +26,8 @@
           if (!r.ok) throw new Error('Live feed unavailable');
           const snapshot = await r.json();
           if (token !== generation || stopped) return;
-          emit({ snapshot, status: 'polling', receivedAt: Date.now() });
+          const fresh = Number.isFinite(Date.parse(snapshot.checkedAt)) && Date.now() - Date.parse(snapshot.checkedAt) < 45000;
+          emit({ snapshot, status: fresh ? 'polling' : 'stale', receivedAt: Date.now() });
           delay = Math.max(delay, (snapshot.pollSeconds || 0) * 1000);
         } catch {
           if (token !== generation || stopped) return;
@@ -60,9 +61,11 @@
         source.onerror = () => { if (token === generation) fallback(); };
       }
       const visibility = () => start();
+      const recover = () => { if (!document.hidden) start(); };
+      for (const event of ['online', 'pageshow', 'focus']) window.addEventListener(event, recover);
       document.addEventListener('visibilitychange', visibility);
       channel = { listeners, get latest() { return latest; }, start,
-        close() { stopped = true; stopTransport(); document.removeEventListener('visibilitychange', visibility); channels.delete(query); } };
+        close() { stopped = true; stopTransport(); document.removeEventListener('visibilitychange', visibility); for (const event of ['online', 'pageshow', 'focus']) window.removeEventListener(event, recover); channels.delete(query); } };
       channels.set(query, channel);
     }
     channel.listeners.add(listener);

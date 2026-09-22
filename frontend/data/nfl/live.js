@@ -8,7 +8,7 @@
     const parts = (status.displayClock || '').split(':').map(Number);
     const clock = parts.length === 2 && parts.every(Number.isFinite) ? parts[0]*60+parts[1] : null;
     const final = !!status.type?.completed;
-    const team = side => { const t = c.competitors.find(x=>x.homeAway===side); return {id:String(t.id),abbr:t.team.abbreviation,name:t.team.displayName,logo:t.team.logos?.[0]?.href,score:number(t.score),regScore: t.linescores?.length >= 4 ? t.linescores.slice(0,4).reduce((n,q)=>n+Number(q.displayValue || 0),0) : null}; };
+    const team = side => { const t = c.competitors.find(x=>x.homeAway===side); return {id:String(t.id),abbr:t.team.abbreviation,name:t.team.displayName,color:/^[a-f0-9]{6}$/i.test(t.team.color || '')?'#'+t.team.color:'#174b38',logo:t.team.logos?.[0]?.href,score:number(t.score),regScore: t.linescores?.length >= 4 ? t.linescores.slice(0,4).reduce((n,q)=>n+Number(q.displayValue || 0),0) : null}; };
     const plays = [...(summary.drives?.previous || []).flatMap(d=>d.plays || []), ...(summary.drives?.current?.plays || [])];
     const unique = [...new Map(plays.map(p=>[p.id,p])).values()].sort((a,b)=>Number(a.sequenceNumber)-Number(b.sequenceNumber));
     const last = unique.at(-1), end = last?.end;
@@ -19,7 +19,7 @@
       if (idx == null || idx < 0) continue;
       for (const a of g.athletes || []) { const value = number(a.stats?.[idx]); if(value != null) players.push({id:String(a.athlete.id),name:a.athlete.displayName,team:t.team.abbreviation,stat:g.name,value}); }
     }
-    return {home:team('home'),away:team('away'),period,clock,final,live:status.type?.state==='in',status:status.type?.shortDetail || status.type?.description,
+    return {venue:summary.gameInfo?.venue?.fullName || c.venue?.fullName || null,neutralSite:!!c.neutralSite,lastPlayAt:last?.wallclock || null,home:team('home'),away:team('away'),period,clock,final,live:status.type?.state==='in',status:status.type?.shortDetail || status.type?.description,
       remaining:period && period<=4 && clock!=null ? Math.max(0,(4-period)*900+clock) : period>4 || final ? 0 : null,
       field:end && number(end.yardsToEndzone)!=null ? {position:100-number(end.yardsToEndzone),distance:number(end.distance),down:end.down,team:String(end.team?.id),text:end.downDistanceText || end.possessionText || `${100-number(end.yardsToEndzone)} yards from own goal`} : null,
       plays:unique.slice(-12).reverse(),players,receivedAt:Date.now()};

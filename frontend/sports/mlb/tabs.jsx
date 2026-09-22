@@ -2557,7 +2557,7 @@ function MlbLiveTab({ gameData, gameInfo }) {
 
   /* Resolve the gamePk once. */
   React.useEffect(() => {
-    let dead = false;
+    let dead = false, retryTimer;
     setGamePk(null); setData(null); setLiveUpdate(null); setLoading(true); setErr(null);
     (async () => {
       /* `gameData.mlbLineups` is where Phase 2 parks the resolved gamePk. If
@@ -2565,9 +2565,9 @@ function MlbLiveTab({ gameData, gameInfo }) {
          ourselves rather than waiting on Phase 2 — the LIVE tab must paint on
          first open, and the lineups fetch is cheap and usually cached. */
       const pk = await window.resolveMlbGamePk(gameInfo, gameData && gameData.mlbLineups);
-      if (!dead) { setGamePk(pk); if (!pk) { setErr('Could not resolve this game in the MLB feed.'); setLoading(false); } }
+      if (!dead) { setGamePk(pk); if (!pk) { setErr('Connecting to the MLB feed. Retrying automatically…'); setLoading(false); retryTimer = setTimeout(() => setResolveKey(k => k + 1), 15000); } }
     })();
-    return () => { dead = true; };
+    return () => { dead = true; clearTimeout(retryTimer); };
   }, [gameInfo && gameInfo.eventId, resolveKey]);
 
   // Lightweight snapshots arrive independently of model/odds work. Analysis
@@ -2599,8 +2599,15 @@ function MlbLiveTab({ gameData, gameInfo }) {
       }
     });
     else setLiveUpdate(u => u ? { ...u, status: 'paused' } : u);
+    const recover = () => { if (auto && !document.hidden) load(); };
+    document.addEventListener('visibilitychange', recover);
+    for (const event of ['online', 'pageshow', 'focus']) window.addEventListener(event, recover);
     if (!running) load();
-    return () => { dead = true; clearTimeout(timer); unsubscribe?.(); };
+    return () => {
+      dead = true; clearTimeout(timer); unsubscribe?.();
+      document.removeEventListener('visibilitychange', recover);
+      for (const event of ['online', 'pageshow', 'focus']) window.removeEventListener(event, recover);
+    };
   }, [gamePk, auto, refreshKey]);
 
   if (loading) return <TabLoader source="MLB live feed" label="Reading game state" rows={3} />;

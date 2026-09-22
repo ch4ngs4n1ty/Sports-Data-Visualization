@@ -104,7 +104,7 @@ function LiveIndicatorBoard({ data, gameInfo, status, healthy, error, onRefresh,
       </React.Fragment>)}
     </header>
     <div className="li-toolbar"><span>MLB · {s.venue || 'Live game'}</span><div><button onClick={onToggle}>{auto ? 'Pause' : 'Resume'}</button><button onClick={onRefresh}>↻ Refresh</button></div></div>
-    {(!healthy || error) && <div className="li-notice" role="status">{error || 'Updates paused or reconnecting.'} Last received values remain visible; probabilities are paused.</div>}
+    {(!healthy || error) && <div className="li-notice" role="status">{error || (auto ? 'Reconnecting automatically…' : 'Updates manually paused. Select Resume to reconnect.')} Last received values remain visible until fresh data arrives.</div>}
     <nav className="li-mobile-switch" aria-label="Live panel"><button aria-pressed={mobilePane === 'feed'} onClick={() => setMobilePane('feed')}>Game feed</button><button aria-pressed={mobilePane === 'indicators'} onClick={() => setMobilePane('indicators')}>Live indicators {following.length ? `· ${following.length} following` : ''}</button></nav>
     <div className="li-columns">
       <div className="li-game">

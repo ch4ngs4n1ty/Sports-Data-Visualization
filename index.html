@@ -30,13 +30,14 @@
   <!-- Shared + sport-specific data layer -->
   <script src="frontend/data/shared/core.js"></script>
   <script src="frontend/data/mlb/index.js"></script>
-  <script src="frontend/data/mlb/live-stream.js"></script>
+  <script src="frontend/data/mlb/live-stream.js?v=reconnect-1"></script>
   <script src="frontend/data/mlb/indicators.js"></script>
   <script src="frontend/data/nba/index.js"></script>
   <script src="frontend/data/wnba/index.js"></script>
   <script src="frontend/data/nfl/index.js"></script>
-  <script src="frontend/data/nfl/live.js"></script>
-  <link rel="stylesheet" href="frontend/sports/nfl/live.css">
+  <script src="frontend/data/nfl/live.js?v=stadium-1"></script>
+  <script src="frontend/data/nfl/live-stream.js"></script>
+  <link rel="stylesheet" href="frontend/sports/nfl/live.css?v=stadium-1">
 
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
@@ -683,11 +684,11 @@
 <!-- Component scripts (Babel-transpiled in the browser) -->
 <script type="text/babel" src="frontend/shared/ui-atoms.jsx"></script>
 <script type="text/babel" src="frontend/shared/tabs/common-tabs.jsx"></script>
-<script type="text/babel" src="frontend/sports/mlb/live-indicators.jsx?v=pitch-colors-2"></script>
-<script type="text/babel" src="frontend/sports/mlb/tabs.jsx?v=live-indicators-1"></script>
+<script type="text/babel" src="frontend/sports/mlb/live-indicators.jsx?v=reconnect-1"></script>
+<script type="text/babel" src="frontend/sports/mlb/tabs.jsx?v=reconnect-1"></script>
 <script type="text/babel" src="frontend/sports/nba/tabs.jsx"></script>
 <script type="text/babel" src="frontend/sports/nfl/tabs.jsx"></script>
-<script type="text/babel" src="frontend/sports/nfl/live.jsx"></script>
+<script type="text/babel" src="frontend/sports/nfl/live.jsx?v=stadium-1"></script>
 <script type="text/babel" src="frontend/shared/screens/home-screen.jsx"></script>
 <script type="text/babel" src="frontend/shared/screens/games-screen.jsx"></script>
 <script type="text/babel" src="frontend/shared/screens/game-detail-screen.jsx?v=nfl-live-1"></script>
