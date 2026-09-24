@@ -27,7 +27,7 @@ playiq/
 │   │       └── game-detail-screen.jsx          — GameDetailScreen + TABS_MLB / TABS_NBA / TABS_OTHER + Phase 1 / Phase 2 loading
 │   └── sports/
 │       ├── mlb/tabs.jsx                        — MLB-specific tabs: MlbDataLoader + useMlbLoadGate (baseball pitch-loop loader with progress bar; on data arrival the bat connects and the ball leaves the park — keyframes injected at runtime, not in index.html), EdgeFinderTab (incl. PROP PROJECTION MODEL board: transparent Log5 P(Hits/RBI/K≥line)), PitchingEdgeTab (incl. PITCHER PROJECTION MODEL board: P(K/Outs/ER/HR≥line) + per-start bar charts), MlbLineupFieldTab (3D CSS-perspective diamond: each starter's card at their fielding position; field rotateX + cards counter-rotated so text stays crisp — no WebGL), LowHrModelTab, HighContactTab, MlbPlayerLookupTab (this IS the MLB `roster` tab — search/type-ahead + one hitter vs today's starter WITHOUT a posted lineup, with `RosterTab`'s 40-man grids embedded underneath; a card click runs the lookup in place)
-│       ├── nfl/tabs.jsx                        — NFL-specific tabs: NflMatchupTab (season OFFENSE/DEFENSE comparison board; brighter value = better side, direction-aware so "fewer yards allowed" wins). First NFL cut — deliberately NO props/edge model yet.
+│       ├── nfl/tabs.jsx                        — NFL-specific tabs: NflMatchupTab (season OFFENSE/DEFENSE comparison board; brighter value = better side, direction-aware so "fewer yards allowed" wins). NflEdgeFinderTab (Last 5 + every career game vs tonight's opponent, season-by-season timeline; real game logs + hit rates vs a typed line, NO projection model).
 │       └── nba/tabs.jsx                        — NBA-specific tabs: NbaEdgeFinderTab (incl. PROJECTION MODEL board: P(stat≥line) per player), NbaLineupTab, NbaDefenseVsPositionTab, WnbaCourtLineupTab (WNBA LINEUPS tab: 3D CSS-perspective court, both fives placed at the spot they play — court plane rotateX + cards counter-rotated so text stays crisp, no WebGL; same technique as `MlbLineupFieldTab`. Slots are resolved interior-first with a G/F/C preference chain, because WNBA positions are coarse and small-ball fives would otherwise strand a guard at the rim)
 ├── manifest.json                               — PWA manifest
 ├── icon.svg                                    — PWA icon
@@ -244,9 +244,42 @@ every design decision worth knowing about:
 `fetchRoster` and `fetchH2H` needed no changes — the grouped-roster shape and
 `seasontype=[2,3]` already covered football.
 
-**Scope:** the MATCHUP tab plus the five sport-agnostic tabs. There is no NFL
-props model, edge finder, or ML — those are per-sport analytical builds on the
-scale of the MLB/NBA tabs and should be scoped deliberately, not half-built.
+**Scope:** MATCHUP, EDGE FINDER, LIVE, plus the five sport-agnostic tabs. There
+is still no NFL projection/props model or ML — the Edge Finder shows real logs,
+not probabilities, on purpose.
+
+### NFL Edge Finder (Sep 2026)
+
+`NflEdgeFinderTab` (`frontend/sports/nfl/tabs.jsx`), data in
+`frontend/data/nfl/index.js` (`buildNflEdgeData`, `fetchNflPlayerCareerLog`,
+`summarizeNflPlayerLog`). Per player: L5, career vs tonight's opponent (every
+season, reg + playoffs), a per-season TIMELINE with the year on every game, and
+hit rates once a prop line is typed. A top VS-TEAM EDGES board ranks career-vs-
+opponent avg against the player's last-17 avg, sample size on every row.
+
+Things verified against live payloads, not guessed:
+- **Who:** ESPN `teams/{id}/depthcharts`. The offensive chart's NAME varies by
+  personnel ("3WR 1TE"), so pick the chart that has a `qb` slot; take
+  `qb/rb/wr1/wr2/wr3/te` [0]. Roster order is only a fallback.
+- **Game log:** `site.web.api.espn.com/apis/common/v3/sports/football/nfl/athletes/{id}/gamelog?season=`.
+  Index columns by `names` (unique camelCase) — `labels` repeat `YDS` for pass
+  AND rush. Each player's payload only has his own stat groups; missing → 0.
+- **`filters[season].options` lists every season the player has logged** —
+  that's how "every season" costs exactly one call per real season.
+- `?season=2025` includes the Jan-2026 playoffs: `season` on a game is the NFL
+  season, the bar/timeline YEAR comes from `rawDate` (they differ in January).
+- vs-team matches on opponent **team id** (stable across OAK→LV etc.), and
+  `meta.team` records who the player was WITH, rendered as `w/ CHI` chips.
+- Early in a season L5 must span two seasons, so the board always loads
+  current + previous; older seasons load per card in the background through a
+  6-wide limiter and a page-lifetime cache (past seasons are immutable).
+- An all-zero line (rested week-18 starter) is flagged `dnp` and excluded from
+  averages, otherwise it drags every mean toward 0.
+- Bars use `nflColorFor` (over/under the typed line, else vs baseline) — the
+  shared `defaultStatColorFor` is tuned for 0/1/2 MLB counts and would paint
+  every yardage bar green.
+- Headless-Chrome testing: ESPN answers `HeadlessChrome` UAs WITHOUT CORS
+  headers, so every fetch fails; set a normal Chrome UA.
 
 ---
 

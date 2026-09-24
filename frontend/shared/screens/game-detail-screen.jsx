@@ -47,8 +47,8 @@ const TABS_WNBA = [
   { id: 'ai', label: '◆ AI PLAYS' },
 ];
 
-// NFL: the five sport-agnostic tabs plus a season MATCHUP board. No edge /
-// props tabs yet — those are a separate per-sport analytical build.
+// NFL: the five sport-agnostic tabs plus a season MATCHUP board and an EDGE
+// FINDER (Last 5 + career vs tonight's opponent, every season).
 const TABS_NFL = [
   { id: 'live', label: '◉ LIVE' },
   { id: 'overview', label: 'OVERVIEW' },
@@ -56,6 +56,7 @@ const TABS_NFL = [
   { id: 'form', label: 'LAST 5' },
   { id: 'roster', label: 'ROSTERS' },
   { id: 'matchup', label: '⬢ MATCHUP' },
+  { id: 'edges', label: 'EDGE FINDER' },
   { id: 'ai', label: '◆ AI PLAYS' },
 ];
 
@@ -141,7 +142,7 @@ function GameDetailScreen({ game: initialGame, onBack }) {
           : game.sportKey === 'wnba'
           ? { nbaEdgeData: true, nbaLineupData: true }
           : game.sportKey === 'nfl'
-          ? { nflProfiles: true }
+          ? { nflProfiles: true, nflEdgeData: true }
           : {};
         const baseData = { gameInfo: game, awayForm, homeForm, injuries, awayRoster, homeRoster, h2h, _loading: initLoading };
         setGameData(baseData);
@@ -225,6 +226,11 @@ function GameDetailScreen({ game: initialGame, onBack }) {
             if (!cancelled) setGameData(prev => prev && { ...prev, nflProfiles: { away, home }, _loading: { ...prev._loading, nflProfiles: false } });
           }).catch(() => {
             if (!cancelled) setGameData(prev => prev && { ...prev, _loading: { ...prev._loading, nflProfiles: false } });
+          });
+          buildNflEdgeData(game, awayRoster, homeRoster).then(nflEdgeData => {
+            if (!cancelled) setGameData(prev => prev && { ...prev, nflEdgeData, _loading: { ...prev._loading, nflEdgeData: false } });
+          }).catch(() => {
+            if (!cancelled) setGameData(prev => prev && { ...prev, _loading: { ...prev._loading, nflEdgeData: false } });
           });
         }
         // Phase 2 step indicator hides when load() returns; any tab waiting
@@ -418,6 +424,8 @@ function GameDetailScreen({ game: initialGame, onBack }) {
             {tab === 'matchup' && <NflMatchupTab gameData={gameData} />}
             {tab === 'edges' && ((game.sportKey === 'nba' || game.sportKey === 'wnba')
               ? <NbaEdgeFinderTab gameData={gameData} />
+              : game.sportKey === 'nfl'
+              ? <NflEdgeFinderTab gameData={gameData} />
               : <EdgeFinderTab gameData={gameData} />)}
             {tab === 'pitching' && <PitchingEdgeTab gameData={gameData} />}
             {tab === 'lowhr' && <LowHrModelTab gameData={gameData} />}
