@@ -1,9 +1,16 @@
 function NflField({data}) {
   const f=data.field, x=f?50+Math.max(0,Math.min(100,f.position))*5:null;
   const team=f && [data.home,data.away].find(t=>t.id===f.team);
-  const [angled,setAngled]=React.useState(true);
+  const [angled,setAngled]=React.useState(()=>{
+    try { return localStorage.getItem('piq_nfl_field_view')==='3d'; } catch { return false; }
+  });
+  const toggleAngled=()=>setAngled(v=>{
+    const next=!v;
+    try { localStorage.setItem('piq_nfl_field_view', next?'3d':'top'); } catch {}
+    return next;
+  });
   return <section className="nf-field" style={{'--stadium-color':data.home.color || '#174b38'}}>
-    <div className="nf-stadium-title"><div><small>{data.neutralSite?'NEUTRAL VENUE':data.home.abbr+' · HOME FIELD'}</small><h3>{data.venue || data.home.name+' stadium'}</h3></div><button aria-pressed={angled} onClick={()=>setAngled(v=>!v)}>{angled?'3D view':'Top view'}</button></div><div className="nf-field-heading"><b>{team?.abbr || 'Field'} {f?.text || 'Position unavailable'}</b><span>Offense moves →</span></div>
+    <div className="nf-stadium-title"><div><small>{data.neutralSite?'NEUTRAL VENUE':data.home.abbr+' · HOME FIELD'}</small><h3>{data.venue || data.home.name+' stadium'}</h3></div><button aria-pressed={angled} onClick={toggleAngled}>{angled?'Top view':'3D view'}</button></div><div className="nf-field-heading"><b>{team?.abbr || 'Field'} {f?.text || 'Position unavailable'}</b><span>Offense moves →</span></div>
     <div className={`nf-stadium ${angled ? 'angled' : ''}`}><div className="nf-stadium-lights" aria-hidden="true"/><div className="nf-stadium-bowl"><div className="nf-stadium-tier" aria-hidden="true"/><div className="nf-turf">
     <svg viewBox="0 0 600 270" role="img" aria-label={`Football field. Last reported position: ${f?.text || 'unavailable'}. Offense moves left to right.`}>
       <rect width="600" height="270" fill="#1a613f"/>
