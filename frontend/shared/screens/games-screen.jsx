@@ -225,6 +225,66 @@ function SignalBadge({ sig }) {
 /* ── One game card ──────────────────────────────────────── */
 const weekdayOf = iso => new Date(iso).toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
 
+// Team numbers under an NBA matchup. Pre-game they're season averages; live or
+// final, ESPN's same fields hold THIS game's line (see nbaCardStats), so the
+// header says which one you're reading and PTS drops out as a repeat of the score.
+function NbaCardStats({ g, showScore }) {
+  const away = g.awayCard, home = g.homeCard;
+  if (!away || !home) return null;
+  const hasNumbers = c => parseFloat(c.reb) > 0;
+  if (!hasNumbers(away) || !hasNumbers(home)) return null;
+
+  const cols = [
+    ...(showScore ? [] : [['PPG', 'pts']]),
+    ['REB', 'reb'], ['AST', 'ast'], ['FG%', 'fgPct'], ['3P%', 'tpPct'],
+  ];
+  const cell = { fontSize: 'var(--fs-micro)', textAlign: 'right' };
+  const row = (abbr, mine, opp) => (
+    <React.Fragment key={abbr}>
+      <span className="piq-num" style={{ fontSize: 'var(--fs-micro)', color: 'var(--muted)' }}>{abbr}</span>
+      {cols.map(([label, key]) => (
+        <span key={label} className="piq-num" style={{ ...cell,
+          /* Every column here is higher-is-better, so the brighter side leads. */
+          color: parseFloat(mine[key]) >= parseFloat(opp[key]) ? 'var(--text)' : 'var(--muted)' }}>
+          {mine[key] == null ? '–'
+            /* A single game's rebounds and assists are counts, not averages. */
+            : showScore && (key === 'reb' || key === 'ast') ? String(parseFloat(mine[key]))
+            : mine[key]}
+        </span>
+      ))}
+    </React.Fragment>
+  );
+  const leaderLine = (c, align) => c.leader && (
+    <span style={{ display: 'flex', gap: 5, minWidth: 0, justifyContent: align === 'right' ? 'flex-end' : 'flex-start' }}>
+      {/* Only the name truncates: the number is the point of the line. */}
+      <span style={{ minWidth: 0, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{c.leader.name}</span>
+      <span className="piq-num" style={{ flexShrink: 0, color: 'var(--text)' }}>{c.leader.value}</span>
+    </span>
+  );
+
+  return (
+    <div style={{ marginTop: 'var(--s3)', paddingTop: 'var(--s3)', borderTop: '1px solid var(--line)' }}>
+      <div style={{ display: 'grid', gridTemplateColumns: `auto repeat(${cols.length}, 1fr)`,
+        columnGap: 'var(--s2)', rowGap: 4, alignItems: 'baseline' }}>
+        <span className="piq-label" style={{ fontSize: 'var(--fs-micro)' }}>{showScore ? 'GAME' : 'SEASON'}</span>
+        {cols.map(([label]) => (
+          <span key={label} className="piq-label" style={{ ...cell }}>{label}</span>
+        ))}
+        {row(g.awayAbbr, away, home)}
+        {row(g.homeAbbr, home, away)}
+      </div>
+      {(away.leader || home.leader) && (
+        <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) auto minmax(0, 1fr)', gap: 'var(--s2)', marginTop: 6,
+          fontSize: 'var(--fs-micro)', fontFamily: 'Space Mono, monospace', color: 'var(--muted)' }}>
+          {leaderLine(away, 'left') || <span />}
+          <span className="piq-label" style={{ fontSize: 'var(--fs-micro)' }}>{showScore ? 'PTS' : 'PPG'}</span>
+          {leaderLine(home, 'right') || <span />}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function GameCard({ g, onSelect, readiness, signals, formatTime, readinessPending, signalsPending }) {
   const isLive  = g.statusState === 'in';
   const isFinal = g.statusState === 'post';
@@ -241,7 +301,7 @@ function GameCard({ g, onSelect, readiness, signals, formatTime, readinessPendin
   const awayWon = showScore && g.awayScore > g.homeScore;
   const homeWon = showScore && g.homeScore > g.awayScore;
 
-  const Side = ({ abbr, logo, score, won, align }) => (
+  const Side = ({ abbr, logo, score, won, align, card, split }) => (
     <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--s3)', minWidth: 0,
       flexDirection: align === 'right' ? 'row-reverse' : 'row' }}>
       <img src={logo} alt="" loading="lazy"
@@ -251,6 +311,12 @@ function GameCard({ g, onSelect, readiness, signals, formatTime, readinessPendin
       <div style={{ minWidth: 0, textAlign: align === 'right' ? 'right' : 'left' }}>
         <div className="piq-num" style={{ fontSize: 'var(--fs-md)',
           color: showScore && !won ? 'var(--muted)' : 'var(--text)', letterSpacing: '0.03em' }}>{abbr}</div>
+        {card?.record && (
+          <div style={{ fontSize: 'var(--fs-micro)', fontFamily: 'Space Mono, monospace', color: 'var(--muted)',
+            whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+            {card.record}{split ? ` · ${split}` : ''}
+          </div>
+        )}
         {showScore && (
           <div className="piq-num" style={{ fontSize: 26, fontWeight: 900, lineHeight: 1.1,
             color: won ? 'var(--green)' : 'var(--muted)' }}>{score}</div>
@@ -280,11 +346,13 @@ function GameCard({ g, onSelect, readiness, signals, formatTime, readinessPendin
       {/* matchup */}
       <div style={{ display: 'grid', gridTemplateColumns: '1fr auto 1fr', gap: 'var(--s2)',
         alignItems: 'center', marginBottom: 'var(--s3)' }}>
-        <Side abbr={g.awayAbbr} logo={g.awayLogo} score={g.awayScore} won={awayWon} align="left" />
+        <Side abbr={g.awayAbbr} logo={g.awayLogo} score={g.awayScore} won={awayWon} align="left"
+          card={g.awayCard} split={g.awayCard?.roadRecord && `${g.awayCard.roadRecord} RD`} />
         <span className="piq-label" style={{ fontSize: 'var(--fs-micro)', letterSpacing: '0.1em' }}>
           {showScore ? '·' : 'AT'}
         </span>
-        <Side abbr={g.homeAbbr} logo={g.homeLogo} score={g.homeScore} won={homeWon} align="right" />
+        <Side abbr={g.homeAbbr} logo={g.homeLogo} score={g.homeScore} won={homeWon} align="right"
+          card={g.homeCard} split={g.homeCard?.homeRecord && `${g.homeCard.homeRecord} HM`} />
       </div>
 
       {/* Pre-game MLB only. While the slate endpoints are in flight we hold the
@@ -296,6 +364,8 @@ function GameCard({ g, onSelect, readiness, signals, formatTime, readinessPendin
       {g.sportKey === 'mlb' && !isLive && !isFinal && (
         signalsPending ? <SignalBadgeSkeleton /> : <SignalBadge sig={signals} />
       )}
+
+      {g.sportKey === 'nba' && <NbaCardStats g={g} showScore={showScore} />}
 
       {/* footer: odds + CTA */}
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 'var(--s2)',

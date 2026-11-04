@@ -62,12 +62,38 @@ function prewarmBackend() {
   fetch(`${API_BASE}/api/health`, { cache: 'no-store' }).catch(() => {});
 }
 
+// Leagues whose season spans New Year. ESPN keys them by the year they END in
+// (2026-27 is `2027`), so the calendar year is one behind from the fall on.
+// Rolling over a few days AFTER opening night is deliberate: until a team has
+// played, the new season's schedule and gamelogs are empty, and last season's
+// numbers are more useful to research from than a blank board.
+const SEASON_ROLLOVER = { nba: [10, 25], nhl: [10, 15], ncaamb: [11, 10] }; // [month, day]
+
 function getSeasonYear(sportKey) {
   const now = new Date();
   const year = now.getFullYear();
   const month = now.getMonth() + 1;
   if (sportKey === 'nfl' || sportKey === 'ncaafb') return month < 8 ? year - 1 : year;
+  const roll = SEASON_ROLLOVER[sportKey];
+  if (roll && (month > roll[0] || (month === roll[0] && now.getDate() >= roll[1]))) return year + 1;
   return year;
+}
+
+// Team numbers for the NBA game card, read off the scoreboard so the slate
+// costs no extra calls. What these MEAN depends on game status: pre-game they
+// are season averages, but once a game is live or final ESPN reuses the same
+// fields for that game's line (`avgPoints` on a final is just the score), so
+// they are named neutrally and the card labels them by status.
+function nbaCardStats(competitor) {
+  const stat = name => competitor.statistics?.find(s => s.name === name)?.displayValue ?? null;
+  const record = name => competitor.records?.find(r => r.name === name)?.summary ?? null;
+  const leader = competitor.leaders?.find(l => l.name === 'pointsPerGame' || l.name === 'points')?.leaders?.[0];
+  return {
+    record: record('overall'), homeRecord: record('Home'), roadRecord: record('Road'),
+    pts: stat('avgPoints'), reb: stat('avgRebounds'), ast: stat('avgAssists'),
+    fgPct: stat('fieldGoalPct'), tpPct: stat('threePointFieldGoalPct'),
+    leader: leader ? { name: leader.athlete?.shortName || '?', value: leader.displayValue } : null,
+  };
 }
 
 async function fetchAllGames(date) {
@@ -105,6 +131,7 @@ async function fetchAllGames(date) {
         spread: odds?.details, overUnder: odds?.overUnder,
         awayMoneyline: odds?.awayTeamOdds?.moneyLine,
         homeMoneyline: odds?.homeTeamOdds?.moneyLine,
+        ...(sp.key === 'nba' ? { awayCard: nbaCardStats(away), homeCard: nbaCardStats(home) } : {}),
       });
     }
   }

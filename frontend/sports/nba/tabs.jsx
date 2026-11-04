@@ -21,10 +21,9 @@ const NBA_TXT_2 = '#8ba3c0';   // secondary body copy  — 7.04:1
 const NBA_TXT_3 = '#6d86a6';   // micro labels / notes — 4.88:1
 
 // Game logs arrive most-recent-first (that's what `h2h[0].date` / the L5
-// averages rely on), but a bar chart reads as a timeline, so the eye expects
-// time to run left→right. Reverse a COPY at the point of charting only —
-// mutating or re-sorting the source array would silently relabel "last:".
-const nbaOldestFirst = games => (games || []).slice().reverse();
+// averages rely on) and the charts render them in that order on purpose: the
+// newest game sits on the left, where the eye lands first. Do not re-sort or
+// mutate the source array — that would silently relabel "last:".
 
 const nbaStatColorFor = (v, sk) => {
   if (sk === 'pts') return v >= 30 ? 'var(--green)' : v >= 20 ? 'var(--gold)' : v >= 10 ? 'var(--cyan)' : 'var(--orange)';
@@ -160,7 +159,7 @@ function NbaEdgeFinderTab({ gameData }) {
                 </span>
               </div>
               {hasH2H ? (
-                <GameLogChart games={nbaOldestFirst(p.h2h)} stats={NBA_STATS} defaultStat="pts" emptyLabel={`NO GAMES VS ${p.oppAbbr} THIS SEASON`} accent={p.teamColor} colorFor={nbaStatColorFor} />
+                <GameLogChart games={p.h2h || []} stats={NBA_STATS} defaultStat="pts" emptyLabel={`NO GAMES VS ${p.oppAbbr} THIS SEASON`} accent={p.teamColor} colorFor={nbaStatColorFor} />
               ) : (
                 <div style={{ fontSize: 10.5, color: NBA_TXT_3, fontFamily: 'Space Mono, monospace', padding: '16px 0', letterSpacing: '0.1em' }}>
                   NO GAMES VS {p.oppAbbr} THIS SEASON
@@ -178,7 +177,7 @@ function NbaEdgeFinderTab({ gameData }) {
                 </span>
               </div>
               {hasL5 ? (
-                <GameLogChart games={nbaOldestFirst(p.l5)} stats={NBA_STATS} defaultStat="pts" emptyLabel="NO RECENT GAMES" accent={p.teamColor} colorFor={nbaStatColorFor} />
+                <GameLogChart games={p.l5 || []} stats={NBA_STATS} defaultStat="pts" emptyLabel="NO RECENT GAMES" accent={p.teamColor} colorFor={nbaStatColorFor} />
               ) : (
                 <div style={{ fontSize: 10.5, color: NBA_TXT_3, fontFamily: 'Space Mono, monospace', padding: '16px 0', letterSpacing: '0.1em' }}>
                   NO RECENT GAMES

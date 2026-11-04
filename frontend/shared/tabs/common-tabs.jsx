@@ -269,7 +269,9 @@ function FormTab({ gameData }) {
       {/* auto-fit instead of repeat(form.length, 1fr) — the old fixed column
           count squeezed 5 cards into ~60px each on a phone. */}
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(130px, 1fr))', gap: 'var(--s3)' }}>
-        {form.map((g, i) => {
+        {/* fetchTeamForm returns oldest→newest (streak math reads it that way);
+            reverse a COPY so the most recent game is the first card. */}
+        {form.slice().reverse().map((g, i) => {
           const leader = g.player?.[statKey];
           const win = g.result === 'W';
           const c = win ? 'var(--green)' : 'var(--orange)';
