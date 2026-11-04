@@ -381,6 +381,19 @@ const server = http.createServer(async (req, res) => {
       return sendJson(res, all);
     }
 
+    // GET /api/nba/positions?names=John Collins|Paul Reed
+    //   Name → PG/SG/SF/PF/C from the Basketball-Reference map (ESPN only
+    //   publishes G/F/C). Used by the Edge Finder's per-game breakdown to find
+    //   the opposing PF and C. Unresolved names map to null.
+    if (path === '/api/nba/positions') {
+      const names = String(url.searchParams.get('names') || '')
+        .split('|').map(s => s.trim()).filter(Boolean).slice(0, 80);
+      const positionMap = await getPositionMap({});
+      const positions = {};
+      for (const n of names) positions[n] = resolvePosition(n, positionMap);
+      return sendJson(res, { season: positionMap.season, source: positionMap.source, positions });
+    }
+
     // GET /api/nba/positional-defense-points
     //   Optional filters: ?team=UTA  ?position=PG  (combine to get a single row)
     //   ?refresh=1 forces a re-crawl (slow on first run; ~3-6 min)

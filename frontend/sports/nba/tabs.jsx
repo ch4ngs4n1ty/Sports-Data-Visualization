@@ -34,6 +34,209 @@ const nbaStatColorFor = (v, sk) => {
   return NBA_TXT_2;
 };
 
+/* ── Bar-click game breakdown ──────────────────────────────
+   Opened by clicking a bar in an Edge Finder game-log chart. Answers "why
+   that number?" for ONE game: his own line + availability, who was out, and
+   the opposing PF / C he shared the floor with — how long, and how many
+   boards they took in that time. Data: `fetchNbaGameBreakdown`
+   (frontend/data/nba/game-breakdown.js); see that file for why this is
+   shared floor time and not a defensive assignment. */
+function NbaGameBreakdownPanel({ game, player, league, statKey, onClose }) {
+  const [state, setState] = React.useState({ loading: true, data: null });
+  React.useEffect(() => {
+    let alive = true;
+    setState({ loading: true, data: null });
+    fetchNbaGameBreakdown(game.eventId, player.id, { league, seasonMpg: player.seasonMpg || null })
+      .then(data => { if (alive) setState({ loading: false, data }); })
+      .catch(() => { if (alive) setState({ loading: false, data: { error: 'FETCH_FAILED', message: 'Could not load this game.' } }); });
+    return () => { alive = false; };
+  }, [game.eventId, player.id, league]);
+
+  const accent = player.teamColor || 'var(--cyan)';
+  const mono = { fontFamily: 'Space Mono, monospace' };
+  const orb = { fontFamily: 'Orbitron, monospace', fontWeight: 700 };
+  const micro = { ...mono, fontSize: 10, color: NBA_TXT_3, letterSpacing: '0.16em' };
+  const d = state.data;
+  const when = typeof gameLogFullDate === 'function' ? gameLogFullDate(game) : (game.date || '');
+  const toneColor = t => t === 'bad' ? 'var(--orange)' : t === 'warn' ? 'var(--gold)' : 'var(--cyan)';
+  const lastName = n => String(n || '').split(' ').filter(w => !/^(jr|sr|ii|iii|iv)\.?$/i.test(w)).slice(-1)[0] || n;
+
+  return (
+    <div role="region" aria-label={`Game breakdown ${when}`}
+      style={{ marginTop: 14, padding: '14px 16px', borderRadius: 6, animation: 'fadeUp 0.15s ease',
+        background: 'rgba(255,255,255,0.025)', border: `1px solid color-mix(in srgb, ${accent} 35%, transparent)` }}>
+      {/* Header */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap', marginBottom: 12 }}>
+        <span style={{ ...mono, fontSize: 10.5, color: accent, letterSpacing: '0.22em' }}>GAME BREAKDOWN</span>
+        <span style={{ ...mono, fontSize: 11, color: NBA_TXT_2 }}>{when}</span>
+        {d && !d.error && d.final && (
+          <span style={{ ...orb, fontSize: 11, color: d.margin > 0 ? 'var(--green)' : 'var(--orange)', letterSpacing: '0.08em' }}>
+            {d.margin > 0 ? 'W' : 'L'} {d.myTeam.score}–{d.oppTeam.score}
+          </span>
+        )}
+        <button onClick={onClose} aria-label="Close game breakdown"
+          style={{ marginLeft: 'auto', background: 'none', border: '1px solid rgba(255,255,255,0.12)', color: NBA_TXT_2,
+            ...mono, fontSize: 10.5, letterSpacing: '0.12em', padding: '3px 9px', borderRadius: 3, cursor: 'pointer' }}>
+          CLOSE ✕
+        </button>
+      </div>
+
+      {state.loading && (
+        <div style={{ ...mono, fontSize: 11, color: NBA_TXT_2, padding: '10px 0', letterSpacing: '0.08em' }}>
+          Loading box score + play-by-play…
+        </div>
+      )}
+      {!state.loading && d?.error && (
+        <div style={{ ...mono, fontSize: 11, color: 'var(--orange)', padding: '6px 0' }}>{d.message || d.error}</div>
+      )}
+
+      {!state.loading && d && !d.error && (
+        <>
+          {/* His line */}
+          {d.me.dnp ? (
+            <div style={{ ...orb, fontSize: 13, color: 'var(--orange)', letterSpacing: '0.1em', marginBottom: 10 }}>
+              DID NOT PLAY{d.me.reason ? ` — ${d.me.reason}` : ''}
+            </div>
+          ) : (
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(74px, 1fr))', gap: 8, marginBottom: 12 }}>
+              {[
+                ['MIN', d.me.min, player.seasonMpg ? `avg ${player.seasonMpg.toFixed(1)}` : null],
+                ['PTS', d.me.pts, `${d.me.fgm}/${d.me.fga} FG`],
+                ['REB', d.me.reb, `${d.me.oreb} OFF · ${d.me.dreb} DEF`],
+                ['AST', d.me.ast, null],
+                ['TEAM REB %', d.me.rebShare != null ? `${Math.round(d.me.rebShare * 100)}%` : '—', `of ${d.myTeam.reb}`],
+                ['PF', d.me.pf, `${d.me.pm > 0 ? '+' : ''}${d.me.pm} +/-`],
+              ].map(([l, v, sub]) => (
+                <div key={l} style={{ padding: '7px 9px', borderRadius: 4, border: '1px solid rgba(255,255,255,0.06)',
+                  background: l === (statKey || '').toUpperCase() ? `color-mix(in srgb, ${accent} 10%, transparent)` : 'transparent' }}>
+                  <div style={micro}>{l}</div>
+                  <div style={{ ...orb, fontSize: 17, color: l === (statKey || '').toUpperCase() ? accent : 'var(--text)', marginTop: 2 }}>{v}</div>
+                  {sub && <div style={{ ...mono, fontSize: 10, color: NBA_TXT_3, marginTop: 1 }}>{sub}</div>}
+                </div>
+              ))}
+            </div>
+          )}
+
+          {/* Context flags — plain sentences, each checkable in the box score */}
+          {d.flags.length > 0 && (
+            <div style={{ display: 'grid', gap: 5, marginBottom: 12 }}>
+              {d.flags.map((f, i) => (
+                <div key={i} style={{ ...mono, fontSize: 11, color: 'var(--text)', display: 'flex', gap: 8, lineHeight: 1.45 }}>
+                  <span style={{ color: toneColor(f.tone) }}>▸</span><span>{f.text}</span>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {/* Opposing frontcourt */}
+          {!d.me.dnp && (
+            <div style={{ paddingTop: 10, borderTop: '1px solid rgba(255,255,255,0.05)' }}>
+              <div style={{ display: 'flex', alignItems: 'baseline', gap: 10, flexWrap: 'wrap', marginBottom: 8 }}>
+                <span style={{ ...mono, fontSize: 10.5, color: accent, letterSpacing: '0.2em' }}>
+                  {d.oppTeam.abbr} FRONTCOURT · PF / C
+                </span>
+                <span style={micro}>SORTED BY SHARED FLOOR TIME</span>
+              </div>
+              {d.onFloorReb && (
+                <div style={{ ...mono, fontSize: 11, color: NBA_TXT_2, marginBottom: 10 }}>
+                  Rebounds while {lastName(d.me.name)} was on the floor:{' '}
+                  <span style={{ ...orb, color: d.onFloorReb.mine >= d.onFloorReb.opp ? 'var(--green)' : 'var(--orange)' }}>
+                    {d.myTeam.abbr} {d.onFloorReb.mine}
+                  </span>
+                  <span style={{ color: NBA_TXT_3 }}> – </span>
+                  <span style={{ ...orb, color: 'var(--text)' }}>{d.oppTeam.abbr} {d.onFloorReb.opp}</span>
+                </div>
+              )}
+              {d.bigs.length === 0 ? (
+                <div style={{ ...mono, fontSize: 11, color: NBA_TXT_3 }}>No opposing PF / C logged minutes.</div>
+              ) : (
+                <div style={{ display: 'grid', gap: 6 }}>
+                  {d.bigs.map(b => {
+                    const primary = b.id === d.primaryPF?.id || b.id === d.primaryC?.id;
+                    const sharePct = d.me.min ? Math.min(100, (b.sharedMin / d.me.min) * 100) : 0;
+                    return (
+                      <div key={b.id} style={{ display: 'flex', flexWrap: 'wrap', gap: '8px 14px',
+                        alignItems: 'center', padding: '8px 10px', borderRadius: 4,
+                        border: primary ? `1px solid color-mix(in srgb, ${accent} 40%, transparent)` : '1px solid rgba(255,255,255,0.05)',
+                        background: primary ? `color-mix(in srgb, ${accent} 6%, transparent)` : 'transparent' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0, flex: '1 1 230px' }}>
+                          <span style={{ ...orb, fontSize: 10, padding: '2px 6px', borderRadius: 2, flexShrink: 0,
+                            color: b.pos === 'C' ? 'var(--gold)' : 'var(--cyan)',
+                            border: `1px solid ${b.pos === 'C' ? 'color-mix(in srgb, var(--gold) 45%, transparent)' : 'color-mix(in srgb, var(--cyan) 45%, transparent)'}` }}
+                            title={b.posSource === 'bref' ? 'Position: Basketball-Reference' : 'Position: ESPN (coarse — F may be SF or PF)'}>
+                            {b.pos}
+                          </span>
+                          <div style={{ minWidth: 0 }}>
+                            <div style={{ ...mono, fontSize: 12, color: 'var(--text)', fontWeight: 700, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                              {b.name}
+                            </div>
+                            <div style={{ ...mono, fontSize: 10, color: NBA_TXT_3 }}>
+                              {primary ? <span style={{ color: accent, letterSpacing: '0.12em' }}>MAIN {b.pos} MATCHUP · </span> : null}
+                              {b.min} MIN · {b.reb} REB ({b.oreb} OFF){b.blk ? ` · ${b.blk} BLK` : ''}
+                            </div>
+                          </div>
+                        </div>
+                        <div style={{ flex: '1 1 150px', minWidth: 0 }} title={`On the floor together for ${b.sharedMin} of his ${d.me.min} minutes`}>
+                          <div style={{ ...mono, fontSize: 10, color: NBA_TXT_3, marginBottom: 4, letterSpacing: '0.08em' }}>
+                            TOGETHER <span style={{ ...orb, color: 'var(--text)', fontSize: 11 }}>{b.sharedMin ?? '—'}</span> MIN
+                          </div>
+                          <div style={{ height: 5, borderRadius: 3, background: 'rgba(255,255,255,0.06)', overflow: 'hidden' }}>
+                            <div style={{ width: `${sharePct}%`, height: '100%', background: accent, borderRadius: 3 }} />
+                          </div>
+                        </div>
+                        <div style={{ textAlign: 'right', flex: '0 0 auto', marginLeft: 'auto' }}
+                          title={`Rebounds while both were on the floor: ${b.name} ${b.rebWhileShared}, ${d.me.name} ${b.myRebWhileShared}`}>
+                          <div style={{ ...micro, fontSize: 9.5 }}>BOARDS TOGETHER</div>
+                          <div style={{ ...orb, fontSize: 13, marginTop: 2 }}>
+                            <span style={{ color: (b.rebWhileShared || 0) > (b.myRebWhileShared || 0) ? 'var(--orange)' : 'var(--text)' }}>
+                              {lastName(b.name)} {b.rebWhileShared ?? '—'}
+                            </span>
+                            <span style={{ color: NBA_TXT_3 }}> · </span>
+                            <span style={{ color: accent }}>{lastName(d.me.name)} {b.myRebWhileShared ?? '—'}</span>
+                          </div>
+                          {b.orebWhileShared ? (
+                            <div style={{ ...mono, fontSize: 10, color: NBA_TXT_3 }}>{b.orebWhileShared} offensive</div>
+                          ) : null}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Who was out — game-time, from the box score */}
+          <div style={{ display: 'flex', gap: 18, flexWrap: 'wrap', marginTop: 12, paddingTop: 10, borderTop: '1px solid rgba(255,255,255,0.05)' }}>
+            {[[d.myTeam.abbr, d.out.mine], [d.oppTeam.abbr, d.out.opp]].map(([abbr, list]) => (
+              <div key={abbr} style={{ minWidth: 160, flex: 1 }}>
+                <div style={{ ...micro, marginBottom: 4 }}>OUT · {abbr}</div>
+                {list.length ? list.map(o => (
+                  <div key={o.name} style={{ ...mono, fontSize: 11, color: 'var(--text)', lineHeight: 1.5 }}>
+                    {o.name} <span style={{ color: NBA_TXT_3 }}>({o.pos})</span>{' '}
+                    <span style={{ color: 'var(--orange)' }}>{String(o.reason).toLowerCase()}</span>
+                  </div>
+                )) : <div style={{ ...mono, fontSize: 11, color: NBA_TXT_3 }}>None listed</div>}
+              </div>
+            ))}
+          </div>
+
+          {/* Method note — never let floor time read as a guaranteed assignment */}
+          <div style={{ ...mono, fontSize: 10, color: NBA_TXT_3, marginTop: 12, lineHeight: 1.5 }}>
+            Floor time rebuilt from ESPN play-by-play
+            {d.lineupCheck ? ` (±${d.lineupCheck.maeMinutes} min vs box score)` : ''}. Sharing the floor ≠ a direct
+            defensive assignment, but these are the bigs competing for the same boards.
+            Positions: {d.posSource === 'bref' ? 'Basketball-Reference' : 'ESPN (coarse G/F/C)'}.
+            {d.lineupCheck && !d.lineupCheck.reliable && (
+              <span style={{ color: 'var(--gold)' }}> Play-by-play was incomplete for this game — treat floor time as approximate.</span>
+            )}
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
 function NbaEdgeFinderTab({ gameData }) {
   const { gameInfo, nbaEdgeData, nbaDefenseEdge } = gameData;
   const [filter, setFilter] = React.useState('all');
@@ -104,6 +307,16 @@ function NbaEdgeFinderTab({ gameData }) {
 
   const NbaPlayerCard = ({ p }) => {
     const [open, setOpen] = React.useState(false);
+    // Which bar is open in the game breakdown: { chart: 'h2h'|'l5', index, game, statKey }.
+    // Clicking the open bar again closes it.
+    const [sel, setSel] = React.useState(null);
+    const league = gameInfo.sportKey === 'wnba' ? 'wnba' : 'nba';
+    const barClick = chart => (game, index, statKey) =>
+      setSel(cur => (cur && cur.chart === chart && cur.index === index) ? null : { chart, index, game, statKey });
+    const breakdown = chart => sel && sel.chart === chart && (
+      <NbaGameBreakdownPanel key={`${chart}-${sel.game.eventId}`} game={sel.game} player={p}
+        league={league} statKey={sel.statKey} onClose={() => setSel(null)} />
+    );
     const hasH2H = (p.h2h || []).length > 0;
     const hasL5 = (p.l5 || []).length > 0;
 
@@ -155,11 +368,15 @@ function NbaEdgeFinderTab({ gameData }) {
                   {hasH2H ? `${p.h2h.length}G · last: ${p.h2h[0].date}` : 'NO GAMES'}
                 </span>
                 <span style={{ fontSize: 10, color: NBA_TXT_3, fontFamily: 'Space Mono, monospace', letterSpacing: '0.1em' }}>
-                  OLDEST → MOST RECENT
+                  MOST RECENT → OLDEST · CLICK A BAR FOR THE GAME BREAKDOWN
                 </span>
               </div>
               {hasH2H ? (
-                <GameLogChart games={p.h2h || []} stats={NBA_STATS} defaultStat="pts" emptyLabel={`NO GAMES VS ${p.oppAbbr} THIS SEASON`} accent={p.teamColor} colorFor={nbaStatColorFor} />
+                <>
+                  <GameLogChart games={p.h2h || []} stats={NBA_STATS} defaultStat="pts" emptyLabel={`NO GAMES VS ${p.oppAbbr} THIS SEASON`} accent={p.teamColor} colorFor={nbaStatColorFor}
+                    onBarClick={barClick('h2h')} selectedIndex={sel?.chart === 'h2h' ? sel.index : null} />
+                  {breakdown('h2h')}
+                </>
               ) : (
                 <div style={{ fontSize: 10.5, color: NBA_TXT_3, fontFamily: 'Space Mono, monospace', padding: '16px 0', letterSpacing: '0.1em' }}>
                   NO GAMES VS {p.oppAbbr} THIS SEASON
@@ -173,11 +390,15 @@ function NbaEdgeFinderTab({ gameData }) {
                   LAST 5 GAMES (SEASON)
                 </span>
                 <span style={{ fontSize: 10, color: NBA_TXT_3, fontFamily: 'Space Mono, monospace', letterSpacing: '0.1em' }}>
-                  OLDEST → MOST RECENT
+                  MOST RECENT → OLDEST · CLICK A BAR FOR THE GAME BREAKDOWN
                 </span>
               </div>
               {hasL5 ? (
-                <GameLogChart games={p.l5 || []} stats={NBA_STATS} defaultStat="pts" emptyLabel="NO RECENT GAMES" accent={p.teamColor} colorFor={nbaStatColorFor} />
+                <>
+                  <GameLogChart games={p.l5 || []} stats={NBA_STATS} defaultStat="pts" emptyLabel="NO RECENT GAMES" accent={p.teamColor} colorFor={nbaStatColorFor}
+                    onBarClick={barClick('l5')} selectedIndex={sel?.chart === 'l5' ? sel.index : null} />
+                  {breakdown('l5')}
+                </>
               ) : (
                 <div style={{ fontSize: 10.5, color: NBA_TXT_3, fontFamily: 'Space Mono, monospace', padding: '16px 0', letterSpacing: '0.1em' }}>
                   NO RECENT GAMES

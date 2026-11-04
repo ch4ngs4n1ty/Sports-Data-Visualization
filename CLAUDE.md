@@ -669,3 +669,30 @@ model carries real information.
   the model prices a half-inning that already finished.
 - **An unknown gamePk returns a well-formed EMPTY feed**, not a 404 — detect
   it by absent team ids.
+
+---
+
+## NBA bar-click game breakdown (Nov 2026)
+
+Clicking any bar in the NBA/WNBA Edge Finder's H2H or Last-5 chart opens
+`NbaGameBreakdownPanel` (`frontend/sports/nba/tabs.jsx`) under that chart:
+his line + availability flags, who was OUT on each side, and the opposing
+**PF / C** ranked by **shared floor time** with the boards each grabbed while
+both were on the court. Data: `frontend/data/nba/game-breakdown.js`
+(`fetchNbaGameBreakdown` → pure `buildNbaGameBreakdown(summary, playerId)`),
+ONE ESPN `summary?event=` call per game, cached for finished games.
+
+- **`GameLogChart` gained optional `onBarClick(game, i, statKey)` +
+  `selectedIndex`.** Without them it renders exactly as before.
+- **There is no free defensive-assignment data.** NBA.com
+  (`boxscorematchupsv3`, even `cdn.nba.com`) returns Akamai "Access Denied".
+  So lineups are rebuilt from play-by-play substitutions (period starters
+  inferred: first event in a period that isn't checking in). Verified within
+  ~0.2–0.3 min of box-score minutes on 6 games incl. OT; the panel shows that
+  error (`lineupCheck`) and the UI says "floor time", never "guarded by".
+- **Don't use the summary's top-level `injuries`.** It is the CURRENT report
+  (dated today). Game-time absences come from box-score `didNotPlay` + `reason`
+  (ESPN stamps "COACH'S DECISION" on everyone by default, so it's ignored).
+- **PF vs SF:** ESPN is G/F/C only. New add-only route
+  `GET /api/nba/positions?names=a|b` exposes the Basketball-Reference map;
+  on failure (or WNBA) it falls back to ESPN C/F and says so.

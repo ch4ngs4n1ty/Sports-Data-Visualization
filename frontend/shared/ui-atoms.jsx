@@ -572,7 +572,10 @@ function gameLogFullDate(g) {
   return `${when} · ${g.home ? 'vs' : '@'} ${g.opp}`;
 }
 
-function GameLogChart({ games, stats, defaultStat, emptyLabel = 'NO GAMES', accent = 'var(--cyan)', chartHeight = 130, maxBarW = 64, colorFor = defaultStatColorFor }) {
+// `onBarClick(game, index, statKey)` is OPTIONAL. When supplied, every bar
+// becomes a keyboard-reachable button and `selectedIndex` highlights the
+// active one (the rest dim). Charts that don't pass it render exactly as before.
+function GameLogChart({ games, stats, defaultStat, emptyLabel = 'NO GAMES', accent = 'var(--cyan)', chartHeight = 130, maxBarW = 64, colorFor = defaultStatColorFor, onBarClick = null, selectedIndex = null }) {
   const [statKey, setStatKey] = React.useState(defaultStat || stats[0].key);
   if (!games?.length) {
     return <EmptyState title={emptyLabel} />;
@@ -597,11 +600,23 @@ function GameLogChart({ games, stats, defaultStat, emptyLabel = 'NO GAMES', acce
   const chartYears = [...new Set(games.map(g => gameLogDateParts(g).year).filter(Boolean))];
   const soleYear = chartYears.length === 1 ? chartYears[0] : null;
 
-  const Cell = ({ children }) => (
-    <div style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 7, minWidth: 0 }}>
+  const Cell = ({ children, style, ...rest }) => (
+    <div {...rest} style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 7, minWidth: 0, ...style }}>
       {children}
     </div>
   );
+  const clickable = typeof onBarClick === 'function';
+  const barProps = (g, i) => !clickable ? {} : {
+    role: 'button', tabIndex: 0,
+    'aria-pressed': selectedIndex === i,
+    'aria-label': `${gameLogFullDate(g)} — open game breakdown`,
+    title: 'Click for game breakdown',
+    onClick: () => onBarClick(g, i, statKey),
+    onKeyDown: e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onBarClick(g, i, statKey); } },
+    style: { cursor: 'pointer', outline: 'none',
+      opacity: selectedIndex != null && selectedIndex !== i ? 0.42 : 1,
+      transition: 'opacity var(--dur-1) var(--ease)' },
+  };
 
   return (
     <div>
@@ -631,12 +646,13 @@ function GameLogChart({ games, stats, defaultStat, emptyLabel = 'NO GAMES', acce
           const pct = Math.min(v / maxVal, 1) * 100;
           const color = barColor(v);
           return (
-            <Cell key={i}>
+            <Cell key={i} {...barProps(g, i)}>
               <div className="piq-num tabular" style={{ fontSize: 'var(--fs-sm)', color, height: 16, lineHeight: 1,
                 textShadow: `0 0 14px ${color}` }}>{v}</div>
               <div style={{ width: '100%', maxWidth: maxBarW, height: chartHeight,
                 background: 'rgba(255,255,255,0.035)', borderRadius: 'var(--r-sm)', position: 'relative', overflow: 'hidden',
-                border: '1px solid var(--line)' }}>
+                border: selectedIndex === i ? `1px solid ${accent}` : '1px solid var(--line)',
+                boxShadow: selectedIndex === i ? `0 0 0 1px ${accent}, 0 0 18px color-mix(in srgb, ${accent} 35%, transparent)` : 'none' }}>
                 {/* Bars grow from the baseline, staggered left→right, so the
                     chart draws itself instead of appearing fully formed.
                     `color` is usually a var() (callers pass var(--green) etc.),
@@ -662,7 +678,8 @@ function GameLogChart({ games, stats, defaultStat, emptyLabel = 'NO GAMES', acce
 
       <div style={{ display: 'flex', gap: 'var(--s4)', marginTop: 'var(--s2)', padding: '0 var(--s1)' }}>
         {games.map((g, i) => (
-          <Cell key={i}>
+          <Cell key={i} {...(clickable ? { onClick: () => onBarClick(g, i, statKey),
+            style: { cursor: 'pointer', opacity: selectedIndex != null && selectedIndex !== i ? 0.42 : 1 } } : {})}>
             {/* Opponent as a logo when the game carries one, text abbr
                 otherwise. Both hoops and MLB logs now set `oppLogo`; the text
                 branch remains for BvP bars (a pitcher, not a team) and for any
