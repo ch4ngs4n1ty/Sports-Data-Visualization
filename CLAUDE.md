@@ -696,3 +696,55 @@ ONE ESPN `summary?event=` call per game, cached for finished games.
 - **PF vs SF:** ESPN is G/F/C only. New add-only route
   `GET /api/nba/positions?names=a|b` exposes the Basketball-Reference map;
   on failure (or WNBA) it falls back to ESPN C/F and says so.
+
+### Points + assists lenses (Nov 2026)
+
+The breakdown panel now explains PTS and AST too, not just REB. A
+POINTS / REBOUNDS / ASSISTS toggle in the panel header picks the lens; it opens
+on whichever stat the chart showed when the bar was clicked. Same single
+`summary` call, same walk over the play-by-play — `_bdSimulate` just tracks
+more events.
+
+- **POINTS:** FG/3PT/FT, TS%, shot zones (rim / mid / 3PT from ESPN's play
+  *type* text, not `coordinate`), points by quarter, assisted vs
+  self-created makes, who blocked him, and the opposing players at HIS
+  position (G/F/C bucket) ranked by shared floor time with his pts / FG
+  while each was on.
+- **ASSISTS:** who he assisted (made shot → `participants[1]` on the SAME
+  team; on a miss, `participants[1]` is the BLOCKER from the other team, so
+  never read it without checking `scoringPlay`), teammates' FG/3PT with him
+  on the floor (his own shots excluded — assists need a make), assist type,
+  AST/TO, and the same position-matched opponents with his AST/TOV.
+- Flags are split: `flags` = general (DNP, minutes, fouls, blowout),
+  `statFlags.{pts,reb,ast}` = lens-specific. "vs season average" uses the
+  mean of `player.proj.vals`, passed in as `seasonAvg`.
+- Verified: pbp-rebuilt FG / 3PA / points / assists equal the box score on
+  68 of 69 player-games (3 games); the one miss is ESPN's own pbp logging an
+  extra 3PA.
+- **Global-scope trap:** every script shares ONE global scope, so a
+  top-level `const` in a `.jsx` that reuses a name from a `data/*.js` file
+  is a SyntaxError that silently kills the WHOLE `.jsx` file (every NBA tab
+  vanished). The panel's UI helpers are therefore `_bdUi*`, distinct from
+  `game-breakdown.js`'s `_bd*`.
+- **Opponent rows are ON/OFF splits, never "while on" alone.** The first
+  version showed only "his pts while X was on"; two guards share the floor
+  most of the game, so the rows summed to MORE than his total (Maxey: 25 + 15
+  across two rows on a 29-point night) and read like a split. Each row now
+  carries `on` + `off` (`off = his pbp total − on`, minutes from the lineup
+  sim) plus per-36 rates, so every row sums to his total on its own, and the
+  UI says rows overlap. His own shots/assists/TOV always credit the opponents
+  on the floor (if he shot, he was on), so ON + OFF is exact.
+- **Readability rule (user feedback, Nov 2026): plain English over numbers.**
+  A dense version (TS%, per-36, x/y, +/-, six numbers per row) was rejected
+  as "genuinely confusing". The panel is now: tiles with "usually N" under
+  each number → KEY TAKEAWAYS (plain sentences) → one section per question
+  ("How he got his 29 points", "Did any defender slow him down?", "Did his
+  teammates make their shots?", "Who was he fighting for rebounds?"), each
+  with a one-line "how to read this". Every number has words next to it
+  ("made 6 of 18 shots"). Don't reintroduce abbreviations or rate columns.
+- **Defender verdict chips are conservative on purpose** (`_bdUiImpact`):
+  compare his output with that opponent ON against his own pace for the
+  night applied to those minutes; badge only on a gap of 4+ pts / 2+ ast
+  with a total of 10+ pts / 5+ ast, else "NO REAL EFFECT" / "TOO FEW TO
+  TELL". The first ratio-based version badged 2-vs-2 assists as "SLOWED
+  HIM DOWN".

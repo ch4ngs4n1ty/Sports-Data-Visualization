@@ -34,201 +34,425 @@ const nbaStatColorFor = (v, sk) => {
   return NBA_TXT_2;
 };
 
+const _bdUiMono = { fontFamily: 'Space Mono, monospace' };
+const _bdUiOrb = { fontFamily: 'Orbitron, monospace', fontWeight: 700 };
+const _bdUiLast = n => String(n || '').split(' ').filter(w => !/^(jr|sr|ii|iii|iv)\.?$/i.test(w)).slice(-1)[0] || n;
+const _bdUiPlural = (n, one, many) => `${n} ${n === 1 ? one : (many || one + 's')}`;
+const _bdUiMins = m => `${Math.round(m)} min`;
+
+/* Plain-English verdict for one opponent. Question: with this player on the
+   court, did he produce more or less than his OWN pace for the night would
+   predict for those minutes? Only the verdict is shown — rates are jargon.
+   Deliberately conservative: a badge needs a real gap (4+ pts / 2+ ast) on a
+   real total, because "2 assists vs 2 assists" is noise, not a matchup. */
+function _bdUiImpact(on, off, key) {
+  if (!on || on.min < 4) return null;
+  if (!off || off.min < 4) return { tag: 'ON COURT ALMOST ALL GAME', tone: 'neutral', comparable: false };
+  const total = on[key] + off[key];
+  const minGap = key === 'pts' ? 4 : 2, minTotal = key === 'pts' ? 10 : 5;
+  if (total < minTotal) return { tag: 'TOO FEW TO TELL', tone: 'neutral', comparable: true };
+  const expectedOn = total * on.min / (on.min + off.min);   // his pace for the night, applied to those minutes
+  const gap = on[key] - expectedOn;
+  if (gap <= -minGap) return { tag: 'SLOWED HIM DOWN', tone: 'bad', comparable: true };
+  if (gap >= minGap) return { tag: "COULDN'T STOP HIM", tone: 'good', comparable: true };
+  return { tag: 'NO REAL EFFECT', tone: 'neutral', comparable: true };
+}
+const _bdUiToneColor = t => t === 'bad' ? 'var(--orange)' : t === 'good' ? 'var(--green)' : NBA_TXT_2;
+
+function NbaBdChip({ tone, children }) {
+  const c = _bdUiToneColor(tone);
+  return (
+    <span style={{ ..._bdUiMono, fontSize: 10, fontWeight: 700, letterSpacing: '0.12em', padding: '3px 8px', borderRadius: 3,
+      color: c, border: `1px solid color-mix(in srgb, ${c} 50%, transparent)`, background: `color-mix(in srgb, ${c} 10%, transparent)`,
+      whiteSpace: 'nowrap' }}>{children}</span>
+  );
+}
+
+// A section = a question as the title + one plain sentence saying how to read it.
+function NbaBdSection({ accent, title, hint, children }) {
+  return (
+    <div style={{ paddingTop: 14, marginTop: 14, borderTop: '1px solid rgba(255,255,255,0.06)' }}>
+      <div style={{ ..._bdUiMono, fontSize: 12, color: accent, letterSpacing: '0.14em', fontWeight: 700 }}>{title}</div>
+      {hint && <div style={{ ..._bdUiMono, fontSize: 11.5, color: NBA_TXT_2, marginTop: 4, lineHeight: 1.5 }}>{hint}</div>}
+      <div style={{ marginTop: 10 }}>{children}</div>
+    </div>
+  );
+}
+
+// "With X on the court (26 min)  ████░░  scored 15 · made 6 of 18 shots"
+function NbaBdCompareLine({ label, text, width, color }) {
+  return (
+    <div style={{ display: 'flex', flexWrap: 'wrap', gap: '3px 12px', alignItems: 'center' }}>
+      <span style={{ ..._bdUiMono, fontSize: 11.5, color: NBA_TXT_2, flex: '0 0 230px', maxWidth: '100%' }}>{label}</span>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10, minWidth: 0, flex: '1 1 200px' }}>
+        <div style={{ flex: '0 0 70px', height: 6, borderRadius: 3, background: 'rgba(255,255,255,0.06)', overflow: 'hidden' }}>
+          <div style={{ width: `${Math.max(3, width * 100)}%`, height: '100%', background: color, borderRadius: 3 }} />
+        </div>
+        <span style={{ ..._bdUiMono, fontSize: 12, color: 'var(--text)' }}>{text}</span>
+      </div>
+    </div>
+  );
+}
+
+/* One card per opposing player: name, verdict chip, then two lines — his
+   production with that player ON the court vs on the BENCH. The little bar
+   is his scoring PACE in each stretch (so different lengths compare fairly). */
+function NbaBdOpponentCards({ d, accent, mode }) {
+  const list = ((mode === 'pts' ? d.scoring?.matchups : d.playmaking?.matchups) || []).filter(m => m.on && m.on.min >= 4).slice(0, 4);
+  if (!list.length) return <div style={{ ..._bdUiMono, fontSize: 11.5, color: NBA_TXT_3 }}>Not enough play-by-play data for this game.</div>;
+  const me = _bdUiLast(d.me.name);
+  const key = mode === 'pts' ? 'pts' : 'ast';
+  const say = v => mode === 'pts'
+    ? `scored ${v.pts} · made ${v.fgm} of ${v.fga} shots`
+    : `${_bdUiPlural(v.ast, 'assist')} · ${_bdUiPlural(v.tov, 'turnover')}`;
+  return (
+    <div style={{ display: 'grid', gap: 8 }}>
+      {list.map(m => {
+        const imp = _bdUiImpact(m.on, m.off, key);
+        const opp = _bdUiLast(m.name);
+        const onRate = m.on.min ? m.on[key] / m.on.min : 0;
+        const offRate = m.off.min ? m.off[key] / m.off.min : 0;
+        const max = Math.max(onRate, offRate, 0.0001);
+        return (
+          <div key={m.id} style={{ padding: '10px 12px', borderRadius: 5, border: '1px solid rgba(255,255,255,0.07)', background: 'rgba(255,255,255,0.015)' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap', marginBottom: 8 }}>
+              <span style={{ ..._bdUiMono, fontSize: 13, fontWeight: 700, color: 'var(--text)' }}>{m.name}</span>
+              <span style={{ ..._bdUiMono, fontSize: 10.5, color: NBA_TXT_3 }}>{m.pos}</span>
+              {imp && <span style={{ marginLeft: 'auto' }}><NbaBdChip tone={imp.tone}>{imp.tag}</NbaBdChip></span>}
+            </div>
+            <div style={{ display: 'grid', gap: 6 }}>
+              <NbaBdCompareLine label={`${opp} on the court (${_bdUiMins(m.on.min)})`} text={say(m.on)}
+                width={onRate / max} color={accent} />
+              {imp?.comparable && (
+                <NbaBdCompareLine label={`${opp} on the bench (${_bdUiMins(m.off.min)})`} text={say(m.off)}
+                  width={offRate / max} color={NBA_TXT_3} />
+              )}
+            </div>
+            {imp && !imp.comparable && (
+              <div style={{ ..._bdUiMono, fontSize: 11, color: NBA_TXT_3, marginTop: 6 }}>
+                They were on the court together almost the whole time {me} played, so there's nothing to compare against.
+              </div>
+            )}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+// Plain-English list of short takeaways.
+function NbaBdTakeaways({ flags }) {
+  if (!flags.length) return null;
+  return (
+    <div style={{ display: 'grid', gap: 6 }}>
+      {flags.map((f, i) => (
+        <div key={i} style={{ ..._bdUiMono, fontSize: 12, color: 'var(--text)', display: 'flex', gap: 9, lineHeight: 1.5 }}>
+          <span style={{ color: f.tone === 'bad' ? 'var(--orange)' : f.tone === 'warn' ? 'var(--gold)' : f.tone === 'good' ? 'var(--green)' : 'var(--cyan)', flexShrink: 0 }}>●</span>
+          <span>{f.text}</span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function NbaBdScoringLens({ d, accent }) {
+  const sc = d.scoring;
+  if (!sc) return null;
+  const me = _bdUiLast(d.me.name);
+  // His points as four plain-named pieces that add up to his total.
+  const parts = (sc.zones ? [
+    { label: 'Layups & dunks', pts: sc.zones.rim.pts, made: sc.zones.rim.fgm, att: sc.zones.rim.fga, what: 'shots', color: 'var(--cyan)' },
+    { label: 'Mid-range jumpers', pts: sc.zones.mid.pts, made: sc.zones.mid.fgm, att: sc.zones.mid.fga, what: 'shots', color: 'var(--gold)' },
+    { label: 'Threes', pts: sc.zones.three.pts, made: sc.zones.three.fgm, att: sc.zones.three.fga, what: 'threes', color: 'var(--green)' },
+  ] : [
+    { label: 'Two-pointers', pts: sc.split.two, made: sc.fgm - sc.tpm, att: sc.fga - sc.tpa, what: 'shots', color: 'var(--cyan)' },
+    { label: 'Threes', pts: sc.split.three, made: sc.tpm, att: sc.tpa, what: 'threes', color: 'var(--green)' },
+  ]).concat([{ label: 'Free throws', pts: sc.ftm, made: sc.ftm, att: sc.fta, what: 'free throws', color: '#b48cff' }]);
+  const total = parts.reduce((a, p) => a + p.pts, 0) || 1;
+  const maxQ = Math.max(1, ...sc.byPeriod.map(q => q.pts));
+  const qLabel = per => per <= 4 ? `Q${per}` : `OT${per - 4 > 1 ? per - 4 : ''}`;
+  return (
+    <>
+      <NbaBdSection accent={accent} title={`HOW HE GOT HIS ${sc.pts} POINTS`}
+        hint={`Every point ${me} scored, by type of shot.`}>
+        <div style={{ display: 'flex', height: 14, borderRadius: 4, overflow: 'hidden', marginBottom: 12, background: 'rgba(255,255,255,0.05)' }}>
+          {parts.filter(p => p.pts > 0).map(p => (
+            <div key={p.label} title={`${p.label}: ${p.pts} pts`} style={{ width: `${(p.pts / total) * 100}%`, background: p.color }} />
+          ))}
+        </div>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: 10 }}>
+          {parts.map(p => (
+            <div key={p.label} style={{ display: 'flex', gap: 8 }}>
+              <span style={{ width: 10, height: 10, borderRadius: 2, background: p.color, marginTop: 4, flexShrink: 0 }} />
+              <div>
+                <div style={{ ..._bdUiMono, fontSize: 11.5, color: NBA_TXT_2 }}>{p.label}</div>
+                <div style={{ ..._bdUiOrb, fontSize: 16, color: 'var(--text)', marginTop: 2 }}>{p.pts} <span style={{ fontSize: 10.5, color: NBA_TXT_2 }}>PTS</span></div>
+                <div style={{ ..._bdUiMono, fontSize: 11, color: NBA_TXT_3 }}>{p.att ? `made ${p.made} of ${p.att} ${p.what}` : `no ${p.what}`}</div>
+              </div>
+            </div>
+          ))}
+        </div>
+        {sc.fgm > 0 && (
+          <div style={{ ..._bdUiMono, fontSize: 11.5, color: NBA_TXT_2, marginTop: 12 }}>
+            {sc.assistedMakes} of his {sc.fgm} baskets came off a teammate's pass; the other {sc.fgm - sc.assistedMakes} he created himself.
+          </div>
+        )}
+      </NbaBdSection>
+
+      {sc.byPeriod.length > 0 && (
+        <NbaBdSection accent={accent} title="WHEN HE SCORED" hint="Points in each quarter.">
+          <div style={{ display: 'flex', gap: 10, alignItems: 'flex-end', height: 70, maxWidth: 420 }}>
+            {sc.byPeriod.map(q => (
+              <div key={q.period} style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4, height: '100%', justifyContent: 'flex-end' }}>
+                <span style={{ ..._bdUiOrb, fontSize: 12, color: 'var(--text)' }}>{q.pts}</span>
+                <div style={{ width: '100%', maxWidth: 40, height: `${Math.max(3, (q.pts / maxQ) * 40)}px`, borderRadius: 2,
+                  background: q.pts ? accent : 'rgba(255,255,255,0.1)' }} />
+                <span style={{ ..._bdUiMono, fontSize: 10.5, color: NBA_TXT_3 }}>{qLabel(q.period)}</span>
+              </div>
+            ))}
+          </div>
+        </NbaBdSection>
+      )}
+
+      <NbaBdSection accent={accent} title="DID ANY DEFENDER SLOW HIM DOWN?"
+        hint={`${d.oppTeam.abbr} players at his position. For each one: how ${me} scored while that player was on the court vs. sitting on the bench. The bar shows his scoring pace.`}>
+        <NbaBdOpponentCards d={d} accent={accent} mode="pts" />
+      </NbaBdSection>
+    </>
+  );
+}
+
+function NbaBdPlaymakingLens({ d, accent }) {
+  const pm = d.playmaking;
+  if (!pm) return null;
+  const me = _bdUiLast(d.me.name);
+  const m = pm.matesOnFloor;
+  const maxR = Math.max(1, ...pm.recipients.map(r => r.ast));
+  const mateTone = !m || m.fga < 15 ? null : m.fgPct < 0.42 ? 'bad' : m.fgPct >= 0.50 ? 'good' : 'neutral';
+  const mateTag = mateTone === 'bad' ? 'COLD NIGHT' : mateTone === 'good' ? 'HOT NIGHT' : 'NORMAL';
+  return (
+    <>
+      <NbaBdSection accent={accent} title="WHO HE PASSED TO" hint={`Every basket ${me} assisted, by the teammate who scored it.`}>
+        {pm.recipients.length === 0 ? (
+          <div style={{ ..._bdUiMono, fontSize: 11.5, color: NBA_TXT_3 }}>No assists this game.</div>
+        ) : (
+          <div style={{ display: 'grid', gap: 7 }}>
+            {pm.recipients.map(r => (
+              <div key={r.id} style={{ display: 'grid', gridTemplateColumns: 'minmax(120px, 190px) 1fr', alignItems: 'center', gap: 12 }}>
+                <span style={{ ..._bdUiMono, fontSize: 12, color: 'var(--text)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{r.name}</span>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                  <div style={{ flex: '0 0 90px', height: 7, borderRadius: 4, background: 'rgba(255,255,255,0.06)', overflow: 'hidden' }}>
+                    <div style={{ width: `${(r.ast / maxR) * 100}%`, height: '100%', background: accent, borderRadius: 4 }} />
+                  </div>
+                  <span style={{ ..._bdUiMono, fontSize: 12, color: 'var(--text)' }}>
+                    {_bdUiPlural(r.ast, 'assist')}
+                    <span style={{ color: NBA_TXT_3 }}> ({r.threes ? `${_bdUiPlural(r.threes, 'three')}, ` : ''}{r.pts} pts)</span>
+                  </span>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </NbaBdSection>
+
+      {m && m.fga > 0 && (
+        <NbaBdSection accent={accent} title="DID HIS TEAMMATES MAKE THEIR SHOTS?"
+          hint="An assist only counts if the teammate scores. A cold-shooting night for his teammates caps his assist total, no matter how well he passes.">
+          <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
+            {mateTone && <NbaBdChip tone={mateTone}>{mateTag}</NbaBdChip>}
+            <span style={{ ..._bdUiMono, fontSize: 12, color: 'var(--text)', lineHeight: 1.5 }}>
+              With {me} on the court, his teammates made <b>{m.fgm} of {m.fga}</b> shots ({Math.round(m.fgPct * 100)}%)
+              {m.tpa ? <> and <b>{m.tpm} of {m.tpa}</b> threes</> : null}.
+            </span>
+          </div>
+        </NbaBdSection>
+      )}
+
+      <NbaBdSection accent={accent} title="DID ANY DEFENDER SLOW HIM DOWN?"
+        hint={`${d.oppTeam.abbr} players at his position. For each one: ${me}'s assists while that player was on the court vs. sitting on the bench. The bar shows his assist pace.`}>
+        <NbaBdOpponentCards d={d} accent={accent} mode="ast" />
+      </NbaBdSection>
+    </>
+  );
+}
+
+function NbaBdReboundLens({ d, accent }) {
+  const me = _bdUiLast(d.me.name);
+  const bigs = (d.bigs || []).filter(b => (b.sharedMin || 0) >= 3).slice(0, 4);
+  return (
+    <NbaBdSection accent={accent} title="WHO WAS HE FIGHTING FOR REBOUNDS?"
+      hint={`${d.oppTeam.abbr} big men who were on the court with ${me}, and who grabbed more rebounds while they were both out there.`}>
+      {d.onFloorReb && (
+        <div style={{ ..._bdUiMono, fontSize: 12, color: 'var(--text)', marginBottom: 10, lineHeight: 1.5 }}>
+          While {me} played, {d.myTeam.abbr} grabbed <b>{d.onFloorReb.mine}</b> rebounds and {d.oppTeam.abbr} grabbed <b>{d.onFloorReb.opp}</b>
+          {d.onFloorReb.opp > d.onFloorReb.mine + 3 ? ` — ${d.oppTeam.abbr} controlled the glass.` : d.onFloorReb.mine > d.onFloorReb.opp + 3 ? ` — ${d.myTeam.abbr} controlled the glass.` : '.'}
+        </div>
+      )}
+      {bigs.length === 0 ? (
+        <div style={{ ..._bdUiMono, fontSize: 11.5, color: NBA_TXT_3 }}>No opposing big men logged real minutes with him.</div>
+      ) : (
+        <div style={{ display: 'grid', gap: 8 }}>
+          {bigs.map(b => {
+            const his = b.rebWhileShared || 0, mine = b.myRebWhileShared || 0;
+            const tone = his >= mine + 3 ? 'bad' : mine >= his + 3 ? 'good' : 'neutral';
+            const tag = tone === 'bad' ? 'OUT-REBOUNDED HIM' : tone === 'good' ? `${me.toUpperCase()} WON` : 'ABOUT EVEN';
+            const max = Math.max(his, mine, 1);
+            return (
+              <div key={b.id} style={{ padding: '10px 12px', borderRadius: 5, border: '1px solid rgba(255,255,255,0.07)', background: 'rgba(255,255,255,0.015)' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap', marginBottom: 8 }}>
+                  <span style={{ ..._bdUiMono, fontSize: 13, fontWeight: 700, color: 'var(--text)' }}>{b.name}</span>
+                  <span style={{ ..._bdUiMono, fontSize: 10.5, color: NBA_TXT_3 }}>{b.pos}</span>
+                  <span style={{ marginLeft: 'auto' }}><NbaBdChip tone={tone}>{tag}</NbaBdChip></span>
+                </div>
+                <div style={{ ..._bdUiMono, fontSize: 11.5, color: NBA_TXT_2, marginBottom: 6 }}>
+                  On the court together for {_bdUiMins(b.sharedMin)}. Rebounds in that time:
+                </div>
+                <div style={{ display: 'grid', gap: 6 }}>
+                  <NbaBdCompareLine label={_bdUiLast(b.name)} text={_bdUiPlural(his, 'rebound')} width={his / max} color={NBA_TXT_3} />
+                  <NbaBdCompareLine label={me} text={_bdUiPlural(mine, 'rebound')} width={mine / max} color={accent} />
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </NbaBdSection>
+  );
+}
+
 /* ── Bar-click game breakdown ──────────────────────────────
    Opened by clicking a bar in an Edge Finder game-log chart. Answers "why
-   that number?" for ONE game: his own line + availability, who was out, and
-   the opposing PF / C he shared the floor with — how long, and how many
-   boards they took in that time. Data: `fetchNbaGameBreakdown`
-   (frontend/data/nba/game-breakdown.js); see that file for why this is
-   shared floor time and not a defensive assignment. */
+   that number?" for ONE game, in plain English: takeaways first, then a
+   lens per stat (points / rebounds / assists). Data: `fetchNbaGameBreakdown`
+   (frontend/data/nba/game-breakdown.js); see that file for why opponent
+   comparisons are shared court time and not a defensive assignment.
+   Readability rule (from user feedback): every number gets words next to
+   it, no abbreviations a casual fan wouldn't know (no TS%, per-36, +/-). */
 function NbaGameBreakdownPanel({ game, player, league, statKey, onClose }) {
   const [state, setState] = React.useState({ loading: true, data: null });
+  // Which stat the breakdown explains. Starts on whatever the chart was showing
+  // when the bar was clicked; switchable in place without re-fetching.
+  const [lens, setLens] = React.useState(['pts', 'reb', 'ast'].includes(statKey) ? statKey : 'pts');
+  React.useEffect(() => { if (['pts', 'reb', 'ast'].includes(statKey)) setLens(statKey); }, [statKey]);
   React.useEffect(() => {
     let alive = true;
     setState({ loading: true, data: null });
-    fetchNbaGameBreakdown(game.eventId, player.id, { league, seasonMpg: player.seasonMpg || null })
+    const vals = player.proj?.vals || {};
+    const mean = a => (a && a.length) ? a.reduce((x, y) => x + y, 0) / a.length : null;
+    const seasonAvg = { pts: mean(vals.pts), reb: mean(vals.reb), ast: mean(vals.ast) };
+    fetchNbaGameBreakdown(game.eventId, player.id, { league, seasonMpg: player.seasonMpg || null, seasonAvg })
       .then(data => { if (alive) setState({ loading: false, data }); })
       .catch(() => { if (alive) setState({ loading: false, data: { error: 'FETCH_FAILED', message: 'Could not load this game.' } }); });
     return () => { alive = false; };
   }, [game.eventId, player.id, league]);
 
   const accent = player.teamColor || 'var(--cyan)';
-  const mono = { fontFamily: 'Space Mono, monospace' };
-  const orb = { fontFamily: 'Orbitron, monospace', fontWeight: 700 };
-  const micro = { ...mono, fontSize: 10, color: NBA_TXT_3, letterSpacing: '0.16em' };
   const d = state.data;
   const when = typeof gameLogFullDate === 'function' ? gameLogFullDate(game) : (game.date || '');
-  const toneColor = t => t === 'bad' ? 'var(--orange)' : t === 'warn' ? 'var(--gold)' : 'var(--cyan)';
-  const lastName = n => String(n || '').split(' ').filter(w => !/^(jr|sr|ii|iii|iv)\.?$/i.test(w)).slice(-1)[0] || n;
+  const avgOf = k => { const v = player.proj?.vals?.[k]; return v && v.length ? v.reduce((a, b) => a + b, 0) / v.length : null; };
 
   return (
     <div role="region" aria-label={`Game breakdown ${when}`}
-      style={{ marginTop: 14, padding: '14px 16px', borderRadius: 6, animation: 'fadeUp 0.15s ease',
+      style={{ marginTop: 14, padding: '16px 18px', borderRadius: 6, animation: 'fadeUp 0.15s ease',
         background: 'rgba(255,255,255,0.025)', border: `1px solid color-mix(in srgb, ${accent} 35%, transparent)` }}>
       {/* Header */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap', marginBottom: 12 }}>
-        <span style={{ ...mono, fontSize: 10.5, color: accent, letterSpacing: '0.22em' }}>GAME BREAKDOWN</span>
-        <span style={{ ...mono, fontSize: 11, color: NBA_TXT_2 }}>{when}</span>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap', marginBottom: 14 }}>
+        <span style={{ ..._bdUiMono, fontSize: 11, color: accent, letterSpacing: '0.2em', fontWeight: 700 }}>GAME BREAKDOWN</span>
+        <span style={{ ..._bdUiMono, fontSize: 11.5, color: NBA_TXT_2 }}>{when}</span>
         {d && !d.error && d.final && (
-          <span style={{ ...orb, fontSize: 11, color: d.margin > 0 ? 'var(--green)' : 'var(--orange)', letterSpacing: '0.08em' }}>
-            {d.margin > 0 ? 'W' : 'L'} {d.myTeam.score}–{d.oppTeam.score}
+          <span style={{ ..._bdUiMono, fontSize: 11.5, color: d.margin > 0 ? 'var(--green)' : 'var(--orange)' }}>
+            {d.margin > 0 ? 'Won' : 'Lost'} {d.myTeam.score}–{d.oppTeam.score} vs {d.oppTeam.abbr}
           </span>
         )}
+        <div role="tablist" aria-label="Breakdown stat" style={{ display: 'flex', gap: 4, marginLeft: 'auto' }}>
+          {[['pts', 'POINTS'], ['reb', 'REBOUNDS'], ['ast', 'ASSISTS']].map(([k, l]) => (
+            <button key={k} role="tab" aria-selected={lens === k} onClick={() => setLens(k)}
+              style={{ ..._bdUiMono, fontSize: 10.5, letterSpacing: '0.12em', padding: '4px 10px', borderRadius: 3, cursor: 'pointer',
+                color: lens === k ? accent : NBA_TXT_2,
+                background: lens === k ? `color-mix(in srgb, ${accent} 12%, transparent)` : 'none',
+                border: `1px solid ${lens === k ? `color-mix(in srgb, ${accent} 50%, transparent)` : 'rgba(255,255,255,0.12)'}` }}>
+              {l}
+            </button>
+          ))}
+        </div>
         <button onClick={onClose} aria-label="Close game breakdown"
-          style={{ marginLeft: 'auto', background: 'none', border: '1px solid rgba(255,255,255,0.12)', color: NBA_TXT_2,
-            ...mono, fontSize: 10.5, letterSpacing: '0.12em', padding: '3px 9px', borderRadius: 3, cursor: 'pointer' }}>
+          style={{ background: 'none', border: '1px solid rgba(255,255,255,0.12)', color: NBA_TXT_2,
+            ..._bdUiMono, fontSize: 10.5, letterSpacing: '0.12em', padding: '4px 10px', borderRadius: 3, cursor: 'pointer' }}>
           CLOSE ✕
         </button>
       </div>
 
       {state.loading && (
-        <div style={{ ...mono, fontSize: 11, color: NBA_TXT_2, padding: '10px 0', letterSpacing: '0.08em' }}>
-          Loading box score + play-by-play…
-        </div>
+        <div style={{ ..._bdUiMono, fontSize: 11.5, color: NBA_TXT_2, padding: '10px 0' }}>Loading the box score and play-by-play…</div>
       )}
       {!state.loading && d?.error && (
-        <div style={{ ...mono, fontSize: 11, color: 'var(--orange)', padding: '6px 0' }}>{d.message || d.error}</div>
+        <div style={{ ..._bdUiMono, fontSize: 11.5, color: 'var(--orange)', padding: '6px 0' }}>{d.message || d.error}</div>
       )}
 
       {!state.loading && d && !d.error && (
         <>
-          {/* His line */}
+          {/* His line — plain words under every number */}
           {d.me.dnp ? (
-            <div style={{ ...orb, fontSize: 13, color: 'var(--orange)', letterSpacing: '0.1em', marginBottom: 10 }}>
+            <div style={{ ..._bdUiOrb, fontSize: 13, color: 'var(--orange)', letterSpacing: '0.1em', marginBottom: 12 }}>
               DID NOT PLAY{d.me.reason ? ` — ${d.me.reason}` : ''}
             </div>
           ) : (
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(74px, 1fr))', gap: 8, marginBottom: 12 }}>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(118px, 1fr))', gap: 8, marginBottom: 16 }}>
               {[
-                ['MIN', d.me.min, player.seasonMpg ? `avg ${player.seasonMpg.toFixed(1)}` : null],
-                ['PTS', d.me.pts, `${d.me.fgm}/${d.me.fga} FG`],
-                ['REB', d.me.reb, `${d.me.oreb} OFF · ${d.me.dreb} DEF`],
-                ['AST', d.me.ast, null],
-                ['TEAM REB %', d.me.rebShare != null ? `${Math.round(d.me.rebShare * 100)}%` : '—', `of ${d.myTeam.reb}`],
-                ['PF', d.me.pf, `${d.me.pm > 0 ? '+' : ''}${d.me.pm} +/-`],
-              ].map(([l, v, sub]) => (
-                <div key={l} style={{ padding: '7px 9px', borderRadius: 4, border: '1px solid rgba(255,255,255,0.06)',
-                  background: l === (statKey || '').toUpperCase() ? `color-mix(in srgb, ${accent} 10%, transparent)` : 'transparent' }}>
-                  <div style={micro}>{l}</div>
-                  <div style={{ ...orb, fontSize: 17, color: l === (statKey || '').toUpperCase() ? accent : 'var(--text)', marginTop: 2 }}>{v}</div>
-                  {sub && <div style={{ ...mono, fontSize: 10, color: NBA_TXT_3, marginTop: 1 }}>{sub}</div>}
+                ['pts', 'POINTS', d.me.pts, avgOf('pts') != null ? `usually ${avgOf('pts').toFixed(1)}` : `made ${d.me.fgm} of ${d.me.fga} shots`],
+                ['reb', 'REBOUNDS', d.me.reb, avgOf('reb') != null ? `usually ${avgOf('reb').toFixed(1)}` : null],
+                ['ast', 'ASSISTS', d.me.ast, avgOf('ast') != null ? `usually ${avgOf('ast').toFixed(1)}` : null],
+                ['min', 'MINUTES', d.me.min, player.seasonMpg ? `usually ${player.seasonMpg.toFixed(0)}` : null],
+                ['pf', 'FOULS', d.me.pf, d.me.pf >= 6 ? 'fouled out' : null],
+              ].map(([k, l, v, sub]) => (
+                <div key={k} style={{ padding: '8px 10px', borderRadius: 4, border: '1px solid rgba(255,255,255,0.06)',
+                  background: k === lens ? `color-mix(in srgb, ${accent} 10%, transparent)` : 'transparent' }}>
+                  <div style={{ ..._bdUiMono, fontSize: 10, color: NBA_TXT_3, letterSpacing: '0.14em' }}>{l}</div>
+                  <div style={{ ..._bdUiOrb, fontSize: 19, color: k === lens ? accent : 'var(--text)', marginTop: 2 }}>{v}</div>
+                  {sub && <div style={{ ..._bdUiMono, fontSize: 10.5, color: NBA_TXT_3, marginTop: 1 }}>{sub}</div>}
                 </div>
               ))}
             </div>
           )}
 
-          {/* Context flags — plain sentences, each checkable in the box score */}
-          {d.flags.length > 0 && (
-            <div style={{ display: 'grid', gap: 5, marginBottom: 12 }}>
-              {d.flags.map((f, i) => (
-                <div key={i} style={{ ...mono, fontSize: 11, color: 'var(--text)', display: 'flex', gap: 8, lineHeight: 1.45 }}>
-                  <span style={{ color: toneColor(f.tone) }}>▸</span><span>{f.text}</span>
+          {/* Key takeaways */}
+          {(() => {
+            const fl = [...((d.statFlags || {})[lens] || []), ...d.flags];
+            return fl.length > 0 && (
+              <div>
+                <div style={{ ..._bdUiMono, fontSize: 12, color: accent, letterSpacing: '0.14em', fontWeight: 700, marginBottom: 8 }}>KEY TAKEAWAYS</div>
+                <NbaBdTakeaways flags={fl} />
+              </div>
+            );
+          })()}
+
+          {lens === 'pts' && !d.me.dnp && <NbaBdScoringLens d={d} accent={accent} />}
+          {lens === 'ast' && !d.me.dnp && <NbaBdPlaymakingLens d={d} accent={accent} />}
+          {lens === 'reb' && !d.me.dnp && <NbaBdReboundLens d={d} accent={accent} />}
+
+          {/* Who sat out — game-time, from the box score */}
+          <NbaBdSection accent={accent} title="WHO SAT OUT THIS GAME">
+            <div style={{ display: 'flex', gap: 18, flexWrap: 'wrap' }}>
+              {[[d.myTeam.abbr, d.out.mine], [d.oppTeam.abbr, d.out.opp]].map(([abbr, list]) => (
+                <div key={abbr} style={{ minWidth: 160, flex: 1 }}>
+                  <div style={{ ..._bdUiMono, fontSize: 10.5, color: NBA_TXT_3, letterSpacing: '0.14em', marginBottom: 4 }}>{abbr}</div>
+                  {list.length ? list.map(o => (
+                    <div key={o.name} style={{ ..._bdUiMono, fontSize: 11.5, color: 'var(--text)', lineHeight: 1.6 }}>
+                      {o.name} <span style={{ color: NBA_TXT_3 }}>— {String(o.reason).toLowerCase()}</span>
+                    </div>
+                  )) : <div style={{ ..._bdUiMono, fontSize: 11.5, color: NBA_TXT_3 }}>Nobody</div>}
                 </div>
               ))}
             </div>
-          )}
+          </NbaBdSection>
 
-          {/* Opposing frontcourt */}
-          {!d.me.dnp && (
-            <div style={{ paddingTop: 10, borderTop: '1px solid rgba(255,255,255,0.05)' }}>
-              <div style={{ display: 'flex', alignItems: 'baseline', gap: 10, flexWrap: 'wrap', marginBottom: 8 }}>
-                <span style={{ ...mono, fontSize: 10.5, color: accent, letterSpacing: '0.2em' }}>
-                  {d.oppTeam.abbr} FRONTCOURT · PF / C
-                </span>
-                <span style={micro}>SORTED BY SHARED FLOOR TIME</span>
-              </div>
-              {d.onFloorReb && (
-                <div style={{ ...mono, fontSize: 11, color: NBA_TXT_2, marginBottom: 10 }}>
-                  Rebounds while {lastName(d.me.name)} was on the floor:{' '}
-                  <span style={{ ...orb, color: d.onFloorReb.mine >= d.onFloorReb.opp ? 'var(--green)' : 'var(--orange)' }}>
-                    {d.myTeam.abbr} {d.onFloorReb.mine}
-                  </span>
-                  <span style={{ color: NBA_TXT_3 }}> – </span>
-                  <span style={{ ...orb, color: 'var(--text)' }}>{d.oppTeam.abbr} {d.onFloorReb.opp}</span>
-                </div>
-              )}
-              {d.bigs.length === 0 ? (
-                <div style={{ ...mono, fontSize: 11, color: NBA_TXT_3 }}>No opposing PF / C logged minutes.</div>
-              ) : (
-                <div style={{ display: 'grid', gap: 6 }}>
-                  {d.bigs.map(b => {
-                    const primary = b.id === d.primaryPF?.id || b.id === d.primaryC?.id;
-                    const sharePct = d.me.min ? Math.min(100, (b.sharedMin / d.me.min) * 100) : 0;
-                    return (
-                      <div key={b.id} style={{ display: 'flex', flexWrap: 'wrap', gap: '8px 14px',
-                        alignItems: 'center', padding: '8px 10px', borderRadius: 4,
-                        border: primary ? `1px solid color-mix(in srgb, ${accent} 40%, transparent)` : '1px solid rgba(255,255,255,0.05)',
-                        background: primary ? `color-mix(in srgb, ${accent} 6%, transparent)` : 'transparent' }}>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0, flex: '1 1 230px' }}>
-                          <span style={{ ...orb, fontSize: 10, padding: '2px 6px', borderRadius: 2, flexShrink: 0,
-                            color: b.pos === 'C' ? 'var(--gold)' : 'var(--cyan)',
-                            border: `1px solid ${b.pos === 'C' ? 'color-mix(in srgb, var(--gold) 45%, transparent)' : 'color-mix(in srgb, var(--cyan) 45%, transparent)'}` }}
-                            title={b.posSource === 'bref' ? 'Position: Basketball-Reference' : 'Position: ESPN (coarse — F may be SF or PF)'}>
-                            {b.pos}
-                          </span>
-                          <div style={{ minWidth: 0 }}>
-                            <div style={{ ...mono, fontSize: 12, color: 'var(--text)', fontWeight: 700, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                              {b.name}
-                            </div>
-                            <div style={{ ...mono, fontSize: 10, color: NBA_TXT_3 }}>
-                              {primary ? <span style={{ color: accent, letterSpacing: '0.12em' }}>MAIN {b.pos} MATCHUP · </span> : null}
-                              {b.min} MIN · {b.reb} REB ({b.oreb} OFF){b.blk ? ` · ${b.blk} BLK` : ''}
-                            </div>
-                          </div>
-                        </div>
-                        <div style={{ flex: '1 1 150px', minWidth: 0 }} title={`On the floor together for ${b.sharedMin} of his ${d.me.min} minutes`}>
-                          <div style={{ ...mono, fontSize: 10, color: NBA_TXT_3, marginBottom: 4, letterSpacing: '0.08em' }}>
-                            TOGETHER <span style={{ ...orb, color: 'var(--text)', fontSize: 11 }}>{b.sharedMin ?? '—'}</span> MIN
-                          </div>
-                          <div style={{ height: 5, borderRadius: 3, background: 'rgba(255,255,255,0.06)', overflow: 'hidden' }}>
-                            <div style={{ width: `${sharePct}%`, height: '100%', background: accent, borderRadius: 3 }} />
-                          </div>
-                        </div>
-                        <div style={{ textAlign: 'right', flex: '0 0 auto', marginLeft: 'auto' }}
-                          title={`Rebounds while both were on the floor: ${b.name} ${b.rebWhileShared}, ${d.me.name} ${b.myRebWhileShared}`}>
-                          <div style={{ ...micro, fontSize: 9.5 }}>BOARDS TOGETHER</div>
-                          <div style={{ ...orb, fontSize: 13, marginTop: 2 }}>
-                            <span style={{ color: (b.rebWhileShared || 0) > (b.myRebWhileShared || 0) ? 'var(--orange)' : 'var(--text)' }}>
-                              {lastName(b.name)} {b.rebWhileShared ?? '—'}
-                            </span>
-                            <span style={{ color: NBA_TXT_3 }}> · </span>
-                            <span style={{ color: accent }}>{lastName(d.me.name)} {b.myRebWhileShared ?? '—'}</span>
-                          </div>
-                          {b.orebWhileShared ? (
-                            <div style={{ ...mono, fontSize: 10, color: NBA_TXT_3 }}>{b.orebWhileShared} offensive</div>
-                          ) : null}
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
-              )}
-            </div>
-          )}
-
-          {/* Who was out — game-time, from the box score */}
-          <div style={{ display: 'flex', gap: 18, flexWrap: 'wrap', marginTop: 12, paddingTop: 10, borderTop: '1px solid rgba(255,255,255,0.05)' }}>
-            {[[d.myTeam.abbr, d.out.mine], [d.oppTeam.abbr, d.out.opp]].map(([abbr, list]) => (
-              <div key={abbr} style={{ minWidth: 160, flex: 1 }}>
-                <div style={{ ...micro, marginBottom: 4 }}>OUT · {abbr}</div>
-                {list.length ? list.map(o => (
-                  <div key={o.name} style={{ ...mono, fontSize: 11, color: 'var(--text)', lineHeight: 1.5 }}>
-                    {o.name} <span style={{ color: NBA_TXT_3 }}>({o.pos})</span>{' '}
-                    <span style={{ color: 'var(--orange)' }}>{String(o.reason).toLowerCase()}</span>
-                  </div>
-                )) : <div style={{ ...mono, fontSize: 11, color: NBA_TXT_3 }}>None listed</div>}
-              </div>
-            ))}
-          </div>
-
-          {/* Method note — never let floor time read as a guaranteed assignment */}
-          <div style={{ ...mono, fontSize: 10, color: NBA_TXT_3, marginTop: 12, lineHeight: 1.5 }}>
-            Floor time rebuilt from ESPN play-by-play
-            {d.lineupCheck ? ` (±${d.lineupCheck.maeMinutes} min vs box score)` : ''}. Sharing the floor ≠ a direct
-            defensive assignment, but these are the bigs competing for the same boards.
-            Positions: {d.posSource === 'bref' ? 'Basketball-Reference' : 'ESPN (coarse G/F/C)'}.
+          {/* Method note — short and plain */}
+          <div style={{ ..._bdUiMono, fontSize: 10.5, color: NBA_TXT_3, marginTop: 14, lineHeight: 1.55 }}>
+            How this works: who was on the court is rebuilt from ESPN's play-by-play
+            {d.lineupCheck ? ` (matches the official minutes to within ${d.lineupCheck.maeMinutes} min)` : ''}.
+            Being on the court at the same time doesn't mean they were guarding each other directly.
             {d.lineupCheck && !d.lineupCheck.reliable && (
-              <span style={{ color: 'var(--gold)' }}> Play-by-play was incomplete for this game — treat floor time as approximate.</span>
+              <span style={{ color: 'var(--gold)' }}> ESPN's play-by-play was incomplete for this game, so treat the court-time comparisons as rough.</span>
             )}
           </div>
         </>
@@ -1956,4 +2180,4 @@ function WnbaCourtLineupTab({ gameData }) {
   );
 }
 
-Object.assign(window, { NbaEdgeFinderTab, NbaLineupTab, NbaDefenseVsPositionTab, WnbaCourtLineupTab });
+Object.assign(window, { NbaEdgeFinderTab, NbaLineupTab, NbaDefenseVsPositionTab, WnbaCourtLineupTab, NbaGameBreakdownPanel });
