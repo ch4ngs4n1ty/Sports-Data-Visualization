@@ -770,46 +770,226 @@ function NbaLineupTab({ gameData }) {
 }
 
 /* ============================================================
-   NBA DEFENSE VS POSITION TAB
-   Sortable table of how each team defends each position across
-   PTS / FG% / FT% / 3PM / REB / AST / STL / BLK / TO. Cells are
-   colored Top 50 (green) / Mid 50 (yellow) / Bottom 50 (red)
-   based on the rank of that stat (lower allowed = stronger D).
+   NBA DEFENSE VS POSITION TAB — "Stats Allowed to Opposing Players"
+   Read from the OPPOSING player's point of view. Verified against
+   server/nba/positional-defense.js, not assumed:
+
+   - WHO: each row's numbers are the box-score lines of the players
+     who played AGAINST `defensive_team` at `position`
+     (attributeBoxScore credits every player to p.opponentAbbr). The
+     "SAC · C" row is centers facing Sacramento — NOT Sacramento's
+     own centers. The tab says so in as many places as it takes.
+   - WHAT: combined totals for EVERY opposing player at that position,
+     divided by their combined minutes × 48. Per 48 minutes of that
+     position's playing time — not per game, not one player.
+   - RANKS: the backend sorts all team×position rows (30 × 5 = 150)
+     together, ascending, for every stat. Two consequences handled
+     here:
+       1. Pooled ranks are dominated by POSITION — every center row is
+          #104-150 in rebounds, every PG row #115-150 in assists — so
+          the matchup grade uses the rank among the 30 teams at the
+          SAME position. The /150 rank is still shown, labelled.
+       2. Ascending is the wrong direction for TO: more turnovers
+          committed by the opponent = the defense FORCES turnovers =
+          a TOUGHER matchup. Displayed ranks are therefore re-oriented
+          so #1 = toughest matchup for the opposing player in every
+          column (identical to the backend rank except for TO).
+     FT% is shown but not graded — free throws are uncontested.
    ============================================================ */
 
+const DVP_POS = {
+  PG: { one: 'Point Guard',    many: 'Point Guards' },
+  SG: { one: 'Shooting Guard', many: 'Shooting Guards' },
+  SF: { one: 'Small Forward',  many: 'Small Forwards' },
+  PF: { one: 'Power Forward',  many: 'Power Forwards' },
+  C:  { one: 'Center',         many: 'Centers' },
+};
+
+// Canonical (backend) abbreviation → [place, nickname].
+const DVP_TEAMS = {
+  ATL: ['Atlanta', 'Hawks'], BKN: ['Brooklyn', 'Nets'], BOS: ['Boston', 'Celtics'],
+  CHA: ['Charlotte', 'Hornets'], CHI: ['Chicago', 'Bulls'], CLE: ['Cleveland', 'Cavaliers'],
+  DAL: ['Dallas', 'Mavericks'], DEN: ['Denver', 'Nuggets'], DET: ['Detroit', 'Pistons'],
+  GSW: ['Golden State', 'Warriors'], HOU: ['Houston', 'Rockets'], IND: ['Indiana', 'Pacers'],
+  LAC: ['LA Clippers', 'Clippers'], LAL: ['LA Lakers', 'Lakers'], MEM: ['Memphis', 'Grizzlies'],
+  MIA: ['Miami', 'Heat'], MIL: ['Milwaukee', 'Bucks'], MIN: ['Minnesota', 'Timberwolves'],
+  NOP: ['New Orleans', 'Pelicans'], NYK: ['New York', 'Knicks'], OKC: ['Oklahoma City', 'Thunder'],
+  ORL: ['Orlando', 'Magic'], PHI: ['Philadelphia', '76ers'], PHO: ['Phoenix', 'Suns'],
+  POR: ['Portland', 'Trail Blazers'], SAC: ['Sacramento', 'Kings'], SAS: ['San Antonio', 'Spurs'],
+  TOR: ['Toronto', 'Raptors'], UTA: ['Utah', 'Jazz'], WAS: ['Washington', 'Wizards'],
+};
+const dvpPlace = abbr => DVP_TEAMS[abbr]?.[0] || abbr;
+
+const _dvp48 = v => v != null ? v.toFixed(1) : '—';
+const _dvpPct = v => v != null ? (v * 100).toFixed(1) : '—';
+
+// dir: 'up'   = a higher number is better for the opposing player
+//      'down' = a higher number is WORSE for him (turnovers forced)
+//      'none' = shown, not graded
 const NBA_DVP_COLUMNS = [
-  { key: 'pts',      label: 'PTS',  valKey: 'points_allowed_per_48', fmt: v => v?.toFixed(1) ?? '—' },
-  { key: 'fg_pct',   label: 'FG%',  valKey: 'fg_pct',                fmt: v => v != null ? (v * 100).toFixed(1) : '—' },
-  { key: 'ft_pct',   label: 'FT%',  valKey: 'ft_pct',                fmt: v => v != null ? (v * 100).toFixed(1) : '—' },
-  { key: 'three_pm', label: '3PM',  valKey: 'three_pm_per_48',       fmt: v => v?.toFixed(1) ?? '—' },
-  { key: 'reb',      label: 'REB',  valKey: 'reb_per_48',            fmt: v => v?.toFixed(1) ?? '—' },
-  { key: 'ast',      label: 'AST',  valKey: 'ast_per_48',            fmt: v => v?.toFixed(1) ?? '—' },
-  { key: 'stl',      label: 'STL',  valKey: 'stl_per_48',            fmt: v => v?.toFixed(1) ?? '—' },
-  { key: 'blk',      label: 'BLK',  valKey: 'blk_per_48',            fmt: v => v?.toFixed(1) ?? '—' },
-  { key: 'to',       label: 'TO',   valKey: 'to_per_48',             fmt: v => v?.toFixed(1) ?? '—' },
+  { key: 'pts', head: 'POINTS ALLOWED', sub: 'per 48', valKey: 'points_allowed_per_48', fmt: _dvp48, unit: 'per48', dir: 'up',
+    noun: 'points', angle: 'scoring',
+    tip: 'Points Allowed — points scored by ALL opposing players at this position against this team, per 48 minutes of their combined playing time. Higher = easier to score on.' },
+  { key: 'fg_pct', head: 'FG%', sub: 'allowed', valKey: 'fg_pct', fmt: _dvpPct, unit: 'pct', dir: 'up',
+    noun: 'from the field', angle: 'shooting',
+    tip: 'Field-Goal % Allowed — the shooting percentage opposing players at this position posted against this team. Higher = easier to score efficiently.' },
+  { key: 'ft_pct', head: 'FT%', sub: 'not graded', valKey: 'ft_pct', fmt: _dvpPct, unit: 'pct', dir: 'none',
+    noun: 'from the free-throw line', angle: null,
+    tip: 'Free-Throw % — opposing players at this position at the line vs this team. Free throws are uncontested, so this mostly reflects who took them. Shown for completeness; not graded as a matchup.' },
+  { key: 'three_pm', head: '3PM', sub: 'allowed /48', valKey: 'three_pm_per_48', fmt: _dvp48, unit: 'per48', dir: 'up',
+    noun: 'made 3-pointers', angle: '3-point',
+    tip: '3-Pointers Made Allowed — threes made by opposing players at this position against this team, per 48 minutes. Higher = more threes allowed.' },
+  { key: 'reb', head: 'REB', sub: 'allowed /48', valKey: 'reb_per_48', fmt: _dvp48, unit: 'per48', dir: 'up',
+    noun: 'rebounds', angle: 'rebounding',
+    tip: 'Rebounds Allowed — rebounds grabbed by opposing players at this position against this team, per 48 minutes. Higher = more boards available.' },
+  { key: 'ast', head: 'AST', sub: 'allowed /48', valKey: 'ast_per_48', fmt: _dvp48, unit: 'per48', dir: 'up',
+    noun: 'assists', angle: 'assist',
+    tip: 'Assists Allowed — assists by opposing players at this position against this team, per 48 minutes. Higher = more assists allowed.' },
+  { key: 'stl', head: 'STL', sub: 'by opp /48', valKey: 'stl_per_48', fmt: _dvp48, unit: 'per48', dir: 'up',
+    noun: 'steals', angle: 'steals',
+    tip: 'Steals by Opponents — steals RECORDED BY opposing players at this position against this team, per 48 minutes. Higher = this team gives the ball away to that position more, which favors the opposing player\'s steals.' },
+  { key: 'blk', head: 'BLK', sub: 'by opp /48', valKey: 'blk_per_48', fmt: _dvp48, unit: 'per48', dir: 'up',
+    noun: 'blocks', angle: 'blocks',
+    tip: 'Blocks by Opponents — shots BLOCKED BY opposing players at this position against this team, per 48 minutes. Higher = favors the opposing player\'s blocks.' },
+  { key: 'to', head: 'TO', sub: 'forced /48', valKey: 'to_per_48', fmt: _dvp48, unit: 'per48', dir: 'down',
+    noun: 'turnovers', angle: 'ball-security',
+    tip: 'Turnovers Forced — turnovers COMMITTED BY opposing players at this position against this team, per 48 minutes. Higher = this defense forces more turnovers, which is a TOUGHER matchup — so this column\'s grading is reversed.' },
 ];
 
-function _dvpCellColor(rank) {
-  const tier = nbaDefenseRankColor(rank);
-  return NBA_DEF_COLORS[tier] || null;
+// Offensive-player perspective. Every tier carries a word and a glyph so
+// nothing depends on color alone.
+const DVP_TIERS = {
+  favorable: { word: 'Favorable', icon: '▲', bg: 'rgba(0,255,136,0.10)', border: 'rgba(0,255,136,0.45)', text: '#5ff5a5' },
+  average:   { word: 'Average',   icon: '●', bg: 'rgba(255,208,96,0.08)', border: 'rgba(255,208,96,0.35)', text: '#ffd060' },
+  tough:     { word: 'Tough',     icon: '▼', bg: 'rgba(255,107,53,0.12)', border: 'rgba(255,107,53,0.45)', text: '#ff8a55' },
+};
+
+// Per row × column: { posRank, posN, leagueRank, leagueN, tier }, where every
+// rank is oriented #1 = toughest for the opposing player. Within-position
+// order is taken from the backend's own ranks so the two numbers can never
+// disagree about who is ahead of whom.
+function dvpBuildRanks(rows) {
+  const leagueN = rows.length;
+  const byPos = {};
+  rows.forEach(r => { (byPos[r.position] = byPos[r.position] || []).push(r); });
+  const out = new Map();
+  rows.forEach(r => out.set(r, {}));
+  for (const col of NBA_DVP_COLUMNS) {
+    const flip = col.dir === 'down';
+    const backendRank = r => {
+      const k = r.ranks?.[col.key];
+      return k != null ? k : null;
+    };
+    for (const r of rows) {
+      const br = backendRank(r);
+      out.get(r)[col.key] = { leagueRank: br == null ? null : (flip ? leagueN + 1 - br : br), leagueN };
+    }
+    for (const pos of Object.keys(byPos)) {
+      const group = byPos[pos].filter(r => backendRank(r) != null)
+        .sort((a, b) => flip ? backendRank(b) - backendRank(a) : backendRank(a) - backendRank(b));
+      const n = group.length;
+      group.forEach((r, i) => {
+        const cell = out.get(r)[col.key];
+        cell.posRank = i + 1;
+        cell.posN = n;
+        cell.tier = col.dir === 'none' ? null
+          : (i + 1) <= n / 3 ? 'tough'
+          : (i + 1) > (2 * n) / 3 ? 'favorable'
+          : 'average';
+      });
+    }
+  }
+  return out;
 }
 
-function NbaDefenseStatCell({ value, rank, fmt }) {
-  const c = _dvpCellColor(rank);
-  const display = fmt(value);
+// The plain-language read of one cell.
+function dvpExplain(row, col, rk, beneficiary) {
+  const place = dvpPlace(row.defensive_team);
+  const posMany = (DVP_POS[row.position]?.many || row.position).toLowerCase();
+  const posOne = (DVP_POS[row.position]?.one || row.position).toLowerCase();
+  const v = col.fmt(row[col.valKey]);
+  let what;
+  if (col.key === 'pts' || col.key === 'three_pm' || col.key === 'reb' || col.key === 'ast') {
+    what = `${place} allows opposing ${posMany} an average of ${v} ${col.noun} per 48 minutes this season.`;
+  } else if (col.unit === 'pct') {
+    what = `Opposing ${posMany} are shooting ${v}% ${col.noun} against ${place} this season.`;
+  } else if (col.key === 'to') {
+    what = `Opposing ${posMany} commit ${v} turnovers per 48 minutes against ${place} — that is how many ${place}'s defense forces.`;
+  } else {
+    what = `Opposing ${posMany} record ${v} ${col.noun} per 48 minutes against ${place} this season.`;
+  }
+
+  let verdict;
+  if (col.dir === 'none') {
+    verdict = 'Free throws are uncontested, so this mostly reflects who took them — it is not graded as a matchup.';
+  } else if (rk?.tier) {
+    const who = beneficiary ? `${beneficiary} ${posMany}` : `any team's ${posMany} facing ${place}`;
+    const tierWord = DVP_TIERS[rk.tier].word.toLowerCase();
+    verdict = `This suggests ${tierWord === 'average' ? 'an' : 'a'} ${tierWord} ${col.angle} matchup for ${who}.`;
+    if (col.dir === 'down') verdict += ' (More turnovers forced = tougher, so higher is worse here.)';
+  }
+
+  const rank = rk?.posRank != null
+    ? `Rank vs ${posMany}: #${rk.posRank} of ${rk.posN} teams · league-wide #${rk.leagueRank} / ${rk.leagueN} (all 30 teams × 5 positions). #1 = toughest matchup.`
+    : null;
+  const mins = Math.round(row.total_minutes_against_position || 0);
+  const sample = `Based on ${row.games_sampled ?? '—'} games and ${mins.toLocaleString()} combined minutes from every opposing ${posOne} who played against ${place} — not one individual player.`;
+  return { what, verdict, rank, sample };
+}
+
+function NbaDefenseStatCell({ row, col, rk, active, onHover, onPick }) {
+  const t = rk?.tier ? DVP_TIERS[rk.tier] : null;
+  const pos = DVP_POS[row.position]?.many || row.position;
+  const title = `${dvpPlace(row.defensive_team)} vs opposing ${pos} — ${col.head}: ${col.fmt(row[col.valKey])}`
+    + (t ? ` · ${t.word} matchup` : ' · not graded')
+    + (rk?.posRank != null ? ` · #${rk.posRank}/${rk.posN} vs ${pos} · #${rk.leagueRank}/${rk.leagueN} league-wide` : '');
   return (
-    <td style={{
-      padding: '8px 10px',
-      background: c ? c.bg : 'transparent',
-      borderLeft: c ? `2px solid ${c.border}` : '2px solid transparent',
-      textAlign: 'center',
-      fontFamily: 'Space Mono, monospace',
-    }}>
-      <div style={{ fontSize: 12, fontWeight: 700, color: c ? c.text : 'var(--text)' }}>{display}</div>
-      <div style={{ fontSize: 10, color: 'var(--muted)', letterSpacing: '0.06em', marginTop: 2 }}>
-        #{rank ?? '—'}
+    <td tabIndex={0} title={title}
+      onMouseEnter={onHover} onFocus={onHover} onClick={onPick}
+      onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onPick(); } }}
+      style={{
+        padding: '7px 9px',
+        background: t ? t.bg : 'transparent',
+        borderLeft: t ? `2px solid ${t.border}` : '2px solid transparent',
+        outline: active ? '1px solid var(--cyan)' : 'none', outlineOffset: -1,
+        textAlign: 'center', cursor: 'pointer',
+        fontFamily: 'Space Mono, monospace', whiteSpace: 'nowrap',
+      }}>
+      <div style={{ fontSize: 12, fontWeight: 700, color: t ? t.text : 'var(--text)' }}>{col.fmt(row[col.valKey])}</div>
+      <div style={{ fontSize: 9, color: t ? t.text : 'var(--muted)', letterSpacing: '0.04em', marginTop: 2, opacity: 0.9 }}>
+        {t ? `${t.icon} ${t.word.toUpperCase()}` : '— N/G'}
+      </div>
+      <div style={{ fontSize: 9, color: 'var(--muted)', letterSpacing: '0.04em', marginTop: 1 }}>
+        {rk?.leagueRank != null ? `#${rk.leagueRank} / ${rk.leagueN}` : '#—'}
       </div>
     </td>
+  );
+}
+
+function DvpMatchupLegend() {
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '8px 12px', marginBottom: 12,
+      background: 'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.05)', borderRadius: 4, flexWrap: 'wrap' }}>
+      <span style={{ fontSize: 10, fontFamily: 'Orbitron, monospace', color: 'var(--muted)', letterSpacing: '0.18em' }}>
+        FOR THE OPPOSING PLAYER
+      </span>
+      {[
+        ['favorable', 'Favorable matchup — bottom third of the 30 defenses vs that position'],
+        ['average', 'Average matchup — middle third'],
+        ['tough', 'Tough matchup — top third'],
+      ].map(([k, label]) => {
+        const t = DVP_TIERS[k];
+        return (
+          <div key={k} style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+            <span style={{ fontSize: 10, color: t.text, padding: '0 4px', background: t.bg, border: `1px solid ${t.border}`, borderRadius: 2 }}>{t.icon}</span>
+            <span style={{ fontSize: 10, fontFamily: 'Space Mono, monospace', color: t.text, letterSpacing: '0.04em' }}>{label}</span>
+          </div>
+        );
+      })}
+      <span style={{ fontSize: 10, fontFamily: 'Space Mono, monospace', color: 'var(--muted)', letterSpacing: '0.04em' }}>
+        TO is reversed (more forced = tougher) · FT% not graded
+      </span>
+    </div>
   );
 }
 
@@ -817,31 +997,38 @@ function NbaDefenseVsPositionTab({ gameData }) {
   const { gameInfo, nbaDefenseTable } = gameData || {};
   const [scope, setScope] = React.useState('matchup'); // 'matchup' | 'all'
   const [sortKey, setSortKey] = React.useState('pts');
-  const [sortDir, setSortDir] = React.useState('asc'); // 'asc' = stronger D first
+  const [sortDir, setSortDir] = React.useState('asc');
+  const [hover, setHover] = React.useState(null);   // { id, colKey }
+  const [pinned, setPinned] = React.useState(null); // { id, colKey }
+
+  const baseRows = nbaDefenseTable?.rows || [];
+  const rankIndex = React.useMemo(() => dvpBuildRanks(baseRows), [baseRows]);
 
   if (!nbaDefenseTable) {
     if (gameData?._loading?.nbaDefenseTable !== false) return <TabLoader source="NBA" label="Loading 150 team-position rankings..." rows={4} />;
     return <div style={emptyMsg}>Defense vs Position data unavailable.</div>;
   }
 
-  // Filter rows depending on scope
-  const matchupTeams = new Set([gameInfo.awayAbbr, gameInfo.homeAbbr].map(s => String(s || '').toUpperCase()));
   // Backend uses canonical NBA abbrs (NYK, GSW, etc.) so map ESPN short forms
   const ESPN_TO_CANON = { GS: 'GSW', NO: 'NOP', NY: 'NYK', SA: 'SAS', UTAH: 'UTA', WSH: 'WAS', PHX: 'PHO' };
   const canonAway = ESPN_TO_CANON[gameInfo.awayAbbr] || gameInfo.awayAbbr;
   const canonHome = ESPN_TO_CANON[gameInfo.homeAbbr] || gameInfo.homeAbbr;
   const matchupCanon = new Set([canonAway, canonHome]);
+  const nick = (canon, full) => DVP_TEAMS[canon]?.[1] || String(full || canon || '').trim().split(/\s+/).slice(-1)[0];
+  const awayNick = nick(canonAway, gameInfo.awayFull);
+  const homeNick = nick(canonHome, gameInfo.homeFull);
+  // Tonight, a row for one of these two defenses is the other team's matchup.
+  const beneficiaryOf = team => team === canonAway ? homeNick : team === canonHome ? awayNick : null;
+  const beneficiaryColor = team => team === canonAway ? '#ffd060' : '#00d4ff';
 
-  const baseRows = nbaDefenseTable.rows || [];
   const visible = scope === 'matchup'
     ? baseRows.filter(r => matchupCanon.has(r.defensive_team))
     : baseRows;
 
-  // Sort
   const sortCol = NBA_DVP_COLUMNS.find(c => c.key === sortKey);
   const sorted = visible.slice().sort((a, b) => {
     if (sortKey === 'team') {
-      const cmp = (a.defensive_team || '').localeCompare(b.defensive_team || '');
+      const cmp = dvpPlace(a.defensive_team).localeCompare(dvpPlace(b.defensive_team));
       return sortDir === 'asc' ? cmp : -cmp;
     }
     if (sortKey === 'position') {
@@ -858,26 +1045,98 @@ function NbaDefenseVsPositionTab({ gameData }) {
     if (sortKey === key) setSortDir(d => d === 'asc' ? 'desc' : 'asc');
     else { setSortKey(key); setSortDir('asc'); }
   };
-
   const sortIndicator = (key) => sortKey === key ? (sortDir === 'asc' ? ' ▲' : ' ▼') : '';
 
+  const rowId = r => `${r.defensive_team}-${r.position}`;
+  const findRow = id => baseRows.find(r => rowId(r) === id);
+  const focus = hover || pinned || (sorted[0] ? { id: rowId(sorted[0]), colKey: 'pts', example: true } : null);
+  const focusRow = focus && findRow(focus.id);
+  const focusCol = focus && NBA_DVP_COLUMNS.find(c => c.key === focus.colKey);
+  const explain = focusRow && focusCol
+    ? dvpExplain(focusRow, focusCol, rankIndex.get(focusRow)?.[focusCol.key], beneficiaryOf(focusRow.defensive_team))
+    : null;
+
+  // Data context — every figure here comes from the payload.
+  const totalGames = nbaDefenseTable.games_in_aggregate;
+  const rowGames = baseRows.map(r => r.games_sampled || 0).sort((a, b) => a - b);
+  const medianGames = rowGames.length ? rowGames[Math.floor(rowGames.length / 2)] : null;
+  const builtOn = nbaDefenseTable.builtAt
+    ? new Date(nbaDefenseTable.builtAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
+    : null;
+
   const headerCellStyle = {
-    padding: '8px 10px', textAlign: 'center', cursor: 'pointer',
-    fontFamily: 'Space Mono, monospace', fontSize: 10, letterSpacing: '0.18em',
+    padding: '8px 9px', textAlign: 'center', cursor: 'pointer', verticalAlign: 'bottom',
+    fontFamily: 'Space Mono, monospace', fontSize: 10, letterSpacing: '0.12em',
     color: 'var(--cyan)', borderBottom: '1px solid rgba(0,212,255,0.18)',
     userSelect: 'none', whiteSpace: 'nowrap',
   };
+  const subHead = { display: 'block', fontSize: 8, color: 'var(--muted)', letterSpacing: '0.08em', marginTop: 2, textTransform: 'uppercase' };
+  const ctxLabel = { fontSize: 9, fontFamily: 'Orbitron, monospace', color: 'var(--muted)', letterSpacing: '0.16em', marginBottom: 3 };
+  const ctxVal = { fontSize: 11, fontFamily: 'Space Mono, monospace', color: 'var(--text)', lineHeight: 1.45 };
+  const exPlace = dvpPlace(canonHome);
 
   return (
     <div style={{ padding: '20px 0' }}>
-      <SectionHeader label="DEFENSE vs POSITION"
-        sub={`${nbaDefenseTable.season || ''} season · ${nbaDefenseTable.games_in_aggregate ?? 0} games sampled · per-48 (or %) allowed to opposing position`} />
+      <SectionHeader label="STATS ALLOWED TO OPPOSING PLAYERS"
+        sub="Each row shows what a team allows opponents at a specific position to average. Higher numbers can indicate a more favorable matchup in that category." />
 
-      {/* Scope toggle + legend */}
+      {/* The one distinction that has to land */}
+      <HudCard accent="#ffd060" style={{ padding: '12px 16px', marginBottom: 12 }}>
+        <div style={{ fontSize: 10, fontFamily: 'Orbitron, monospace', color: '#ffd060', letterSpacing: '0.18em', marginBottom: 6 }}>
+          HOW TO READ A ROW
+        </div>
+        <div style={{ fontSize: 13, fontFamily: 'Space Mono, monospace', color: 'var(--text)', lineHeight: 1.55 }}>
+          “<b>{exPlace} — Centers</b>” describes centers playing <b style={{ color: '#ffd060' }}>AGAINST</b> {exPlace},{' '}
+          <b>not</b> {exPlace}'s own centers.
+        </div>
+        <div style={{ fontSize: 11, fontFamily: 'Space Mono, monospace', color: 'var(--muted)', lineHeight: 1.55, marginTop: 4 }}>
+          Tonight: <span style={{ color: '#ffd060' }}>{dvpPlace(canonHome)}</span> rows show what{' '}
+          <span style={{ color: '#00d4ff' }}>{awayNick}</span> players can expect ·{' '}
+          <span style={{ color: '#00d4ff' }}>{dvpPlace(canonAway)}</span> rows show what{' '}
+          <span style={{ color: '#ffd060' }}>{homeNick}</span> players can expect.
+        </div>
+      </HudCard>
+
+      {/* Data context, from the payload */}
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(190px, 1fr))', gap: 10,
+        padding: '10px 12px', marginBottom: 12, background: 'rgba(255,255,255,0.02)',
+        border: '1px solid rgba(255,255,255,0.05)', borderRadius: 4 }}>
+        <div>
+          <div style={ctxLabel}>PERIOD</div>
+          <div style={ctxVal}>
+            {nbaDefenseTable.season || '—'} season to date · regular season + playoffs, preseason excluded
+            {builtOn ? ` · through ${builtOn} (last refresh)` : ''}
+          </div>
+        </div>
+        <div>
+          <div style={ctxLabel}>SAMPLE</div>
+          <div style={ctxVal}>
+            {totalGames != null ? `${totalGames} completed games league-wide` : 'Game count unavailable'}
+            {medianGames != null ? ` · ~${medianGames} games per row (median)` : ''}
+          </div>
+        </div>
+        <div>
+          <div style={ctxLabel}>WHAT'S AVERAGED</div>
+          <div style={ctxVal}>
+            Combined: every opposing player at that position, pooled. Per 48 minutes of their playing time, not per game and not one individual player.
+          </div>
+        </div>
+        <div>
+          <div style={ctxLabel}>POSITIONS</div>
+          <div style={ctxVal}>Each player's primary position (basketball-reference); box scores from ESPN.</div>
+        </div>
+      </div>
+      {medianGames != null && medianGames < 15 && (
+        <div style={{ fontSize: 10, fontFamily: 'Space Mono, monospace', color: '#ffd060', letterSpacing: '0.04em', margin: '-4px 0 12px' }}>
+          ⚠ Early-season sample: about {medianGames} games per row, so rankings can move a lot from week to week.
+        </div>
+      )}
+
+      {/* Scope toggle */}
       <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 12, flexWrap: 'wrap' }}>
         <div style={{ display: 'flex', gap: 4 }}>
           {[
-            ['matchup', `${gameInfo.awayAbbr} & ${gameInfo.homeAbbr}`],
+            ['matchup', `${gameInfo.awayAbbr} & ${gameInfo.homeAbbr} DEFENSES`],
             ['all', 'ALL 30 TEAMS'],
           ].map(([v, l]) => (
             <button key={v} onClick={() => setScope(v)}
@@ -890,46 +1149,69 @@ function NbaDefenseVsPositionTab({ gameData }) {
           ))}
         </div>
         <span style={{ fontSize: 10, color: 'var(--muted)', fontFamily: 'Space Mono, monospace', letterSpacing: '0.1em', marginLeft: 'auto' }}>
-          CLICK ANY HEADER TO SORT
+          HOVER A HEADER FOR ITS MEANING · CLICK TO SORT · HOVER / TAP A NUMBER TO EXPLAIN IT
         </span>
       </div>
 
-      <NbaDefenseLegend />
+      <DvpMatchupLegend />
 
       {/* Table */}
       <div style={{ overflowX: 'auto', border: '1px solid rgba(255,255,255,0.06)', borderRadius: 4 }}>
         <table style={{ width: '100%', borderCollapse: 'collapse', fontFamily: 'Space Mono, monospace' }}>
           <thead>
             <tr style={{ background: 'rgba(0,212,255,0.04)' }}>
-              <th style={headerCellStyle} onClick={() => onSort('position')}>POSITION{sortIndicator('position')}</th>
-              <th style={headerCellStyle} onClick={() => onSort('team')}>TEAM{sortIndicator('team')}</th>
+              <th style={{ ...headerCellStyle, textAlign: 'left' }} onClick={() => onSort('team')}
+                title="The team playing defense. Its numbers are what OPPONENTS did against it.">
+                DEFENDING TEAM{sortIndicator('team')}
+              </th>
+              <th style={{ ...headerCellStyle, textAlign: 'left' }} onClick={() => onSort('position')}
+                title="The position of the OPPOSING players these numbers come from — not the defending team's own players.">
+                OPPONENT POSITION{sortIndicator('position')}
+              </th>
               {NBA_DVP_COLUMNS.map(col => (
-                <th key={col.key} style={headerCellStyle} onClick={() => onSort(col.key)}>
-                  {col.label}{sortIndicator(col.key)}
+                <th key={col.key} style={headerCellStyle} onClick={() => onSort(col.key)} title={col.tip}>
+                  <span style={{ borderBottom: '1px dotted rgba(0,212,255,0.5)' }}>{col.head}</span>{sortIndicator(col.key)}
+                  <span style={subHead}>{col.sub}</span>
                 </th>
               ))}
             </tr>
           </thead>
-          <tbody>
+          <tbody onMouseLeave={() => setHover(null)}>
             {sorted.map((r, i) => {
+              const id = rowId(r);
               const teamColor = r.defensive_team === canonAway ? '#00d4ff'
                 : r.defensive_team === canonHome ? '#ffd060'
                 : 'var(--text)';
+              const pos = DVP_POS[r.position];
+              const ben = beneficiaryOf(r.defensive_team);
+              const ranks = rankIndex.get(r) || {};
               return (
-                <tr key={`${r.defensive_team}-${r.position}`}
-                  style={{ background: i % 2 === 0 ? 'transparent' : 'rgba(255,255,255,0.015)' }}>
-                  <td style={{ padding: '8px 10px', textAlign: 'center', fontWeight: 700, fontSize: 11, color: 'var(--text)', letterSpacing: '0.1em' }}>
-                    {r.position}
+                <tr key={id} style={{ background: i % 2 === 0 ? 'transparent' : 'rgba(255,255,255,0.015)' }}>
+                  <td style={{ padding: '8px 10px', fontWeight: 700, fontSize: 11, color: teamColor, letterSpacing: '0.04em', whiteSpace: 'nowrap' }}>
+                    {dvpPlace(r.defensive_team)}
+                    <span style={{ fontSize: 9, color: 'var(--muted)', marginLeft: 6, fontWeight: 400 }}>{r.defensive_team}</span>
                   </td>
-                  <td style={{ padding: '8px 10px', textAlign: 'center', fontWeight: 700, fontSize: 11, color: teamColor, letterSpacing: '0.1em' }}>
-                    {r.defensive_team}
+                  <td style={{ padding: '8px 10px', whiteSpace: 'nowrap' }}
+                    title={`${pos?.many || r.position} on the OTHER team, playing against ${dvpPlace(r.defensive_team)}`}>
+                    <div style={{ fontSize: 11, color: 'var(--text)' }}>
+                      vs opposing <b>{pos?.many || r.position}</b>
+                      <span style={{ fontSize: 9, color: 'var(--muted)', marginLeft: 5 }}>{r.position}</span>
+                    </div>
+                    {ben && (
+                      <div style={{ fontSize: 9, color: beneficiaryColor(r.defensive_team), letterSpacing: '0.06em', marginTop: 2 }}>
+                        MATCHUP FOR: {ben.toUpperCase()} {(pos?.many || r.position).toUpperCase()}
+                      </div>
+                    )}
                   </td>
-                  {NBA_DVP_COLUMNS.map(col => (
-                    <NbaDefenseStatCell key={col.key}
-                      value={r[col.valKey]}
-                      rank={r.ranks?.[col.key]}
-                      fmt={col.fmt} />
-                  ))}
+                  {NBA_DVP_COLUMNS.map(col => {
+                    const sel = { id, colKey: col.key };
+                    const isActive = focus && !focus.example && focus.id === id && focus.colKey === col.key;
+                    return (
+                      <NbaDefenseStatCell key={col.key} row={r} col={col} rk={ranks[col.key]} active={isActive}
+                        onHover={() => setHover(sel)}
+                        onPick={() => setPinned(p => (p && p.id === id && p.colKey === col.key) ? null : sel)} />
+                    );
+                  })}
                 </tr>
               );
             })}
@@ -937,8 +1219,35 @@ function NbaDefenseVsPositionTab({ gameData }) {
         </table>
       </div>
 
-      <div style={{ fontSize: 10, color: 'var(--muted)', fontFamily: 'Space Mono, monospace', letterSpacing: '0.08em', marginTop: 10 }}>
-        EACH CELL: VALUE OVER LEAGUE RANK · #1/150 = STRONGEST DEFENSE FOR THAT STAT · {sorted.length} ROWS
+      {/* Plain-language read of the hovered / tapped cell (sticks while scrolling the 150-row view) */}
+      {explain && (
+        <div style={scope === 'all'
+          ? { position: 'sticky', bottom: 12, zIndex: 2, marginTop: 12 }
+          : { marginTop: 12 }}>
+          <HudCard accent="var(--cyan)" style={{ padding: '12px 16px', background: 'var(--card)' }}>
+            <div style={{ fontSize: 10, fontFamily: 'Orbitron, monospace', color: 'var(--cyan)', letterSpacing: '0.16em', marginBottom: 6 }}>
+              {focus.example ? 'EXAMPLE · HOVER OR TAP ANY NUMBER' : pinned && !hover ? 'PINNED · TAP AGAIN TO CLEAR' : 'WHAT THIS NUMBER MEANS'}
+              {' · '}{dvpPlace(focusRow.defensive_team).toUpperCase()} vs OPPOSING {(DVP_POS[focusRow.position]?.many || focusRow.position).toUpperCase()} · {focusCol.head}
+            </div>
+            <div style={{ fontSize: 12, fontFamily: 'Space Mono, monospace', color: 'var(--text)', lineHeight: 1.6 }}>
+              {explain.what}{explain.verdict ? ` ${explain.verdict}` : ''}
+            </div>
+            {explain.rank && (
+              <div style={{ fontSize: 10, fontFamily: 'Space Mono, monospace', color: 'var(--muted)', lineHeight: 1.5, marginTop: 4 }}>{explain.rank}</div>
+            )}
+            <div style={{ fontSize: 10, fontFamily: 'Space Mono, monospace', color: 'var(--muted)', lineHeight: 1.5, marginTop: 2 }}>{explain.sample}</div>
+          </HudCard>
+        </div>
+      )}
+
+      <div style={{ fontSize: 10, color: 'var(--muted)', fontFamily: 'Space Mono, monospace', letterSpacing: '0.04em', lineHeight: 1.6, marginTop: 12 }}>
+        EACH CELL: value · matchup grade (vs the other 29 teams at that same position) · league-wide rank{' '}
+        <b>#N / {baseRows.length}</b>, which ranks all 30 teams × 5 positions together. #1 = toughest matchup for the opposing
+        player in every column (turnovers are flipped so this holds). The /{baseRows.length} rank mixes positions, and centers always
+        out-rebound guards, so it does not drive the color. {sorted.length} rows shown.
+      </div>
+      <div style={{ fontSize: 11, color: '#ffd060', fontFamily: 'Space Mono, monospace', letterSpacing: '0.04em', marginTop: 8 }}>
+        Historical averages describe the matchup. They are not predictions for an individual player.
       </div>
     </div>
   );
