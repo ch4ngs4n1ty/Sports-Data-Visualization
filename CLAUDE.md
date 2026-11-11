@@ -821,7 +821,7 @@ compare against their own sportsbook app. De-vig, ¼-Kelly and the 20-pt
 
 `<PlaySlip sportKey eventId suggestions suggestionNote />` (`frontend/shared/play-slip.jsx`),
 data + rules in `frontend/data/shared/play-slip.js` (`window.PlaySlipData`). Mounted
-in the MLB, NFL and NBA/WNBA LIVE tabs. One compact card per selection: matchup,
+at the TOP of the MLB, NFL and NBA/WNBA LIVE tabs, in EVERY game state (pregame lines are findable too). It was first mounted below the court on NBA and only once a game started, so on a phone before tip-off it never appeared. Keep it above each tab's pre/live split. One compact card per selection: matchup,
 exact player/team, DraftKings market name as the source names it, side badge
 (OVER/UNDER, +/− spread, "25+ · 25 OR MORE"), FULL GAME vs "1ST HALF ONLY", odds,
 live stat + clock, when the price was last seen, why selected; analysis behind

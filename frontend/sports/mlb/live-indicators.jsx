@@ -105,6 +105,10 @@ function LiveIndicatorBoard({ data, gameInfo, status, healthy, error, onRefresh,
     </header>
     <div className="li-toolbar"><span>MLB · {s.venue || 'Live game'}</span><div><button onClick={onToggle}>{auto ? 'Pause' : 'Resume'}</button><button onClick={onRefresh}>↻ Refresh</button></div></div>
     {(!healthy || error) && <div className="li-notice" role="status">{error || (auto ? 'Reconnecting automatically…' : 'Updates manually paused. Select Resume to reconnect.')} Last received values remain visible until fresh data arrives.</div>}
+    {/* Simulated slip — top of the tab, full width, every game state (play-slip lane). */}
+    {window.PlaySlip && gameInfo?.eventId && <PlaySlip sportKey="mlb" eventId={gameInfo.eventId}
+      suggestions={mlbSlipSuggestions(data, following, ready)}
+      suggestionNote="From the PlayIQ live model (positive-edge moves first, then lines you follow). Player-hits picks are not matched: they use MLB player ids, which the DraftKings feed does not carry." />}
     <nav className="li-mobile-switch" aria-label="Live panel"><button aria-pressed={mobilePane === 'feed'} onClick={() => setMobilePane('feed')}>Game feed</button><button aria-pressed={mobilePane === 'indicators'} onClick={() => setMobilePane('indicators')}>Live indicators {following.length ? `· ${following.length} following` : ''}</button></nav>
     <div className="li-columns">
       <div className="li-game">
@@ -148,9 +152,6 @@ function LiveIndicatorBoard({ data, gameInfo, status, healthy, error, onRefresh,
         <details className="li-method"><summary>How these estimates work</summary><p>Game estimates use inning, runners, outs and pitcher/bullpen assumptions, with extra innings and game-ending rules. The current ball/strike count is displayed but not modeled. Walk-off home-run excess is omitted, so totals and run lines near the end are approximate.</p><p>Player hits use season hit rate and estimated remaining regulation opportunities. They do not adjust for batting order, current count, individual matchup or future extra innings. These estimates have not been calibrated against live betting results.</p><p>Free-feed updates are periodic, not instantaneous. Final results can be corrected; sportsbook rules can differ.</p></details>
       </aside>
     </div>
-    {window.PlaySlip && gameInfo?.eventId && <PlaySlip sportKey="mlb" eventId={gameInfo.eventId}
-      suggestions={mlbSlipSuggestions(data, following, ready)}
-      suggestionNote="From the PlayIQ live model (positive-edge moves first, then lines you follow). Player-hits picks are not matched: they use MLB player ids, which the DraftKings feed does not carry." />}
   </section>;
 }
 

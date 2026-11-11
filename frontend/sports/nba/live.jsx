@@ -378,6 +378,16 @@ function NbaLiveTab({ gameInfo }) {
       </div>
       {feed.status === 'reconnecting' && <div className="nl-banner">Connection interrupted — showing the last update and retrying automatically.</div>}
 
+      {/* Simulated slip (play-slip lane). Mounted ONCE, above the pre/live split,
+          so it shows in every game state (pregame DK lines are findable too) and
+          is the first thing on the tab instead of under the court on a phone.
+          Suggestions are only moves that passed the line-freshness gate. */}
+      {window.PlaySlip && (
+        <PlaySlip sportKey={gameInfo.sportKey} eventId={gameInfo.eventId}
+          suggestions={data.state === 'in' ? window.PlaySlipData.fromHoopsMoves(L.buildMoves(data, price, feed.market?.live).moves, data) : []}
+          suggestionNote={data.state === 'in' ? 'From the PlayIQ live model.' : 'Model suggestions start at tip-off. Posted DraftKings lines can be added now.'} />
+      )}
+
       {data.state === 'pre' ? (
         <div className="nl-card">
           <h3 className="nl-h">NOT STARTED</h3>
@@ -408,13 +418,6 @@ function NbaLiveTab({ gameInfo }) {
           <div style={{ display: 'grid', gap: 14, minWidth: 0 }}>
             <NbaLiveOddsPanel data={data} price={price} market={feed.market} />
             <NbaLiveMoves data={data} price={price} market={feed.market} />
-            {/* Simulated slip (play-slip lane). Suggestions are only the moves
-                that passed the line-freshness gate — none while the line is stale. */}
-            {window.PlaySlip && (
-              <PlaySlip sportKey={gameInfo.sportKey} eventId={gameInfo.eventId}
-                suggestions={window.PlaySlipData.fromHoopsMoves(L.buildMoves(data, price, feed.market?.live).moves, data)}
-                suggestionNote="From the PlayIQ live model." />
-            )}
             <div className="nl-card">
               <h3 className="nl-h">PLAY-BY-PLAY</h3>
               <div className="nl-plays">
