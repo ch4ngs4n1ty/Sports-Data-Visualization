@@ -29,11 +29,12 @@
 
   <!-- Shared + sport-specific data layer -->
   <script src="frontend/data/shared/core.js"></script>
-  <script src="frontend/data/mlb/index.js"></script>
+  <script src="frontend/data/mlb/index.js?v=lookup-chart-1"></script>
   <script src="frontend/data/mlb/live-stream.js?v=reconnect-1"></script>
   <script src="frontend/data/mlb/indicators.js"></script>
   <script src="frontend/data/nba/index.js"></script>
   <script src="frontend/data/nba/game-breakdown.js?v=lens-3"></script>
+  <script src="frontend/data/nba/slate-signals.js?v=hot-1"></script>
   <script src="frontend/data/nba/live.js?v=nba-live-5"></script>
   <script src="frontend/data/shared/play-slip.js?v=slip-3"></script>
   <script src="frontend/data/wnba/index.js"></script>
@@ -638,6 +639,7 @@
     .tw-btn:hover { color: var(--text); border-color: var(--line-strong); }
     .tw-btn.on { border-color: var(--cyan); color: var(--cyan); background: var(--tint-cyan); }
 
+
     /* ══════════════════════════════════════════════════════════
        SIMULATED SLIP — nav button + drawer (frontend/shared/play-slip.jsx)
        A general slot in the shell, not inside any game card.
@@ -728,7 +730,7 @@
 <script type="text/babel" src="frontend/shared/play-slip.jsx?v=slip-3"></script>
 <script type="text/babel" src="frontend/shared/tabs/common-tabs.jsx"></script>
 <script type="text/babel" src="frontend/sports/mlb/live-indicators.jsx?v=slip-3"></script>
-<script type="text/babel" src="frontend/sports/mlb/tabs.jsx?v=reconnect-1"></script>
+<script type="text/babel" src="frontend/sports/mlb/tabs.jsx?v=lookup-chart-1"></script>
 <script type="text/babel" src="frontend/sports/nba/tabs.jsx?v=lens-3"></script>
 <script type="text/babel" src="frontend/sports/nba/live.jsx?v=slip-3"></script>
 <script type="text/babel" src="frontend/sports/nfl/tabs.jsx?v=nfl-edge-2"></script>

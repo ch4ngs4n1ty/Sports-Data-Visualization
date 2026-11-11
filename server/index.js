@@ -22,6 +22,7 @@ const {
   getGamePlayerDirectory,
 } = require('./mlb/service');
 const { getSlateSignals } = require('./mlb/slate-signals');
+const { getNbaSlateSignals, startNbaSignalsWarmer } = require('./nba/slate-signals');
 const { getLiveGame, getLiveSnapshot } = require('./mlb/live-service');
 const { getLiveSlate } = require('./mlb/live-slate');
 const { createLiveHub } = require('./shared/live-stream');
@@ -381,6 +382,16 @@ const server = http.createServer(async (req, res) => {
       return sendJson(res, all);
     }
 
+    // GET /api/nba/slate-signals?date=YYYY-MM-DD
+    //   NBA hot-play triage for the whole slate (see server/nba/slate-signals.js):
+    //   a streak off the real game log + the matchup angles worth checking.
+    if (path === '/api/nba/slate-signals') {
+      const date = url.searchParams.get('date') || undefined;
+      if (date && !/^\d{4}-\d{2}-\d{2}$/.test(date)) return sendError(res, 'date must be YYYY-MM-DD');
+      res.setHeader('Cache-Control', 'no-store');  // partial snapshots must not be cached
+      return sendJson(res, await getNbaSlateSignals(date));
+    }
+
     // GET /api/nba/positions?names=John Collins|Paul Reed
     //   Name → PG/SG/SF/PF/C from the Basketball-Reference map (ESPN only
     //   publishes G/F/C). Used by the Edge Finder's per-game breakdown to find
@@ -486,6 +497,9 @@ const server = http.createServer(async (req, res) => {
 server.listen(PORT, HOST, () => {
   const now = new Date().toLocaleString('en-US', { timeZoneName: 'short' });
   console.log(`[${now}] PlayIQ server running on http://${HOST === '0.0.0.0' ? 'localhost' : HOST}:${PORT}`);
+  // Build today's NBA hot plays now, so the first viewer doesn't pay for the
+  // cold slate; afterwards it only rebuilds while someone is looking.
+  startNbaSignalsWarmer();
 });
 
 // ── Keep alive — catch unhandled errors so server never crashes ──

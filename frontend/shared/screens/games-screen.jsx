@@ -123,9 +123,27 @@ const ANGLE_KINDS = {
   form:   { tag: 'FORM',    tab: 'Last 5' },
   streak: { tag: 'STREAK',  tab: 'Last 5' },
 };
+// NBA (/api/nba/slate-signals) adds its own angle kinds and points the shared
+// ones at the basketball tabs. There is no "vs SP" in basketball — the
+// matchup is the opposing DEFENSE at his position, and who is in/out.
+const ANGLE_KINDS_NBA = {
+  ...ANGLE_KINDS,
+  vsteam:  { tag: 'VS TEAM', tab: 'Edge Finder (H2H chart)' },
+  defense: { tag: 'DEFENSE', tab: 'Defense vs Position' },
+  role:    { tag: 'ROLE',    tab: 'Lineups / Overview injuries' },
+  minutes: { tag: 'MINUTES', tab: 'Edge Finder' },
+  lineup:  { tag: 'LINEUP',  tab: 'Lineups' },
+  rest:    { tag: 'REST',    tab: 'Last 5' },
+  form:    { tag: 'FORM',    tab: 'Edge Finder' },
+  streak:  { tag: 'STREAK',  tab: 'Edge Finder' },
+};
+// Angle kinds that count as MATCHUP context (they lead the chip row; form
+// and the streak itself are supporting detail).
+const MATCHUP_ANGLE_KINDS = new Set(['bvp', 'vsteam', 'order', 'defense', 'role', 'minutes']);
 
-function AngleChip({ a }) {
-  const meta = ANGLE_KINDS[a.kind] || { tag: a.kind.toUpperCase(), tab: '' };
+function AngleChip({ a, sport }) {
+  const kinds = sport === 'nba' ? ANGLE_KINDS_NBA : ANGLE_KINDS;
+  const meta = kinds[a.kind] || { tag: a.kind.toUpperCase(), tab: '' };
   // Direction drives the color: an angle that argues AGAINST the streak is
   // still worth showing (it's a point to look at), just not in green.
   const color = a.direction === 'fade' ? 'var(--orange)'
@@ -145,7 +163,7 @@ function AngleChip({ a }) {
   );
 }
 
-function SignalBadge({ sig }) {
+function SignalBadge({ sig, sport = 'mlb' }) {
   const t = SIGNAL_TIERS[sig?.tier];
   if (!t || !sig.top) return null;
   const top = sig.top;
@@ -160,7 +178,11 @@ function SignalBadge({ sig }) {
   // Matchup angles are what make this actionable, so they lead; form is the
   // supporting detail and only fills a remaining slot.
   const angles = top.angles || [];
-  const matchup = angles.filter(a => a.kind === 'bvp' || a.kind === 'vsteam' || a.kind === 'order');
+  // Non-neutral matchup angles first: on NBA cards a neutral "17th of 30" line
+  // would otherwise push out the angle that actually moved the score.
+  const matchupAll = angles.filter(a => MATCHUP_ANGLE_KINDS.has(a.kind));
+  const matchup = [...matchupAll.filter(a => a.direction !== 'neutral'),
+    ...matchupAll.filter(a => a.direction === 'neutral')];
   const shown = (matchup.length ? matchup : angles.filter(a => a.kind !== 'streak')).slice(0, 2);
 
   const label = fade ? 'FADE SP' : caution ? 'CHECK MATCHUP' : t.label;
@@ -168,7 +190,8 @@ function SignalBadge({ sig }) {
     `${top.name} (${top.team})`,
     top.stat,
     ...angles.map(a => `• ${a.text}`),
-    top.confirmed ? '' : '(lineup not posted; projected)',
+    top.confirmed ? '' : sport === 'nba'
+      ? '(on the injury report — provisional)' : '(lineup not posted; projected)',
   ].filter(Boolean).join('\n');
 
   return (
@@ -196,7 +219,9 @@ function SignalBadge({ sig }) {
             )}
             {!top.confirmed && (
               <span style={{ fontSize: 'var(--fs-micro)', color: 'var(--faint)',
-                fontFamily: 'Space Mono, monospace' }} title="Lineup not posted yet — projected">PROJ</span>
+                fontFamily: 'Space Mono, monospace' }}
+                title={sport === 'nba' ? 'On the injury report — provisional' : 'Lineup not posted yet — projected'}>
+                {sport === 'nba' ? 'GTD' : 'PROJ'}</span>
             )}
           </div>
           <div style={{ fontSize: 'var(--fs-xs)', fontFamily: 'Space Mono, monospace',
@@ -215,7 +240,7 @@ function SignalBadge({ sig }) {
       {shown.length > 0 && (
         <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4,
           marginTop: 5, paddingLeft: 20 }}>
-          {shown.map((a, i) => <AngleChip key={i} a={a} />)}
+          {shown.map((a, i) => <AngleChip key={i} a={a} sport={sport} />)}
         </div>
       )}
     </div>
@@ -285,7 +310,7 @@ function NbaCardStats({ g, showScore }) {
   );
 }
 
-function GameCard({ g, onSelect, readiness, signals, formatTime, readinessPending, signalsPending }) {
+function GameCard({ g, onSelect, readiness, signals, formatTime, readinessPending, signalsPending, nbaSignalsPending }) {
   const isLive  = g.statusState === 'in';
   const isFinal = g.statusState === 'post';
   const showScore = isLive || isFinal;
@@ -365,6 +390,10 @@ function GameCard({ g, onSelect, readiness, signals, formatTime, readinessPendin
         signalsPending ? <SignalBadgeSkeleton /> : <SignalBadge sig={signals} />
       )}
 
+      {g.sportKey === 'nba' && !isLive && !isFinal && (
+        nbaSignalsPending ? <SignalBadgeSkeleton /> : <SignalBadge sig={signals} sport="nba" />
+      )}
+
       {g.sportKey === 'nba' && <NbaCardStats g={g} showScore={showScore} />}
 
       {/* footer: odds + CTA */}
@@ -396,6 +425,13 @@ function GamesScreen({ onSelectGame, onBack }) {
   // strip should settle as soon as it can rather than wait on signals.
   const [readinessPending, setReadinessPending] = React.useState(true);
   const [signalsPending, setSignalsPending] = React.useState(true);
+  // NBA hot plays (/api/nba/slate-signals) — tracked apart from MLB's so one
+  // sport's slow cold start never holds the other's badges in skeleton.
+  const [nbaSignals, setNbaSignals] = React.useState([]);
+  const [nbaSignalsPending, setNbaSignalsPending] = React.useState(true);
+  // Games the server is still building (progressive load): their cards keep
+  // the skeleton while finished games show their badge right away.
+  const [nbaPendingIds, setNbaPendingIds] = React.useState(() => new Set());
   const [hotOnly, setHotOnly] = React.useState(false);
   const [liveStatus, setLiveStatus] = React.useState('connecting');
   const liveSlate = React.useRef(null);
@@ -418,7 +454,11 @@ function GamesScreen({ onSelectGame, onBack }) {
     setMlbSignals([]);
     setReadinessPending(true);
     setSignalsPending(true);
+    setNbaSignals([]);
+    setNbaSignalsPending(true);
+    setNbaPendingIds(new Set());
     let cancelled = false;
+    let nbaFollowUp;
     let gamesTimer;
     const loadGames = async () => {
       if (document.hidden) { gamesTimer = setTimeout(loadGames, 60000); return; }
@@ -453,18 +493,33 @@ function GamesScreen({ onSelectGame, onBack }) {
       .then(s => { if (!cancelled) setMlbSignals(s); })
       .catch(() => {})
       .finally(() => { if (!cancelled) setSignalsPending(false); });
+    const loadNbaSignals = () => fetchNbaSlateSignals(date)
+      .then(d => {
+        if (cancelled) return;
+        setNbaSignals(d.signals);
+        setNbaPendingIds(new Set(d.partial ? d.pendingEventIds || [] : []));
+        // Mid-build: poll fast so cards fill in as games finish. Served a
+        // stale copy: check back once the rebuild has had time to land.
+        clearTimeout(nbaFollowUp);
+        if (d.partial) nbaFollowUp = setTimeout(loadNbaSignals, 1200);
+        else if (d.refreshing) nbaFollowUp = setTimeout(loadNbaSignals, 8000);
+      })
+      .catch(() => {})
+      .finally(() => { if (!cancelled) setNbaSignalsPending(false); });
     loadSignals();
-    const sigPollId = setInterval(loadSignals, 600000);
+    loadNbaSignals();
+    const sigPollId = setInterval(() => { loadSignals(); loadNbaSignals(); }, 600000);
 
-    return () => { cancelled = true; clearTimeout(gamesTimer); clearInterval(pollId); clearInterval(sigPollId); };
+    return () => { cancelled = true; clearTimeout(gamesTimer); clearTimeout(nbaFollowUp); clearInterval(pollId); clearInterval(sigPollId); };
   }, [date]);
 
   const sports = ['all', ...new Set(games.map(g => g.sportKey))];
 
-  // Signals only exist for MLB, and only pre-game. Resolved once here so both
-  // the filter and the cards read the same value.
-  const signalFor = g => (g.sportKey === 'mlb' && g.statusState === 'pre')
-    ? findMlbSignals(mlbSignals, g.awayFull, g.homeFull)
+  // Signals exist for MLB and NBA, and only pre-game. Resolved once here so
+  // both the filter and the cards read the same value.
+  const signalFor = g => g.statusState !== 'pre' ? null
+    : g.sportKey === 'mlb' ? findMlbSignals(mlbSignals, g.awayFull, g.homeFull)
+    : g.sportKey === 'nba' ? findNbaSignals(nbaSignals, g.eventId, g.awayFull, g.homeFull)
     : null;
   const hotCount = games.filter(g => {
     const s = signalFor(g);
@@ -514,14 +569,16 @@ function GamesScreen({ onSelectGame, onBack }) {
             {/* The signals call is the slow one, so this toggle would otherwise
                 appear several seconds after the toolbar. Reserve its width with
                 a placeholder while the slate has MLB games still to be scored. */}
-            {signalsPending && games.some(g => g.sportKey === 'mlb' && g.statusState === 'pre') && (
-              <SkelBar w={116} h={22} />
-            )}
-            {!signalsPending && hotCount > 0 && (
+            {(() => {
+              const waiting = games.some(g => g.statusState === 'pre'
+                && ((g.sportKey === 'mlb' && signalsPending) || (g.sportKey === 'nba' && (nbaSignalsPending || nbaPendingIds.size > 0))));
+              return waiting && hotCount === 0 ? <SkelBar w={116} h={22} /> : null;
+            })()}
+            {hotCount > 0 && (
               <button
                 onClick={() => setHotOnly(v => !v)}
                 aria-pressed={hotOnly}
-                title="Show only games with a hot batter or notable starter"
+                title="Show only games with a hot player (MLB batter / starter, NBA streak)"
                 style={{
                   display: 'inline-flex', alignItems: 'center', gap: 5,
                   fontSize: 'var(--fs-micro)', fontFamily: 'Space Mono, monospace',
@@ -560,7 +617,7 @@ function GamesScreen({ onSelectGame, onBack }) {
         Object.keys(bySport).length === 0
           ? (hotOnly
               ? <EmptyState title="NO SIGNALS IN THIS FILTER"
-                  hint="No game here has a hot batter or notable starter right now. Turn off “WITH PLAYS” to see the full slate." />
+                  hint="No game here has a hot player right now. Turn off “WITH PLAYS” to see the full slate." />
               : <EmptyState title={`NO GAMES ON ${dateLabel}`}
                   hint="Try another date. NCAAB is off-season in spring, and some leagues have dark days mid-week." />)
           : Object.entries(bySport).map(([sportKey, sportGames]) => (
@@ -580,7 +637,8 @@ function GamesScreen({ onSelectGame, onBack }) {
                     readiness={findMlbReadiness(mlbReadiness, g.awayFull, g.homeFull)}
                     signals={signalFor(g)}
                     readinessPending={readinessPending}
-                    signalsPending={signalsPending} />
+                    signalsPending={signalsPending}
+                    nbaSignalsPending={nbaSignalsPending || nbaPendingIds.has(String(g.eventId))} />
                 ))}
               </div>
             </section>

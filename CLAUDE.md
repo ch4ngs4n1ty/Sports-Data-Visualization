@@ -39,6 +39,7 @@ playiq/
 │   ├── mlb/slate-signals.js                    — Slate-wide "is there a play here, and WHICH point do I look at?" triage (`getSlateSignals`, served at `/api/mlb/slate-signals`). A signal is a STREAK + at least one MATCHUP ANGLE: a consecutive-game run read off the real game log (multi-hit / hits / RBI / HR / total bases / on-base; for SP: 6+K, QS, ≤2ER, or 5+ER as a fade) is the entry ticket — a merely-hot rate line no longer badges anything — and `angles[]` carries the reasons to look, each tagged `kind: 'streak'|'bvp'|'vsteam'|'order'|'form'` with a `direction`. NOT HR-centric: `market` names the prop the streak actually points at. Hitters are scored only if they're in the posted lineup (else `confirmed:false` and discounted 25%); a starter with a ≥6.00 ERA surfaces as `direction:'fade'`, and a hot bat that owns a bad career line vs tonight's arm surfaces as `direction:'caution'`. Transparent additive scoring — NOT ML, and every signal carries a `why` string.
 │   ├── data/{f5_model.json,f5_feature_spec.json}  — F5 XGBoost model + feature contract (committed by CI; see ml/)
 │   ├── nba/{service.js,positional-defense.js,positions.js}  — NBA endpoints (lineups, def-vs-position)
+│   ├── nba/slate-signals.js                    — NBA hot-play triage (`getNbaSlateSignals`, `/api/nba/slate-signals`) — see "NBA hot plays" below
 │   ├── package.json
 │   ├── start.sh                                — Kills any existing :3001 process, starts server in background, logs to server.log
 │   └── server.log
@@ -415,6 +416,14 @@ Three things worth not re-deriving:
   evidence — which here would also flash a false badge in the gap before the
   log fetch resolves. Absence of data is now explicitly neutral. This is the
   ONE intentional behaviour change to the Edge Finder's tiers.
+- **Bar chart first (Nov 2026).** The recent-form `GameLogChart` is now its
+  own card directly under the identity header, LAST 10 games oldest→newest
+  (`MLB_LOOKUP_LOG_N`); the hot/cold tier still scores only the newest 5. A
+  looked-up PITCHER (SP/RP/P) charts his pitching log via
+  `fetchPitcherGameLog` (K/OUTS/ER/HR/H/BB, `mlbPitcherStatColor`) — his
+  hitting log is empty and used to render no chart at all. On
+  `NO_OPPOSING_PITCHER` the resolved player's chart still renders under the
+  notice.
 - **The log loads after the panel.** The projection and BvP cards render from
   the lookup response immediately; the form module fills in behind them rather
   than holding up first paint.
@@ -748,6 +757,81 @@ more events.
   with a total of 10+ pts / 5+ ast, else "NO REAL EFFECT" / "TOO FEW TO
   TELL". The first ratio-based version badged 2-vs-2 assists as "SLOWED
   HIM DOWN".
+
+---
+
+## NBA hot plays (Nov 2026)
+
+The NBA version of the MLB slate signals: pre-game NBA cards on the games
+screen get the same `SignalBadge` (LEAN / LOOK / HOT PLAY / ◐ CHECK MATCHUP)
+and count toward the "🔥 N WITH PLAYS" filter. Backend
+`server/nba/slate-signals.js` → `GET /api/nba/slate-signals?date=YYYY-MM-DD`;
+client `frontend/data/nba/slate-signals.js` (`fetchNbaSlateSignals`,
+`findNbaSignals` — matches cards on ESPN `eventId`, names as fallback).
+
+- **Same contract as MLB: a STREAK is the entry ticket, then at least one
+  weighted matchup angle.** Streaks come from each player's real ESPN game log
+  (consecutive PLAYED games): 30+/25+/20+ PTS, 12+/10+ REB, 10+/8+ AST, 4+/3+
+  threes, 40+ PRA, double-doubles, plus "over his usual line" (line = floor of
+  his baseline + .5) so role players surface too. Transparent additive
+  scoring, not ML; same 35 / 50 / 70 tier cutoffs.
+- **Angle kinds** (`ANGLE_KINDS_NBA` in `games-screen.jsx` maps each to the
+  tab to verify it in): `vsteam` (last ≤5 games vs tonight's opponent, this +
+  last season, judged against the STREAK'S line, not his scoring), `defense`
+  (opponent vs his position, re-ranked WITHIN the position — the table's own
+  `rank` is across all 150 team×position rows), `role` (teammate absences),
+  `minutes`, `lineup` (Rotowire five / injury tag), `rest` (back-to-back),
+  `form`.
+- **`role` is two-sided and judged against the streak window.** A key teammate
+  (≥15 PPG, ≥24 MPG) OUT tonight who played during the run → back (new
+  usage). One who MISSED every game of the run and is available tonight →
+  fade + `caution` (the classic way a streak ends). Out for the whole run and
+  still out → neutral.
+- **Baselines early in a season use LAST season** (`baselineOf`: current only
+  once ≥15 games). Otherwise a 6-game run is measured against itself.
+- **ESPN gamelog shooting columns are COMBINED** (`"2-7"` under
+  `threePointFieldGoalsMade-threePointFieldGoalsAttempted`); the server parser
+  splits them. Note the client parser in `frontend/data/nba/index.js` looks
+  for separate `threepointfieldgoalsmade` columns and so reads 0 for
+  fgm/fga/tpm/tpa/ftm/fta (open bug, not touched here).
+- **Sidecars never block the slate.** The positional-defense table (first crawl
+  takes minutes), the Basketball-Reference position map and Rotowire are each
+  raced against a 2.5s timeout; if one is missing that angle is just absent
+  (`sources` in the response says which) and the slate is cached only 2 min
+  instead of 10, so the angle appears once the crawl lands.
+- **Cost:** one roster call per team + one current-season gamelog per player,
+  plus LAST season's log only where it can change the output
+  (`needsPriorSeason`: rotation players who can carry a signal, and players
+  with <3 games this season whose key-teammate status must come from last
+  year). Prior-season logs are cached 24h. `confirmed:false` = player is on
+  the injury report (GTD chip), and the score is discounted 25%.
+
+### Loading speed (Nov 2026)
+
+Measured on the Nov 4 2026 14-game slate, fresh process each run: **~10s /
+1002 calls → ~2.5s / 890 calls, and the signals JSON is byte-identical**
+(deep-compared old vs new module). Keep that guarantee if you touch this.
+
+- **Keep-alive is most of the win.** The module uses Node's built-in `fetch`
+  (undici, pooled connections) instead of `shared/http`'s `https.get`, which
+  opens a new TLS connection per call. ~900 calls to two ESPN hosts → a
+  handful of sessions. Still zero-dep.
+- **Progressive build.** A build is a background job; games finish through a
+  4-wide worker pool, earliest tip first. A request mid-build gets
+  `{ partial: true, pendingEventIds, signals: <done so far> }` after ≤1.5s;
+  the games screen polls every 1.2s and only pending cards keep a skeleton.
+- **Stale-while-revalidate.** Past the 10-min freshness window the previous
+  complete result is returned instantly with `refreshing: true` while ONE
+  rebuild runs behind it (the client re-checks after 8s).
+- **Warmer, gated on viewers.** `startNbaSignalsWarmer()` (called from
+  `server.listen`) builds today once at startup, then rebuilds only days
+  someone requested in the last 30 min. An idle server makes no ESPN calls;
+  the cadence is the same 10 min a viewer's own refresh would cause.
+- **Client retries only what a retry can fix** (network error / 5xx). A 4xx —
+  e.g. a backend that predates the route — used to burn ~40s of backoff with
+  skeletons on every card; it now settles immediately.
+- **Restart the backend after pulling this** — a :3001 started before the
+  route existed 404s it, and the cards then simply show no badges.
 
 ---
 

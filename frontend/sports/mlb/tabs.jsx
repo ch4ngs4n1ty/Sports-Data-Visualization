@@ -198,6 +198,9 @@ function shapeBvpForChart(gameByGame, pitcherName) {
 
 const MLB_PROP_STAT_LABELS = { hits: 'HITS', rbi: 'RBI', k: 'STRIKEOUTS' };
 const MLB_PROP_LINES = { hits: [0.5, 1.5], rbi: [0.5], k: [0.5, 1.5] };
+// Games in the Player Lookup's recent-form bar chart (the hot/cold tier still
+// reads only the newest 5, same as the Edge Finder).
+const MLB_LOOKUP_LOG_N = 10;
 
 function mlbPropColor(p) {
   if (p == null) return 'var(--muted)';
@@ -1879,6 +1882,9 @@ function MlbPlayerLookupTab({ gameData }) {
   // the SAME helper the Edge Finder uses — no new endpoint, no forked parsing.
   const [gameLog, setGameLog] = React.useState(null);
   const [logLoading, setLogLoading] = React.useState(false);
+  // NO_OPPOSING_PITCHER still resolves the player. There's nothing to project
+  // against, but his recent-form chart needs no starter, so keep him around.
+  const [partialPlayer, setPartialPlayer] = React.useState(null);
 
   // Load both 40-man hitter lists once for the type-ahead.
   React.useEffect(() => {
@@ -1892,8 +1898,9 @@ function MlbPlayerLookupTab({ gameData }) {
 
   const runLookup = React.useCallback(async (name) => {
     if (!name) return;
-    setLoading(true); setError(null); setFocused(false); setQuery(name);
+    setLoading(true); setError(null); setFocused(false); setQuery(name); setPartialPlayer(null);
     const data = await window.fetchMlbPlayerLookup(gameInfo, name, mlbPitchers);
+    if (data?.error === 'NO_OPPOSING_PITCHER' && data.player?.id) setPartialPlayer(data.player);
     if (!data) { setError('Lookup failed — the backend may be unreachable.'); setResult(null); }
     else if (data.error) {
       setError(
@@ -1919,21 +1926,68 @@ function MlbPlayerLookupTab({ gameData }) {
   // Separate from the lookup call on purpose: the projection + BvP render
   // immediately, and the recent-form module fills in behind them rather than
   // holding up the whole panel.
-  const lookedUpId = result?.player?.id || null;
-  const lookedUpTeamAbbr = result?.player?.side ? abbrForSide(gameInfo, result.player.side) : null;
+  const formPlayer = result?.player || partialPlayer || null;
+  const lookedUpId = formPlayer?.id || null;
+  const lookedUpTeamAbbr = formPlayer?.side ? abbrForSide(gameInfo, formPlayer.side) : null;
+  // A pitcher's HITTING log is empty, so the batter chart would show nothing —
+  // chart his pitching log instead. Two-way players (TWP) stay hitters here.
+  const lookedUpIsPitcher = /^(SP|RP|P)$/i.test(formPlayer?.position || '');
   React.useEffect(() => {
     if (!lookedUpId) { setGameLog(null); return; }
     let alive = true;
     setGameLog(null); setLogLoading(true);
     (async () => {
-      const log = await window.fetchPlayerGameLog(lookedUpId, { count: 5 });
+      const log = lookedUpIsPitcher
+        ? await window.fetchPitcherGameLog(lookedUpId, { count: MLB_LOOKUP_LOG_N })
+        : await window.fetchPlayerGameLog(lookedUpId, { count: MLB_LOOKUP_LOG_N });
       const withWeather = await window.attachWeatherToGameLog(log, lookedUpTeamAbbr);
       if (!alive) return;
       setGameLog(withWeather || []);
       setLogLoading(false);
     })();
     return () => { alive = false; };
-  }, [lookedUpId, lookedUpTeamAbbr]);
+  }, [lookedUpId, lookedUpTeamAbbr, lookedUpIsPitcher]);
+
+  // The headline bar chart: his last N games, newest on the right. Rendered
+  // right under the identity card (and under the "no starter yet" notice), so
+  // the first thing on the panel is a picture of his form, not a wall of tiles.
+  const renderFormChart = (accent) => {
+    const games = (gameLog || []).slice().reverse();          // oldest → newest
+    const n = games.length;
+    const hitterForm = !lookedUpIsPitcher && n
+      ? window.scoreMlbBatterForm(gameLog.slice(0, 5), 0) : null;
+    let summary = '';
+    if (n && lookedUpIsPitcher) {
+      const ks = games.reduce((s, g) => s + g.k, 0), er = games.reduce((s, g) => s + g.er, 0);
+      const outs = games.reduce((s, g) => s + g.outs, 0);
+      summary = `${(ks / n).toFixed(1)} K/G · ${(outs / 3 / n).toFixed(1)} IP/G · ${outs ? (er * 27 / outs).toFixed(2) : '—'} ERA`;
+    } else if (n) {
+      const h = games.reduce((s, g) => s + g.hits, 0), ab = games.reduce((s, g) => s + (g.ab || 0), 0);
+      const withHit = games.filter(g => g.hits > 0).length;
+      summary = `${h}-for-${ab} · hit in ${withHit} of ${n}`
+        + (hitterForm?.hitStreak > 0 ? ` · ${hitterForm.hitStreak}-game hit streak` : '')
+        + (hitterForm?.trendRatio >= 1.25 ? ' · trending up' : hitterForm?.trendRatio <= 0.75 ? ' · cooling off' : '');
+    }
+    return (
+      <HudCard style={{ padding: '16px 18px' }} accent={accent}>
+        <div style={{ display: 'flex', alignItems: 'baseline', gap: 10, flexWrap: 'wrap', marginBottom: 12 }}>
+          <span style={{ fontSize: 12, fontFamily: 'Orbitron, monospace', fontWeight: 900, color: accent, letterSpacing: '0.12em' }}>
+            ◆ {lookedUpIsPitcher ? `LAST ${n || MLB_LOOKUP_LOG_N} APPEARANCES` : `LAST ${n || MLB_LOOKUP_LOG_N} GAMES`}
+          </span>
+          <span style={{ fontSize: 10, fontFamily: 'Space Mono, monospace', color: 'var(--muted)' }}>
+            {lookedUpIsPitcher ? 'pitching log · ' : ''}oldest → newest{summary ? ` · ${summary}` : ''}
+          </span>
+        </div>
+        {logLoading
+          ? <TabLoader label="PULLING RECENT GAMES" />
+          : lookedUpIsPitcher
+            ? <GameLogChart games={games} stats={MLB_PITCHER_LOG_STATS} defaultStat="k"
+                colorFor={mlbPitcherStatColor} emptyLabel="NO PITCHING APPEARANCES THIS SEASON" accent={accent} />
+            : <GameLogChart games={games} stats={L5_STATS} defaultStat="hits"
+                emptyLabel="NO GAMES THIS SEASON" accent={accent} />}
+      </HudCard>
+    );
+  };
 
 
   // Close the suggestion list on an outside click.
@@ -2021,6 +2075,19 @@ function MlbPlayerLookupTab({ gameData }) {
 
       {error && !loading && <EmptyState title="NO MATCH" hint={error} />}
 
+      {/* No starter yet → no projection, but his form chart needs none. */}
+      {error && !loading && partialPlayer && (
+        <div style={{ marginTop: 16 }}>
+          <div style={{ fontSize: 13, fontFamily: 'Orbitron, monospace', fontWeight: 900, color: 'var(--text)', marginBottom: 10 }}>
+            {partialPlayer.name}
+            <span style={{ fontSize: 10.5, fontFamily: 'Space Mono, monospace', fontWeight: 400, color: 'var(--muted)', marginLeft: 10 }}>
+              {abbrForSide(gameInfo, partialPlayer.side)} · {partialPlayer.position}
+            </span>
+          </div>
+          {renderFormChart(partialPlayer.side === 'away' ? 'var(--cyan)' : 'var(--gold)')}
+        </div>
+      )}
+
       {!loading && !error && !result && (
         <EmptyState
           title="PICK A BATTER"
@@ -2036,7 +2103,9 @@ function MlbPlayerLookupTab({ gameData }) {
         const inp = result.inputs?.[propStat] || {};
         // Same tier the Edge Finder assigns this hitter (shared scorer). Until
         // the log lands, bvpOps alone drives it — the badge only sharpens.
-        const form = window.scoreMlbBatterForm(gameLog || [], bvp?.ops ?? 0);
+        // Newest 5 only: the log is now 10 deep for the chart, but the tier
+        // must stay the Edge Finder's L5 read so the two boards agree.
+        const form = window.scoreMlbBatterForm(lookedUpIsPitcher ? [] : (gameLog || []).slice(0, 5), bvp?.ops ?? 0);
 
         return (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
@@ -2083,6 +2152,9 @@ function MlbPlayerLookupTab({ gameData }) {
                 </div>
               )}
             </HudCard>
+
+            {/* ── Recent form bar chart (headline visual) ── */}
+            {renderFormChart(ac)}
 
             {/* ── Projection ── */}
             <HudCard style={{ padding: '16px 18px' }} accent="#00ff88">
@@ -2256,25 +2328,6 @@ function MlbPlayerLookupTab({ gameData }) {
                   </>
                 )}
               </div>
-              <div style={{ marginTop: 16, paddingTop: 14, borderTop: '1px solid rgba(255,255,255,0.06)' }}>
-                <div style={{ display: 'flex', alignItems: 'baseline', gap: 10, flexWrap: 'wrap', marginBottom: 10 }}>
-                  <span style={{ fontSize: 10, fontFamily: 'Space Mono, monospace', color: ac, letterSpacing: '0.22em' }}>
-                    LAST 5 GAMES (SEASON)
-                  </span>
-                  {gameLog?.length > 0 && (
-                    <span style={{ fontSize: 10, fontFamily: 'Space Mono, monospace', color: 'var(--muted)' }}>
-                      {form.hitStreak > 0 ? `${form.hitStreak}-game hit streak · ` : ''}
-                      {form.l5Avg.toFixed(1)} H/G
-                      {form.trendRatio >= 1.25 ? ' · trending up' : form.trendRatio <= 0.75 ? ' · cooling off' : ''}
-                    </span>
-                  )}
-                </div>
-                {logLoading
-                  ? <TabLoader label="PULLING RECENT GAMES" />
-                  : <GameLogChart games={gameLog || []} stats={L5_STATS} defaultStat="hits"
-                      emptyLabel="NO RECENT SEASON GAMES" accent={ac} />}
-              </div>
-
               <div style={{ fontSize: 10, color: 'var(--muted)', fontFamily: 'Space Mono, monospace', marginTop: 12, lineHeight: 1.6 }}>
                 {result.source}
               </div>

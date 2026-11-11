@@ -273,6 +273,38 @@ async function fetchPlayerGameLog(playerId, { count = 5, season } = {}) {
   });
 }
 
+// Pitching twin of fetchPlayerGameLog, for the Player Lookup when the clicked
+// player is a pitcher (his HITTING log is empty, so the batter chart would
+// render nothing). Keys match the server's pitcher-props `gameLog`
+// (k/outs/er/hr/h/bb) so the PITCHING tab's MLB_PITCHER_LOG_STATS and
+// mlbPitcherStatColor apply unchanged. Newest first, like the batter log.
+async function fetchPitcherGameLog(playerId, { count = 10, season } = {}) {
+  if (!playerId) return [];
+  const yr = season || getSeasonYear('mlb');
+  const data = await espnFetch(`https://statsapi.mlb.com/api/v1/people/${playerId}/stats?stats=gameLog&group=pitching&season=${yr}`);
+  const splits = data?.stats?.[0]?.splits || [];
+  return splits.slice(-count).reverse().map(s => {
+    const st = s.stat || {};
+    const oppAbbr = MLB_TEAM_ABBR[s.opponent?.id] || s.opponent?.name?.split(' ').slice(-1)[0]?.slice(0, 3).toUpperCase() || '?';
+    return {
+      date: s.date ? new Date(s.date + 'T00:00:00Z').toLocaleDateString('en-US', { month: 'short', day: 'numeric', timeZone: 'UTC' }) : '',
+      rawDate: s.date || '',
+      opp: oppAbbr,
+      oppLogo: oppAbbr && oppAbbr !== '?' ? teamLogoUrl('mlb', oppAbbr) : null,
+      home: s.isHome === true,
+      gamePk: s.game?.gamePk || null,
+      started: Number(st.gamesStarted ?? 0) > 0,
+      ip: st.inningsPitched || '0.0',
+      k: Number(st.strikeOuts ?? 0),
+      outs: Number(st.outs ?? 0),
+      er: Number(st.earnedRuns ?? 0),
+      hr: Number(st.homeRuns ?? 0),
+      h: Number(st.hits ?? 0),
+      bb: Number(st.baseOnBalls ?? 0),
+    };
+  });
+}
+
 async function attachWeatherToGameLog(gameLog, teamAbbr) {
   if (!gameLog?.length || !teamAbbr) return gameLog;
   const weathers = await Promise.all(gameLog.map(async g => {
@@ -503,6 +535,6 @@ Object.assign(window, {
   fetchMlbSlateReadiness, findMlbReadiness,
   fetchMlbSlateSignals, findMlbSignals,
   fetchMlbLive, resolveMlbGamePk,
-  fetchPlayerGameLog, attachWeatherToGameLog, scoreMlbBatterForm, withMlbOppLogos,
+  fetchPlayerGameLog, fetchPitcherGameLog, attachWeatherToGameLog, scoreMlbBatterForm, withMlbOppLogos,
   buildMlbEdgeData, fetchMlbStarters, MLB_TEAM_ABBR,
 });
