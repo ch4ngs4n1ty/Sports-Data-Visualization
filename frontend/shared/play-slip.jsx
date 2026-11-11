@@ -1,14 +1,17 @@
 /* ============================================================
-   PLAYIQ — PLAY SLIP (sport-agnostic UI)
+   PLAYIQ — PLAY SLIP (app-shell UI, all sports)
    ------------------------------------------------------------
-   <PlaySlip sportKey eventId suggestions suggestionNote />
+   The slip is a GENERAL slot, not part of any game card:
+     <PlaySlipNavButton onOpen currentGame />   — top nav, every screen
+     <PlaySlipDrawer open onClose currentGame /> — slide-out panel (App shell)
+     <PlaySlipSource sportKey eventId suggestions note />
+        — rendered by a game's LIVE tab; draws NOTHING, only hands the model's
+          suggestions to the drawer (PlaySlipData.publishSuggestions).
+   One slip across every game and sport (PlaySlipData store). Data + rules
+   live in frontend/data/shared/play-slip.js — read its header before
+   changing what is selectable or linked.
 
-   A compact simulated slip whose only job is: glance at a card, understand
-   the selection, find it on DraftKings by hand. Data + rules live in
-   frontend/data/shared/play-slip.js (window.PlaySlipData) — read its header
-   before changing what is selectable or linked.
-
-   `suggestions` (optional) come from a sport's model, in source-neutral form:
+   Suggestion shape (source-neutral):
      { kind: 'moneyline'|'spread'|'total'|'milestone', side: 'home'|'away'|'over'|'under',
        line?, period? ('full' | '1st Half' …), athleteId?, stat?, threshold?,
        why, detail?: { modelProb?, fairOdds?, edgePts?, caveats?: [], notes?: [] }, source? }
@@ -21,7 +24,6 @@
      "Use new price". The ORIGINAL SLIP view always shows what was first added.
    • Indicators are factual (timestamps, "not in latest feed"), never urgency.
    ============================================================ */
-
 const _PS_POLL_MS = 30000;
 
 function _psCopy(text) {
@@ -199,69 +201,62 @@ function _PsPicker({ snap, slipIds, onAdd }) {
   </div>;
 }
 
-function PlaySlip({ sportKey, eventId, suggestions = [], suggestionNote, title = 'SIMULATED SLIP' }) {
+
+/* ── store hooks ──────────────────────────────────────────────────────── */
+function usePlaySlipStore() {
   const D = window.PlaySlipData;
-  const [slip, setSlip] = React.useState(() => D.loadSlip(sportKey, eventId));
-  const [saveOk, setSaveOk] = React.useState(true);
-  const [snap, setSnap] = React.useState(null);
-  const [checking, setChecking] = React.useState(false);
-  const [review, setReview] = React.useState(null);
-  const [now, setNow] = React.useState(Date.now());
-  const [showOriginal, setShowOriginal] = React.useState(false);
-  const [showPicker, setShowPicker] = React.useState(false);
-  const inflight = React.useRef(null);
-  const order = React.useRef(new Map());   // suggestion key → first-seen index (stable tray order)
-
-  React.useEffect(() => { setSlip(D.loadSlip(sportKey, eventId)); setSnap(null); setReview(null); }, [sportKey, eventId]);
-  const commit = next => { setSlip(next); setSaveOk(D.saveSlip(sportKey, eventId, next)); };
-
-  const refresh = React.useCallback(() => {
-    if (inflight.current) return inflight.current;
-    setChecking(true);
-    inflight.current = D.fetchMarketSnapshot(sportKey, eventId)
-      .then(s => { setSnap(s); return s; })
-      .catch(() => null)
-      .finally(() => { inflight.current = null; setChecking(false); });
-    return inflight.current;
-  }, [sportKey, eventId]);
-
+  const [slip, setSlip] = React.useState(() => D.getSlip());
+  React.useEffect(() => D.subscribeSlip(setSlip), []);
+  return slip;
+}
+function usePlaySlipSuggestions(game) {
+  const D = window.PlaySlipData;
+  const k = game ? D.eventKey(game.sportKey, game.eventId) : null;
+  const [entry, setEntry] = React.useState(() => game ? D.getSuggestions(game.sportKey, game.eventId) : null);
   React.useEffect(() => {
-    let timer;
-    const tick = () => {
-      if (!document.hidden) refresh();
-      timer = setTimeout(tick, _PS_POLL_MS);
-    };
-    tick();
-    const onVis = () => { if (!document.hidden) refresh(); };
-    document.addEventListener('visibilitychange', onVis);
-    return () => { clearTimeout(timer); document.removeEventListener('visibilitychange', onVis); };
-  }, [refresh]);
-  React.useEffect(() => { const t = setInterval(() => setNow(Date.now()), 1000); return () => clearInterval(t); }, []);
+    const read = () => setEntry(game ? D.getSuggestions(game.sportKey, game.eventId) : null);
+    read();
+    return D.subscribeSuggestions(read);
+  }, [k]);
+  return entry;
+}
+const _psSupported = g => !!(g && g.eventId && window.PlaySlipData?.SPORT_PATH[g.sportKey]);
 
-  const ids = new Set(slip.items.map(s => s.id));
-  const add = (outcome, suggestion) => {
-    if (!snap || ids.has(outcome.key)) return;
-    const sel = D.makeSelection(outcome, snap, suggestion);
-    commit({ ...slip, createdAt: slip.createdAt || sel.addedAt, items: [...slip.items, sel],
-      original: [...slip.original, { id: sel.id, addedAt: sel.addedAt, matchup: sel.matchup, why: sel.why, original: sel.original }] });
-  };
-  const patch = (id, p) => commit({ ...slip, items: slip.items.map(s => s.id === id ? { ...s, ...p } : s) });
-  const accept = id => commit({ ...slip, items: slip.items.map(s => s.id === id ? D.acceptCurrent(s, snap) : s) });
-  const remove = id => commit({ ...slip, items: slip.items.filter(s => s.id !== id) });
+/* Game tabs render this instead of a slip. It draws nothing. */
+function PlaySlipSource({ sportKey, eventId, suggestions = [], note = '' }) {
+  const D = window.PlaySlipData;
+  React.useEffect(() => { D.publishSuggestions(sportKey, eventId, suggestions, note); });
+  React.useEffect(() => () => D.clearSuggestions(sportKey, eventId), [sportKey, eventId]);
+  return null;
+}
 
-  const runReview = async () => {
-    const s = await refresh();
-    if (!s) { setReview({ at: Date.now(), failed: true }); return; }
-    const at = Date.now(), counts = { ODDS: 0, LINE: 0, NOT_LISTED: 0, STALE: 0, FINAL: 0 }, hits = new Set();
-    for (const sel of slip.items) {
-      const r = D.compare(sel, s, at);
-      for (const f of r.flags) if (f.type in counts) counts[f.type]++;
-      if (D.hasChange(r)) hits.add(sel.id);
-    }
-    setReview({ at, counts, hits, total: slip.items.length, unchanged: slip.items.length - hits.size });
-  };
+/* ── nav button ──────────────────────────────────────────────────────── */
+function PlaySlipNavButton({ onOpen, currentGame }) {
+  const D = window.PlaySlipData;
+  const slip = usePlaySlipStore();
+  const entry = usePlaySlipSuggestions(_psSupported(currentGame) ? currentGame : null);
+  const inSlip = new Set(slip.items.map(D.itemKey));
+  const pending = entry ? entry.suggestions.filter(s => {
+    const k = D.outcomeKeyFor(s, null);
+    return !k || !inSlip.has(`${entry.sportKey}:${entry.eventId}:${k}`);
+  }).length : 0;
+  const n = slip.items.length;
+  return <button type="button" className="slip-nav-btn" onClick={onOpen} aria-haspopup="dialog"
+    aria-label={`Open simulated slip, ${n} pick${n === 1 ? '' : 's'}${pending ? `, ${pending} suggested for this game` : ''}`}>
+    <span>SLIP</span>
+    <b className={n ? 'on' : ''}>{n}</b>
+    {pending > 0 && <i title={`${pending} suggested for this game`}>+{pending}</i>}
+  </button>;
+}
 
-  /* suggestion tray: stable first-seen order, matched to real outcomes */
+/* ── "add from this game" (inside the drawer) ─────────────────────────── */
+function _PsAddFromGame({ game, snap, slip, onAdd }) {
+  const D = window.PlaySlipData;
+  const entry = usePlaySlipSuggestions(game);
+  const order = React.useRef(new Map());
+  const [showSearch, setShowSearch] = React.useState(false);
+  const ids = new Set(slip.items.filter(s => s.sportKey === game.sportKey && String(s.eventId) === String(game.eventId)).map(s => s.id));
+  const suggestions = entry?.suggestions || [];
   const tray = React.useMemo(() => {
     const rows = suggestions.map(sg => {
       const key = D.outcomeKeyFor(sg, snap) || JSON.stringify([sg.kind, sg.side, sg.line, sg.period, sg.athleteId, sg.threshold]);
@@ -271,91 +266,193 @@ function PlaySlip({ sportKey, eventId, suggestions = [], suggestionNote, title =
     return rows.sort((a, b) => order.current.get(a.key) - order.current.get(b.key));
   }, [suggestions, snap]);
   const fresh = tray.filter(r => !ids.has(r.outcome?.key || r.key));
-
-  const foundCount = slip.items.filter(s => s.found || s.addedManually).length;
-  const removedIds = new Set(slip.original.map(o => o.id).filter(id => !ids.has(id)));
-
-  return <HudCard accent="var(--accent)" glow={false} style={{ padding: 'var(--s4)', marginTop: 'var(--s4)' }}>
-    <SectionHeader label={title}
-      sub="Built to find each selection on DraftKings by hand · simulation, not wagers"
-      right={<div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
-        <Chip color="var(--accent)" strong>{slip.items.length} PICKS</Chip>
-        {slip.items.length > 0 && <Chip color={foundCount === slip.items.length ? 'var(--green)' : 'var(--muted)'}>{foundCount}/{slip.items.length} FOUND</Chip>}
-      </div>} />
-
-    <div style={{ ..._psMuted, marginBottom: 'var(--s3)' }}>
-      Prices: {snap?.provider ? `${snap.provider} via ESPN` : 'DraftKings via ESPN'} · {snap ? `last checked ${D.fmtClock(snap.fetchedAt)} (${D.fmtAge((now - snap.fetchedAt) / 1000)} ago)` : 'checking…'}
-      {checking && ' · checking now…'} · auto-checks every {_PS_POLL_MS / 1000}s while visible
-      {snap?.game?.state === 'pre' && ' · game not started (pregame prices)'}
+  const label = `${game.awayAbbr || game.away?.abbr || snap?.game?.away?.abbr || 'AWAY'} @ ${game.homeAbbr || game.home?.abbr || snap?.game?.home?.abbr || 'HOME'}`;
+  return <section aria-label="Add selections from this game" style={{ padding: 'var(--s3)', border: '1px solid var(--line)', borderRadius: 'var(--r-md, 8px)', marginBottom: 'var(--s3)' }}>
+    <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', marginBottom: 6 }}>
+      <span style={{ fontFamily: 'Orbitron, monospace', fontSize: 'var(--fs-micro)', letterSpacing: '0.14em', color: 'var(--accent)', flex: 1 }}>
+        ADD FROM {(D.SPORT_LABEL[game.sportKey] || '').toUpperCase()} · {snap?.game ? `${snap.game.away?.abbr} @ ${snap.game.home?.abbr}` : label}
+      </span>
+      <button type="button" aria-expanded={showSearch} style={_psBtn} onClick={() => setShowSearch(v => !v)}>{showSearch ? 'CLOSE SEARCH' : 'SEARCH POSTED LINES'}</button>
+    </div>
+    <div style={_psMuted}>
+      {snap ? `${snap.provider ? `${snap.provider} via ESPN` : 'DraftKings via ESPN'} · checked ${D.fmtClock(snap.fetchedAt)}${snap.game?.state === 'pre' ? ' · pregame prices' : ''}` : 'Checking DraftKings…'}
       {(snap?.errors || []).map((e, i) => <div key={i} style={{ color: 'var(--orange)' }}>{e}</div>)}
-      {!saveOk && <div style={{ color: 'var(--orange)' }}>Browser storage unavailable — this slip lasts only while the page is open.</div>}
     </div>
-
-    <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 'var(--s3)' }}>
-      <button type="button" disabled={!slip.items.length || checking} onClick={runReview}
-        style={{ ..._psBtn, borderColor: 'var(--accent)', color: 'var(--accent)', opacity: slip.items.length ? 1 : .5 }}>
-        {checking ? 'CHECKING…' : 'REVIEW CURRENT SLIP'}
-      </button>
-      {slip.items.length > 0 && <_PsCopyButton text={D.copySlip(slip.items)} label="COPY ENTIRE SLIP" />}
-      <button type="button" aria-expanded={showPicker} style={_psBtn} onClick={() => setShowPicker(v => !v)}>{showPicker ? 'CLOSE POSTED LINES' : '+ ADD A POSTED LINE'}</button>
-      {slip.original.length > 0 && <button type="button" aria-expanded={showOriginal} style={_psBtn} onClick={() => setShowOriginal(v => !v)}>
-        {showOriginal ? 'HIDE ORIGINAL SLIP' : `ORIGINAL SLIP (${slip.original.length})`}</button>}
+    <div style={{ fontFamily: 'Orbitron, monospace', fontSize: 'var(--fs-micro)', letterSpacing: '0.12em', color: 'var(--muted)', margin: '10px 0 4px' }}>
+      SUGGESTED PLAYS {!tray.length ? '· NONE RIGHT NOW' : fresh.length ? `· ${fresh.length} NOT IN SLIP` : '· ALL IN SLIP'}
     </div>
-
-    {review && <div role="status" style={{ ..._psMuted, color: 'var(--text)', padding: '8px 10px', marginBottom: 'var(--s3)', borderRadius: 'var(--r-md, 8px)',
-      border: `1px solid ${review.failed ? 'var(--orange)' : review.hits?.size ? 'var(--orange)' : 'var(--green)'}` }}>
-      {review.failed ? `Review at ${D.fmtClock(review.at)} could not reach the feed. Cards show the last successful check.`
-        : <>Reviewed {D.fmtClock(review.at)} · {review.total} selection{review.total === 1 ? '' : 's'} ·{' '}
-          {[['ODDS', 'odds change'], ['LINE', 'line change'], ['NOT_LISTED', 'not in latest feed'], ['FINAL', 'game final'], ['STALE', 'possibly stale']]
-            .filter(([k]) => review.counts[k]).map(([k, l]) => `${review.counts[k]} ${l}${review.counts[k] > 1 && k !== 'NOT_LISTED' && k !== 'FINAL' && k !== 'STALE' ? 's' : ''}`).join(' · ') || 'no changes'}
-          {' '}· {review.unchanged} unchanged{review.hits.size ? ' — changed cards are outlined.' : '.'}</>}
-    </div>}
-
-    {showPicker && <_PsPicker snap={snap} slipIds={ids} onAdd={add} />}
-
-    {(tray.length > 0 || suggestionNote) && <div style={{ margin: 'var(--s3) 0' }}>
-      <div style={{ fontFamily: 'Orbitron, monospace', fontSize: 'var(--fs-micro)', letterSpacing: '0.14em', color: 'var(--muted)', marginBottom: 6 }}>
-        SUGGESTED PLAYS {!tray.length ? '· NONE RIGHT NOW' : fresh.length ? `· ${fresh.length} NOT IN SLIP` : '· ALL IN SLIP'}
-      </div>
-      {suggestionNote && <div style={{ ..._psMuted, marginBottom: 6 }}>{suggestionNote}</div>}
-      <div style={{ display: 'grid', gap: 4 }}>
-        {fresh.map(r => <div key={r.key} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '6px 2px', borderTop: '1px solid var(--line)', opacity: r.outcome ? 1 : .6 }}>
-          <div style={{ flex: 1, minWidth: 0, fontSize: 'var(--fs-sm)', overflowWrap: 'anywhere' }}>
-            {r.outcome ? r.outcome.headline : r.sg.label || `${r.sg.kind} ${r.sg.side || ''} ${r.sg.line ?? ''}`}
-            {r.outcome && <span style={{ color: 'var(--muted)', fontSize: 'var(--fs-micro)' }}> · {r.outcome.periodKey === 'full' ? 'full game' : r.outcome.period}</span>}
-            {!r.outcome && <div style={_psMuted}>{r.reason}</div>}
-          </div>
-          {r.outcome && <strong style={{ fontFamily: 'Orbitron, monospace', fontSize: 'var(--fs-sm)' }}>{D.fmtOdds(r.outcome.odds)}</strong>}
-          <button type="button" disabled={!r.outcome} style={{ ..._psBtn, opacity: r.outcome ? 1 : .45 }} onClick={() => add(r.outcome, r.sg)}>+ ADD</button>
-        </div>)}
-      </div>
-    </div>}
-
-    {!slip.items.length ? <div style={{ ..._psMuted, padding: 'var(--s3) 0' }}>
-      Slip is empty. Add a suggested play or a posted line — each card keeps the price and game state from the moment you add it.
-    </div> : <div style={{ display: 'grid', gap: 'var(--s3)', marginTop: 'var(--s3)' }}>
-      {slip.items.map((sel, i) => <_PsCard key={sel.id} sel={sel} index={i} snap={snap} now={now}
-        reviewHit={!!review?.hits?.has(sel.id)}
-        onPatch={p => patch(sel.id, p)} onAccept={() => { accept(sel.id); setReview(r => r?.hits ? { ...r, hits: new Set([...r.hits].filter(x => x !== sel.id)) } : r); }} onRemove={() => remove(sel.id)} />)}
-    </div>}
-
-    {showOriginal && slip.original.length > 0 && <div style={{ marginTop: 'var(--s4)', paddingTop: 'var(--s3)', borderTop: '1px dashed var(--line-strong)' }}>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', marginBottom: 6 }}>
-        <span style={{ fontFamily: 'Orbitron, monospace', fontSize: 'var(--fs-micro)', letterSpacing: '0.14em', color: 'var(--muted)', flex: 1 }}>
-          ORIGINAL SIMULATED SLIP · FROZEN AT ADD TIME
-        </span>
-        <_PsCopyButton text={D.copySlip(slip.original.map(o => ({ ...o, working: o.original })), { label: 'PlayIQ original simulated slip', at: slip.createdAt })} label="COPY ORIGINAL" />
-      </div>
-      {slip.original.map((o, i) => <div key={`${o.id}_${o.addedAt}`} style={{ ..._psMuted, color: 'var(--text)', padding: '5px 0', borderTop: '1px solid var(--line)' }}>
-        {i + 1}. {o.original.headline} · {o.original.periodKey === 'full' ? 'full game' : o.original.period} · <strong>{D.fmtOdds(o.original.odds)}</strong>
-        <span style={{ color: 'var(--muted)' }}> · added {D.fmtClock(o.addedAt)}{o.original.context?.detail ? ` (${o.original.context.detail})` : ''}{removedIds.has(o.id) ? ' · removed from working slip' : ''}</span>
+    <div style={_psMuted}>{entry?.note || 'Model suggestions appear here while this game’s ◉ LIVE tab is open.'}</div>
+    <div style={{ display: 'grid', gap: 4, marginTop: 4 }}>
+      {fresh.map(r => <div key={r.key} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '6px 2px', borderTop: '1px solid var(--line)', opacity: r.outcome ? 1 : .6 }}>
+        <div style={{ flex: 1, minWidth: 0, fontSize: 'var(--fs-sm)', overflowWrap: 'anywhere' }}>
+          {r.outcome ? r.outcome.headline : r.sg.label || `${r.sg.kind} ${r.sg.side || ''} ${r.sg.line ?? ''}`}
+          {r.outcome && <span style={{ color: 'var(--muted)', fontSize: 'var(--fs-micro)' }}> · {r.outcome.periodKey === 'full' ? 'full game' : r.outcome.period}</span>}
+          {!r.outcome && <div style={_psMuted}>{r.reason}</div>}
+        </div>
+        {r.outcome && <strong style={{ fontFamily: 'Orbitron, monospace', fontSize: 'var(--fs-sm)' }}>{D.fmtOdds(r.outcome.odds)}</strong>}
+        <button type="button" disabled={!r.outcome} style={{ ..._psBtn, opacity: r.outcome ? 1 : .45 }} onClick={() => onAdd(r.outcome, r.sg, snap)}>+ ADD</button>
       </div>)}
-    </div>}
-
-    <div style={{ ..._psMuted, color: 'var(--dim)', marginTop: 'var(--s3)' }}>
-      Simulation and research only — nothing here places a wager. Prices come from ESPN’s DraftKings feed and can lag the sportsbook; confirm each one on DraftKings.
     </div>
-  </HudCard>;
+    {showSearch && <_PsPicker snap={snap} slipIds={ids} onAdd={(o, sg) => onAdd(o, sg, snap)} />}
+  </section>;
 }
 
-Object.assign(window, { PlaySlip });
+/* ── the drawer ──────────────────────────────────────────────────────── */
+function PlaySlipDrawer({ open, onClose, currentGame }) {
+  const D = window.PlaySlipData;
+  const slip = usePlaySlipStore();
+  const [snaps, setSnaps] = React.useState({});           // eventKey → snapshot
+  const [checking, setChecking] = React.useState(false);
+  const [review, setReview] = React.useState(null);
+  const [now, setNow] = React.useState(Date.now());
+  const [showOriginal, setShowOriginal] = React.useState(false);
+  const inflight = React.useRef({});
+  const closeRef = React.useRef(null);
+  const game = _psSupported(currentGame) ? currentGame : null;
+
+  const events = React.useMemo(() => {
+    const m = new Map();
+    for (const it of slip.items) m.set(D.eventKey(it.sportKey, it.eventId), [it.sportKey, String(it.eventId)]);
+    if (game) m.set(D.eventKey(game.sportKey, game.eventId), [game.sportKey, String(game.eventId)]);
+    return m;
+  }, [slip.items, game?.sportKey, game?.eventId]);
+
+  const fetchOne = React.useCallback((sportKey, eventId) => {
+    const k = D.eventKey(sportKey, eventId);
+    if (inflight.current[k]) return inflight.current[k];
+    const p = D.fetchMarketSnapshot(sportKey, eventId)
+      .then(s => { setSnaps(prev => ({ ...prev, [k]: s })); return s; })
+      .catch(() => null)
+      .finally(() => { delete inflight.current[k]; });
+    inflight.current[k] = p;
+    return p;
+  }, []);
+  const refreshAll = React.useCallback(async () => {
+    setChecking(true);
+    const out = {};
+    await Promise.all([...events.entries()].map(async ([k, [s, e]]) => { out[k] = await fetchOne(s, e); }));
+    setChecking(false);
+    return out;
+  }, [events, fetchOne]);
+
+  /* Poll only while the drawer is open and the page is visible. */
+  React.useEffect(() => {
+    if (!open) return;
+    let timer;
+    const tick = () => { if (!document.hidden) refreshAll(); timer = setTimeout(tick, _PS_POLL_MS); };
+    tick();
+    return () => clearTimeout(timer);
+  }, [open, refreshAll]);
+  React.useEffect(() => { if (!open) return; const t = setInterval(() => setNow(Date.now()), 1000); return () => clearInterval(t); }, [open]);
+  React.useEffect(() => {
+    if (!open) return;
+    closeRef.current?.focus();
+    const onKey = e => { if (e.key === 'Escape') onClose(); };
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  }, [open]);
+
+  const add = (outcome, suggestion, snap) => {
+    if (!outcome || !snap) return;
+    const sel = D.makeSelection(outcome, snap, suggestion);
+    D.updateSlip(s => s.items.some(x => D.itemKey(x) === D.itemKey(sel)) ? s : ({
+      ...s, createdAt: s.createdAt || sel.addedAt, items: [...s.items, sel],
+      original: [...s.original, { id: sel.id, sportKey: sel.sportKey, eventId: sel.eventId, addedAt: sel.addedAt, matchup: sel.matchup, why: sel.why, original: sel.original }],
+    }));
+  };
+  const same = (a, key) => D.itemKey(a) === key;
+  const patch = (key, p) => D.updateSlip(s => ({ ...s, items: s.items.map(x => same(x, key) ? { ...x, ...p } : x) }));
+  const accept = key => {
+    D.updateSlip(s => ({ ...s, items: s.items.map(x => same(x, key) ? D.acceptCurrent(x, snaps[D.eventKey(x.sportKey, x.eventId)]) : x) }));
+    setReview(r => r?.hits ? { ...r, hits: new Set([...r.hits].filter(h => h !== key)) } : r);
+  };
+  const remove = key => D.updateSlip(s => ({ ...s, items: s.items.filter(x => !same(x, key)) }));
+
+  const runReview = async () => {
+    const fresh = await refreshAll();
+    const at = Date.now(), counts = { ODDS: 0, LINE: 0, NOT_LISTED: 0, STALE: 0, FINAL: 0 }, hits = new Set();
+    let failed = 0;
+    for (const sel of slip.items) {
+      const s = fresh[D.eventKey(sel.sportKey, sel.eventId)];
+      if (!s) { failed++; continue; }
+      const r = D.compare(sel, s, at);
+      for (const f of r.flags) if (f.type in counts) counts[f.type]++;
+      if (D.hasChange(r)) hits.add(D.itemKey(sel));
+    }
+    setReview({ at, counts, hits, failed, total: slip.items.length, unchanged: slip.items.length - hits.size - failed });
+  };
+
+  if (!open) return null;
+  const items = slip.items;
+  const foundCount = items.filter(s => s.found || s.addedManually).length;
+  const liveKeys = new Set(items.map(D.itemKey));
+  const snapList = Object.values(snaps);
+  const oldest = snapList.length ? Math.min(...snapList.map(s => s.fetchedAt)) : null;
+  const curSnap = game ? snaps[D.eventKey(game.sportKey, game.eventId)] : null;
+
+  return <div className="slip-overlay" onMouseDown={e => { if (e.target === e.currentTarget) onClose(); }}>
+    <aside className="slip-drawer" role="dialog" aria-modal="true" aria-label="Simulated slip">
+      <div style={{ display: 'flex', alignItems: 'flex-start', gap: 8, marginBottom: 'var(--s3)' }}>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{ fontFamily: 'Orbitron, monospace', fontWeight: 800, letterSpacing: '0.16em', color: 'var(--accent)' }}>SIMULATED SLIP</div>
+          <div style={_psMuted}>Find each selection on DraftKings by hand · simulation, not wagers</div>
+        </div>
+        <Chip color="var(--accent)" strong>{items.length} PICKS</Chip>
+        {items.length > 0 && <Chip color={foundCount === items.length ? 'var(--green)' : 'var(--muted)'}>{foundCount}/{items.length} FOUND</Chip>}
+        <button ref={closeRef} type="button" aria-label="Close slip" style={{ ..._psBtn, padding: '6px 10px' }} onClick={onClose}>✕</button>
+      </div>
+
+      <div style={{ ..._psMuted, marginBottom: 'var(--s3)' }}>
+        {oldest ? `Prices from ESPN's DraftKings feed · oldest check ${D.fmtClock(oldest)} (${D.fmtAge((now - oldest) / 1000)} ago)` : events.size ? 'Checking DraftKings…' : 'No games in the slip yet.'}
+        {checking && ' · checking now…'}{events.size > 0 && ` · auto-checks every ${_PS_POLL_MS / 1000}s while open`}
+        {!D.slipSaveOk() && <div style={{ color: 'var(--orange)' }}>Browser storage unavailable — this slip lasts only while the page is open.</div>}
+      </div>
+
+      <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 'var(--s3)' }}>
+        <button type="button" disabled={!items.length || checking} onClick={runReview}
+          style={{ ..._psBtn, borderColor: 'var(--accent)', color: 'var(--accent)', opacity: items.length ? 1 : .5 }}>{checking ? 'CHECKING…' : 'REVIEW CURRENT SLIP'}</button>
+        {items.length > 0 && <_PsCopyButton text={D.copySlip(items)} label="COPY ENTIRE SLIP" />}
+        {slip.original.length > 0 && <button type="button" aria-expanded={showOriginal} style={_psBtn} onClick={() => setShowOriginal(v => !v)}>
+          {showOriginal ? 'HIDE ORIGINAL SLIP' : `ORIGINAL SLIP (${slip.original.length})`}</button>}
+      </div>
+
+      {review && <div role="status" style={{ ..._psMuted, color: 'var(--text)', padding: '8px 10px', marginBottom: 'var(--s3)', borderRadius: 'var(--r-md, 8px)',
+        border: `1px solid ${review.hits.size || review.failed ? 'var(--orange)' : 'var(--green)'}` }}>
+        Reviewed {D.fmtClock(review.at)} · {review.total} selection{review.total === 1 ? '' : 's'} ·{' '}
+        {[['ODDS', 'odds change'], ['LINE', 'line change'], ['NOT_LISTED', 'not in latest feed'], ['FINAL', 'game final'], ['STALE', 'possibly stale']]
+          .filter(([k]) => review.counts[k]).map(([k, l]) => `${review.counts[k]} ${l}${review.counts[k] > 1 && (k === 'ODDS' || k === 'LINE') ? 's' : ''}`).join(' · ') || 'no changes'}
+        {' '}· {review.unchanged} unchanged{review.failed ? ` · ${review.failed} could not be checked (feed did not load)` : ''}{review.hits.size ? ' — changed cards are outlined.' : '.'}
+      </div>}
+
+      {game && <_PsAddFromGame game={game} snap={curSnap} slip={slip} onAdd={add} />}
+
+      {!items.length ? <div style={{ ..._psMuted, padding: 'var(--s3) 0' }}>
+        Slip is empty. {game ? 'Add a suggested play or a posted line from this game above' : 'Open any game and add plays from here'} — each card keeps the price and game state from the moment you add it.
+      </div> : <div style={{ display: 'grid', gap: 'var(--s3)' }}>
+        {items.map((sel, i) => {
+          const key = D.itemKey(sel);
+          return <_PsCard key={key} sel={sel} index={i} snap={snaps[D.eventKey(sel.sportKey, sel.eventId)] || null} now={now}
+            reviewHit={!!review?.hits?.has(key)}
+            onPatch={p => patch(key, p)} onAccept={() => accept(key)} onRemove={() => remove(key)} />;
+        })}
+      </div>}
+
+      {showOriginal && slip.original.length > 0 && <div style={{ marginTop: 'var(--s4)', paddingTop: 'var(--s3)', borderTop: '1px dashed var(--line-strong)' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', marginBottom: 6 }}>
+          <span style={{ fontFamily: 'Orbitron, monospace', fontSize: 'var(--fs-micro)', letterSpacing: '0.14em', color: 'var(--muted)', flex: 1 }}>ORIGINAL SIMULATED SLIP · FROZEN AT ADD TIME</span>
+          <_PsCopyButton text={D.copySlip(slip.original.map(o => ({ ...o, working: o.original })), { label: 'PlayIQ original simulated slip', at: slip.createdAt })} label="COPY ORIGINAL" />
+        </div>
+        {slip.original.map((o, i) => <div key={`${o.sportKey}:${o.eventId}:${o.id}:${o.addedAt}`} style={{ ..._psMuted, color: 'var(--text)', padding: '5px 0', borderTop: '1px solid var(--line)' }}>
+          {i + 1}. {o.matchup?.sport} {o.matchup?.away} @ {o.matchup?.home} · {o.original.headline} · {o.original.periodKey === 'full' ? 'full game' : o.original.period} · <strong>{D.fmtOdds(o.original.odds)}</strong>
+          <span style={{ color: 'var(--muted)' }}> · added {D.fmtClock(o.addedAt)}{o.original.context?.detail ? ` (${o.original.context.detail})` : ''}{!liveKeys.has(`${o.sportKey}:${o.eventId}:${o.id}`) ? ' · removed from working slip' : ''}</span>
+        </div>)}
+      </div>}
+
+      <div style={{ ..._psMuted, color: 'var(--dim)', marginTop: 'var(--s3)' }}>
+        Simulation and research only — nothing here places a wager. Prices come from ESPN’s DraftKings feed and can lag the sportsbook; confirm each one on DraftKings.
+      </div>
+    </aside>
+  </div>;
+}
+
+Object.assign(window, { PlaySlipNavButton, PlaySlipDrawer, PlaySlipSource });

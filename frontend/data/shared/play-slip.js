@@ -452,7 +452,9 @@
   function copySlip(sels, { label = 'PlayIQ simulated slip', at = Date.now() } = {}) {
     if (!sels.length) return '';
     const m = sels[0].matchup;
-    return [`${label} · ${m.sport} ${m.away} @ ${m.home} · ${new Date(at).toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}`,
+    const games = new Set(sels.map(s => `${s.sportKey}:${s.eventId}`)).size;
+    const scope = games === 1 ? `${m.sport} ${m.away} @ ${m.home}` : `${games} games`;
+    return [`${label} · ${scope} · ${new Date(at).toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}`,
       ...sels.map((s, i) => copyLine(s, i)),
       'Simulation only. Confirm each price on DraftKings.'].join('\n');
   }
@@ -508,25 +510,83 @@
     return out;
   }
 
-  /* ── persistence (per browser, per game; every access guarded) ────── */
-  const storeKey = (sportKey, eventId) => `piq_play_slip_v1_${sportKey}_${eventId}`;
-  function loadSlip(sportKey, eventId) {
+  /* ── ONE global slip (all games, all sports) ──────────────────────────
+     The slip lives in the app shell (nav button + drawer), not inside any
+     game's tab, so it is a single store: `localStorage.piq_play_slip_v2`.
+     Every item already carries sportKey / eventId / matchup. v1 slips were
+     stored per game (`piq_play_slip_v1_<sport>_<event>`); they are merged in
+     once, in the order they were added, and then left untouched.
+     Every storage access is guarded — the slip still works in memory. */
+  const STORE_KEY = 'piq_play_slip_v2';
+  const empty = () => ({ v: 2, items: [], original: [], createdAt: null });
+  let _slip = null, _saveOk = true;
+  const _slipListeners = new Set();
+  function readStore() {
     try {
-      const raw = JSON.parse(root.localStorage.getItem(storeKey(sportKey, eventId)) || 'null');
+      const raw = JSON.parse(root.localStorage.getItem(STORE_KEY) || 'null');
       if (raw && Array.isArray(raw.items) && Array.isArray(raw.original)) return raw;
-    } catch { /* storage blocked or corrupt */ }
-    return { v: 1, items: [], original: [], createdAt: null };
+    } catch { /* blocked or corrupt */ }
+    const merged = empty();
+    try {
+      const keys = Object.keys(root.localStorage).filter(k => k.startsWith('piq_play_slip_v1_'));
+      const olds = keys.map(k => { try { const o = JSON.parse(root.localStorage.getItem(k)); const m = k.match(/^piq_play_slip_v1_([a-z]+)_(.+)$/); return o && m ? { ...o, sportKey: m[1], eventId: m[2] } : null; } catch { return null; } })
+        .filter(o => o && Array.isArray(o.items) && Array.isArray(o.original));
+      for (const o of olds) {
+        for (const it of o.items) if (!merged.items.some(x => x.sportKey === it.sportKey && x.eventId === it.eventId && x.id === it.id)) merged.items.push(it);
+        merged.original.push(...o.original.map(x => ({ sportKey: o.sportKey, eventId: o.eventId, ...x })));
+        if (o.createdAt && (!merged.createdAt || o.createdAt < merged.createdAt)) merged.createdAt = o.createdAt;
+      }
+      merged.items.sort((a, b) => a.addedAt - b.addedAt);
+      merged.original.sort((a, b) => a.addedAt - b.addedAt);
+    } catch { /* storage blocked */ }
+    return merged;
   }
-  function saveSlip(sportKey, eventId, slip) {
-    try { root.localStorage.setItem(storeKey(sportKey, eventId), JSON.stringify(slip)); return true; }
-    catch { return false; }
+  function getSlip() { if (!_slip) _slip = readStore(); return _slip; }
+  function setSlip(next) {
+    _slip = next;
+    try { root.localStorage.setItem(STORE_KEY, JSON.stringify(next)); _saveOk = true; } catch { _saveOk = false; }
+    _slipListeners.forEach(fn => { try { fn(next); } catch {} });
   }
+  const updateSlip = fn => setSlip(fn(getSlip()));
+  const slipSaveOk = () => _saveOk;
+  function subscribeSlip(fn) { _slipListeners.add(fn); return () => _slipListeners.delete(fn); }
+  /* Another browser tab edited the slip → pick it up. */
+  try {
+    root.addEventListener?.('storage', e => {
+      if (e.key !== STORE_KEY) return;
+      _slip = null; const s = getSlip(); _slipListeners.forEach(fn => { try { fn(s); } catch {} });
+    });
+  } catch {}
+
+  /* Item identity is per game: the same outcome key exists in every game. */
+  const eventKey = (sportKey, eventId) => `${sportKey}:${eventId}`;
+  const itemKey = it => `${it.sportKey}:${it.eventId}:${it.id}`;
+
+  /* ── suggestions hand-off: game tabs → the shell's drawer ────────────
+     A live tab computes model suggestions but renders no slip UI; it
+     publishes them here, keyed by game, and the drawer reads them. */
+  const _sugg = new Map();
+  const _suggListeners = new Set();
+  function publishSuggestions(sportKey, eventId, suggestions, note) {
+    const k = eventKey(sportKey, eventId);
+    const sig = JSON.stringify([suggestions, note]);
+    if (_sugg.get(k)?.sig === sig) return;
+    _sugg.set(k, { sportKey, eventId: String(eventId), suggestions: suggestions || [], note: note || '', sig, at: Date.now() });
+    _suggListeners.forEach(fn => { try { fn(k); } catch {} });
+  }
+  function clearSuggestions(sportKey, eventId) {
+    if (_sugg.delete(eventKey(sportKey, eventId))) _suggListeners.forEach(fn => { try { fn(); } catch {} });
+  }
+  const getSuggestions = (sportKey, eventId) => _sugg.get(eventKey(sportKey, eventId)) || null;
+  function subscribeSuggestions(fn) { _suggListeners.add(fn); return () => _suggListeners.delete(fn); }
 
   root.PlaySlipData = {
     SPORT_PATH, fetchMarketSnapshot, parseSummary, gameLineOutcomes, propOutcomes, chooseProvider,
     dkUrlFrom, decodeDkOutcome, linkMatches, liveStat, gameContext,
     makeSelection, compare, hasChange, acceptCurrent, matchSuggestion, outcomeKeyFor, fromHoopsMoves,
-    copyLine, copySlip, loadSlip, saveSlip, fmtOdds, fmtLine, fmtAge, fmtClock,
+    copyLine, copySlip, fmtOdds, fmtLine, fmtAge, fmtClock, SPORT_LABEL,
+    getSlip, setSlip, updateSlip, subscribeSlip, slipSaveOk, eventKey, itemKey,
+    publishSuggestions, clearSuggestions, getSuggestions, subscribeSuggestions,
     STALE_LINE_SEC, STALE_PROP_SEC,
   };
 })(typeof window !== 'undefined' ? window : globalThis);

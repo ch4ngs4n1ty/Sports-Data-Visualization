@@ -378,14 +378,13 @@ function NbaLiveTab({ gameInfo }) {
       </div>
       {feed.status === 'reconnecting' && <div className="nl-banner">Connection interrupted — showing the last update and retrying automatically.</div>}
 
-      {/* Simulated slip (play-slip lane). Mounted ONCE, above the pre/live split,
-          so it shows in every game state (pregame DK lines are findable too) and
-          is the first thing on the tab instead of under the court on a phone.
-          Suggestions are only moves that passed the line-freshness gate. */}
-      {window.PlaySlip && (
-        <PlaySlip sportKey={gameInfo.sportKey} eventId={gameInfo.eventId}
+      {/* The slip itself lives in the app shell (nav SLIP button → drawer), not
+          in this card. This only hands the model's suggestions to it; it draws
+          nothing. Suggestions are only moves that passed the line-freshness gate. */}
+      {window.PlaySlipSource && (
+        <PlaySlipSource sportKey={gameInfo.sportKey} eventId={gameInfo.eventId}
           suggestions={data.state === 'in' ? window.PlaySlipData.fromHoopsMoves(L.buildMoves(data, price, feed.market?.live).moves, data) : []}
-          suggestionNote={data.state === 'in' ? 'From the PlayIQ live model.' : 'Model suggestions start at tip-off. Posted DraftKings lines can be added now.'} />
+          note={data.state === 'in' ? 'From the PlayIQ NBA live model.' : 'Model suggestions start at tip-off. Posted DraftKings lines can be added now.'} />
       )}
 
       {data.state === 'pre' ? (

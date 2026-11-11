@@ -819,14 +819,28 @@ compare against their own sportsbook app. De-vig, ¼-Kelly and the 20-pt
 
 ## Play slip — find each pick on DraftKings by hand (Nov 2026)
 
-`<PlaySlip sportKey eventId suggestions suggestionNote />` (`frontend/shared/play-slip.jsx`),
-data + rules in `frontend/data/shared/play-slip.js` (`window.PlaySlipData`). Mounted
-at the TOP of the MLB, NFL and NBA/WNBA LIVE tabs, in EVERY game state (pregame lines are findable too). It was first mounted below the court on NBA and only once a game started, so on a phone before tip-off it never appeared. Keep it above each tab's pre/live split. One compact card per selection: matchup,
-exact player/team, DraftKings market name as the source names it, side badge
-(OVER/UNDER, +/− spread, "25+ · 25 OR MORE"), FULL GAME vs "1ST HALF ONLY", odds,
-live stat + clock, when the price was last seen, why selected; analysis behind
-DETAILS. Copy Play / Copy Entire Slip, Found / Added manually, Review Current Slip,
-and a frozen ORIGINAL SLIP. Per-browser in `localStorage.piq_play_slip_v1_<sport>_<eventId>`.
+**A general slot in the app shell, NOT part of any game card** (user decision,
+Nov 2026). UI `frontend/shared/play-slip.jsx`, data + rules
+`frontend/data/shared/play-slip.js` (`window.PlaySlipData`):
+- `PlaySlipNavButton` — top nav on every screen: `SLIP <count>`, plus a gold `+N`
+  when the game being viewed has suggestions not yet in the slip.
+- `PlaySlipDrawer` — mounted once in `App` (index.html). Right-side panel
+  (full-screen under 520px), Esc / ✕ / backdrop closes. ONE slip across every
+  game and sport. When a game is open it also shows "ADD FROM <game>": that
+  game's model suggestions + a search over its posted DraftKings lines.
+- `PlaySlipSource` — the ONLY thing a game's LIVE tab renders for the slip. It
+  draws nothing; it publishes the model's suggestions
+  (`PlaySlipData.publishSuggestions`) for the drawer to read. Don't put slip UI
+  back inside a tab — an in-tab version was tried first and was hard to find.
+- Store: one `localStorage.piq_play_slip_v2` (items carry sportKey/eventId);
+  per-game v1 slips are merged in once. Item identity = `sport:event:outcome`.
+  The drawer polls prices only while open (30s), per game in the slip.
+
+Each card: matchup, exact player/team, DraftKings market name as the source
+names it, side badge (OVER/UNDER, +/− spread, "25+ · 25 OR MORE"), FULL GAME vs
+"1ST HALF ONLY", odds, live stat + clock, when the price was last seen, why
+selected; analysis behind DETAILS. Copy Play / Copy Entire Slip, Found / Added
+manually, Review Current Slip, and a frozen ORIGINAL SLIP.
 
 The slip fetches its own prices (ESPN core `odds` → `"DraftKings - Live Odds"`, its
 `propBets`, and the site `summary`), so a sport only has to pass suggestions.

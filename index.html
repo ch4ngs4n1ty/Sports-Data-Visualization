@@ -35,7 +35,7 @@
   <script src="frontend/data/nba/index.js"></script>
   <script src="frontend/data/nba/game-breakdown.js?v=lens-3"></script>
   <script src="frontend/data/nba/live.js?v=nba-live-5"></script>
-  <script src="frontend/data/shared/play-slip.js?v=slip-2"></script>
+  <script src="frontend/data/shared/play-slip.js?v=slip-3"></script>
   <script src="frontend/data/wnba/index.js"></script>
   <script src="frontend/data/nfl/index.js?v=nfl-edge-1"></script>
   <script src="frontend/data/nfl/live.js?v=stadium-1"></script>
@@ -639,6 +639,44 @@
     .tw-btn.on { border-color: var(--cyan); color: var(--cyan); background: var(--tint-cyan); }
 
     /* ══════════════════════════════════════════════════════════
+       SIMULATED SLIP — nav button + drawer (frontend/shared/play-slip.jsx)
+       A general slot in the shell, not inside any game card.
+       ══════════════════════════════════════════════════════════ */
+    .slip-nav-btn {
+      display: inline-flex; align-items: center; gap: 6px; flex-shrink: 0;
+      height: 34px; padding: 0 10px; cursor: pointer;
+      background: var(--surface); border: 1px solid var(--line-strong); border-radius: var(--r-sm);
+      font-family: 'Orbitron', monospace; font-size: var(--fs-micro); font-weight: 700;
+      letter-spacing: 0.14em; color: var(--text); transition: border-color var(--dur-2) ease;
+    }
+    .slip-nav-btn:hover, .slip-nav-btn:focus-visible { border-color: var(--accent); }
+    .slip-nav-btn b {
+      min-width: 18px; height: 18px; padding: 0 5px; border-radius: 99px; display: grid; place-items: center;
+      font-size: 10px; background: var(--dim); color: var(--text);
+    }
+    .slip-nav-btn b.on { background: var(--accent); color: var(--bg); }
+    .slip-nav-btn i { font-style: normal; font-size: 10px; color: var(--gold); letter-spacing: 0.04em; }
+    .slip-overlay {
+      position: fixed; inset: 0; z-index: 400; display: flex; justify-content: flex-end;
+      background: rgba(2, 4, 10, 0.55); backdrop-filter: blur(3px); -webkit-backdrop-filter: blur(3px);
+      animation: slipFade 150ms ease;
+    }
+    .slip-drawer {
+      width: min(480px, 100vw); height: 100%; overflow-y: auto; overscroll-behavior: contain;
+      box-sizing: border-box; padding: var(--s4) var(--s4) calc(var(--s5) + env(safe-area-inset-bottom));
+      background: var(--bg); border-left: 1px solid var(--line-accent, var(--line-strong));
+      box-shadow: -24px 0 60px rgba(0, 0, 0, 0.45);
+      animation: slipIn 180ms var(--ease-out, ease-out);
+    }
+    @keyframes slipFade { from { opacity: 0; } to { opacity: 1; } }
+    @keyframes slipIn { from { transform: translateX(24px); opacity: 0; } to { transform: none; opacity: 1; } }
+    @media (max-width: 520px) {
+      .slip-drawer { width: 100vw; border-left: none; padding: var(--s3) 16px calc(var(--s5) + env(safe-area-inset-bottom)); }
+      .slip-nav-btn { padding: 0 8px; gap: 4px; }
+    }
+    @media (prefers-reduced-motion: reduce) { .slip-overlay, .slip-drawer { animation: none; } }
+
+    /* ══════════════════════════════════════════════════════════
        RESPONSIVE
        ══════════════════════════════════════════════════════════ */
     @media (max-width: 900px) {
@@ -687,14 +725,14 @@
 
 <!-- Component scripts (Babel-transpiled in the browser) -->
 <script type="text/babel" src="frontend/shared/ui-atoms.jsx"></script>
-<script type="text/babel" src="frontend/shared/play-slip.jsx?v=slip-2"></script>
+<script type="text/babel" src="frontend/shared/play-slip.jsx?v=slip-3"></script>
 <script type="text/babel" src="frontend/shared/tabs/common-tabs.jsx"></script>
-<script type="text/babel" src="frontend/sports/mlb/live-indicators.jsx?v=slip-2"></script>
+<script type="text/babel" src="frontend/sports/mlb/live-indicators.jsx?v=slip-3"></script>
 <script type="text/babel" src="frontend/sports/mlb/tabs.jsx?v=reconnect-1"></script>
 <script type="text/babel" src="frontend/sports/nba/tabs.jsx?v=lens-3"></script>
-<script type="text/babel" src="frontend/sports/nba/live.jsx?v=slip-2"></script>
+<script type="text/babel" src="frontend/sports/nba/live.jsx?v=slip-3"></script>
 <script type="text/babel" src="frontend/sports/nfl/tabs.jsx?v=nfl-edge-2"></script>
-<script type="text/babel" src="frontend/sports/nfl/live.jsx?v=slip-2"></script>
+<script type="text/babel" src="frontend/sports/nfl/live.jsx?v=slip-3"></script>
 <script type="text/babel" src="frontend/shared/screens/home-screen.jsx"></script>
 <script type="text/babel" src="frontend/shared/screens/games-screen.jsx"></script>
 <script type="text/babel" src="frontend/shared/screens/game-detail-screen.jsx?v=nba-live-5"></script>
@@ -919,6 +957,9 @@ function App() {
 
   const [tweaks, setTweaks] = React.useState(TWEAK_DEFAULTS);
   const [tweaksOpen, setTweaksOpen] = React.useState(false);
+  /* Simulated slip — a GENERAL slot in the shell (nav button + drawer), shared
+     by every screen and sport; game tabs only feed it suggestions. */
+  const [slipOpen, setSlipOpen] = React.useState(false);
 
   /* ── Theme engine ──────────────────────────────────────
      Every sport tab in the app paints with var(--cyan), which is now an
@@ -1025,6 +1066,7 @@ function App() {
             </React.Fragment>
           ))}
         </div>
+        {window.PlaySlipNavButton && <PlaySlipNavButton onOpen={() => setSlipOpen(true)} currentGame={view === 'detail' ? selectedGame : null} />}
         <ApiKeyInput />
         <div className="nav-sep" aria-hidden="true" />
         <div className="nav-status" title={window.API_BASE || 'localhost:3001'}>
@@ -1039,6 +1081,8 @@ function App() {
         {view === 'games'  && <div className="screen-enter"><GamesScreen  onSelectGame={goDetail} onBack={goHome} /></div>}
         {view === 'detail' && selectedGame && <div className="screen-enter"><GameDetailScreen game={selectedGame} onBack={() => setView('games')} /></div>}
       </main>
+
+      {window.PlaySlipDrawer && <PlaySlipDrawer open={slipOpen} onClose={() => setSlipOpen(false)} currentGame={view === 'detail' ? selectedGame : null} />}
 
       {/* Tweaks */}
       <div className={`tweaks ${tweaksOpen ? 'open' : ''}`}>

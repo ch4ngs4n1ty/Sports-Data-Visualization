@@ -105,10 +105,10 @@ function LiveIndicatorBoard({ data, gameInfo, status, healthy, error, onRefresh,
     </header>
     <div className="li-toolbar"><span>MLB · {s.venue || 'Live game'}</span><div><button onClick={onToggle}>{auto ? 'Pause' : 'Resume'}</button><button onClick={onRefresh}>↻ Refresh</button></div></div>
     {(!healthy || error) && <div className="li-notice" role="status">{error || (auto ? 'Reconnecting automatically…' : 'Updates manually paused. Select Resume to reconnect.')} Last received values remain visible until fresh data arrives.</div>}
-    {/* Simulated slip — top of the tab, full width, every game state (play-slip lane). */}
-    {window.PlaySlip && gameInfo?.eventId && <PlaySlip sportKey="mlb" eventId={gameInfo.eventId}
+    {/* Slip lives in the app shell (nav SLIP → drawer); this only hands it suggestions and draws nothing. */}
+    {window.PlaySlipSource && gameInfo?.eventId && <PlaySlipSource sportKey="mlb" eventId={gameInfo.eventId}
       suggestions={mlbSlipSuggestions(data, following, ready)}
-      suggestionNote="From the PlayIQ live model (positive-edge moves first, then lines you follow). Player-hits picks are not matched: they use MLB player ids, which the DraftKings feed does not carry." />}
+      note="From the PlayIQ live model (positive-edge moves first, then lines you follow). Player-hits picks are not matched: they use MLB player ids, which the DraftKings feed does not carry." />}
     <nav className="li-mobile-switch" aria-label="Live panel"><button aria-pressed={mobilePane === 'feed'} onClick={() => setMobilePane('feed')}>Game feed</button><button aria-pressed={mobilePane === 'indicators'} onClick={() => setMobilePane('indicators')}>Live indicators {following.length ? `· ${following.length} following` : ''}</button></nav>
     <div className="li-columns">
       <div className="li-game">
