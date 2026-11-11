@@ -748,3 +748,108 @@ more events.
   with a total of 10+ pts / 5+ ast, else "NO REAL EFFECT" / "TOO FEW TO
   TELL". The first ratio-based version badged 2-vs-2 assists as "SLOWED
   HIM DOWN".
+
+---
+
+## NBA LIVE tab — court tracker + live projections (Nov 2026)
+
+`◉ LIVE` is first in `TABS_NBA` (the default tab only while a game is `in`).
+UI `frontend/sports/nba/live.jsx` (`NbaLiveTab`) + `live.css` (`nl-` prefix,
+theme tokens only); data + model `frontend/data/nba/live.js` (`window.NbaLive`,
+UMD so `selfTest()` runs under Node — **21/21**). **Fully browser-side, no
+backend route**: ESPN summary, ESPN core odds and the athlete gamelog all
+answer with CORS `*` (verified), same pattern as the NFL live tab.
+
+### What "player tracking" is here — keep the UI honest about it
+NBA optical tracking (Second Spectrum x/y) is not public anywhere free. What
+ESPN gives, verified on live games (ORL@SAC, OKC@POR, Nov 10 2026):
+- `boxscore…athletes[].active === true` for **exactly five per team** = the
+  real on-floor five. The court always shows those ten, jersey + name.
+- Shots/rebounds/blocks carry `coordinate {x, y}` **in feet**: x = 0..50 across,
+  y = feet out from the rim, **rim at (25, 0.25)** (fit against the "N-foot"
+  distances in the play text, 75 shots, MSE 0.37 ft²). Non-located plays carry
+  a ≈ -2.1e8 sentinel.
+- So: the acting player + ball are drawn at the **real event spot**; everyone
+  else at a formation spot (interior-first G/F/C slots, defenders 30% toward
+  the rim). The legend says so. Never label formation spots as tracked.
+- Rebounds are stamped with the MISSED SHOT's location, so the rebounder is
+  placed 35% of the way from rim to that spot (`estimated`).
+- Right after a made basket / defensive rebound the court shows the play's
+  moment (old offense still at that end — `layoutPossession`); the next play
+  glides everyone over. The scoreboard arrow shows true possession.
+- Header `competitors[].possession` is false for BOTH sides in timeouts, so
+  `inferPossession` falls back to the latest decisive play. On a play,
+  `team.id` is the ACTING team (shooter, fouler, turnover committer).
+- Fixed convention: away attacks LEFT, home RIGHT, all game (ESPN doesn't say
+  which end a team starts at).
+
+### The model (no ML)
+Brownian-motion margin (Stern 1994): remaining home margin ~ N(pregame
+spread × m/48, σ²·m/48). **σ is calibrated per game** so tip-off P(home)
+equals DraftKings' de-vigged pregame moneyline (−5.5 ↔ −217/+180 ⇒ σ≈13.6);
+only on spreads ≥ 3 — near pick'em the ratio explodes (−1.5 at −117/−101 gave
+σ≈26), so those use 13. Totals: rate = live pace weighted elapsed/(elapsed+48)
++ pregame total. Checked against ESPN's own per-play win probability live:
+27% vs 24%, 14% vs 18%, 8% vs 11%. Props: season per-minute rate (gamelog
+`Totals` row, pooled with last season under 150 min) blended toward tonight's
+rate by min/(min+36), × usual share of remaining minutes, with foul-trouble
+and blowout adjustments that are printed on the row. PTS ~ Normal(var 2.1μ),
+counts ~ Poisson.
+
+### THE LIVE LINE REFRESHES PER QUARTER — the load-bearing finding
+ESPN core `odds` has a `"DraftKings - Live Odds"` provider for NBA, but over a
+10-min 15s poll it moved **once**, ~4 min into the Q1 break (OKC −1.5/226.5 →
+−2.5/223.5), and sat at ORL −425 through a 3→12-point run. Mid-quarter,
+model-vs-that-number is ~15 points of FAKE edge after every run. So
+`lineIsCurrent` only allows a comparison when the page **saw the line change**
+and score/clock haven't moved since (or it changed during a break). A line
+first seen on page load has unknown age and is never compared. Otherwise the
+panel shows `fairBoard` — the model's fair odds right now — for the user to
+compare against their own sportsbook app. De-vig, ¼-Kelly and the 20-pt
+`ABSURD_EDGE` bug detector mirror the MLB live tab. Don't loosen the gate.
+
+### Gotchas
+- A `*/` inside a `/* */` header comment (e.g. `_nl*/NbaLive*`) ends the
+  comment and kills the whole .jsx — Babel reports it as a bad character.
+- `fetchAllGames` takes a `YYYYMMDD` / `YYYY-MM-DD` string, not a `Date`.
+- Headless test harness: `$CLAUDE_JOB_DIR` CDP script; a stale `?v=` CSS can be
+  served from the Chrome profile cache — bump `?v=` when re-testing CSS.
+
+---
+
+## Play slip — find each pick on DraftKings by hand (Nov 2026)
+
+`<PlaySlip sportKey eventId suggestions suggestionNote />` (`frontend/shared/play-slip.jsx`),
+data + rules in `frontend/data/shared/play-slip.js` (`window.PlaySlipData`). Mounted
+in the MLB, NFL and NBA/WNBA LIVE tabs. One compact card per selection: matchup,
+exact player/team, DraftKings market name as the source names it, side badge
+(OVER/UNDER, +/− spread, "25+ · 25 OR MORE"), FULL GAME vs "1ST HALF ONLY", odds,
+live stat + clock, when the price was last seen, why selected; analysis behind
+DETAILS. Copy Play / Copy Entire Slip, Found / Added manually, Review Current Slip,
+and a frozen ORIGINAL SLIP. Per-browser in `localStorage.piq_play_slip_v1_<sport>_<eventId>`.
+
+The slip fetches its own prices (ESPN core `odds` → `"DraftKings - Live Odds"`, its
+`propBets`, and the site `summary`), so a sport only has to pass suggestions.
+
+Verified against live payloads (OKC @ POR, ORL @ SAC, Nov 10 2026). Don't "simplify" these:
+- **Links are never built, only verified.** ESPN's odds `links[]` wrap real DK URLs
+  (`gateway?…&preurl=`). A selection link is shown only if the DK outcome id encodes
+  the displayed line (`0HC…P750_1` = +7.5, `0OU…U22350_3` = Under 223.5, `0ML…`).
+  Otherwise, and for props (no per-outcome links), only the DK event page.
+- **propBets don't say which side is which.** Player O/U, team totals and period
+  spreads/totals come as unlabeled pairs, so they are NOT selectable (counted and
+  explained in the picker). Selectable: full-game ML/spread/total from the provider
+  row, period moneylines (team ref), player milestones ("N+").
+- **propBets `lastUpdated` is not real UTC.** It says `Z` but ran ~3h ahead
+  (07:57Z at 04:59Z). It is only a change fingerprint. Every age shown is
+  "since PlayIQ first saw this price", and staleness is judged the same way.
+- **"Not in latest feed" ≠ suspended.** The feed has no suspension flag.
+- **Never re-sort or auto-replace.** Slip order is insertion order. New suggestions
+  wait in a tray. A changed price is flagged on the card and only adopted via
+  USE NEW PRICE. `original` never changes.
+- **Suggestions match exact outcomes.** A model pick on Over 8.5 is not the posted
+  Over 9 (shown as "DraftKings posts 9, not 8.5"). NFL live estimates are
+  regulation-only while DK game lines include OT, so NFL passes no suggestions.
+  MLB HITS picks use MLB ids (not ESPN's), so they're omitted.
+- NBA suggestions are usually empty by design: `buildMoves` emits only once the
+  line is confirmed current (it refreshes at quarter breaks).

@@ -64,6 +64,9 @@ function NflLiveTab({gameInfo}) {
       {market!=='WIN' && <label>{market==='SPREAD'?`${data.home.abbr} spread`:'Your line'}<input type="number" step="0.5" value={line} onChange={e=>setLine(e.target.value)}/></label>}
       {picks.map(p=>card(p))}<p className="nf-note">User-entered lines, not sportsbook quotes. Higher probability does not mean better betting value.</p><h3>Following · {follows.length}/12</h3><p className="nf-note">Saved lines stay fixed as the game changes.</p>{follows.length?follows.map(p=>card(p,true)):<p>No selections followed yet.</p>}
       <details><summary>How the percentages work</summary><p>Game estimates use current score, clock, and a scoring-event distribution. Observed scoring pace is blended with an assumed 22 points per team per game; scoring events are assumed to be 65% seven points and 35% three points. These assumptions are not fitted or calibrated. The model does not use possession, field position, team strength, injuries, timeouts, or overtime.</p><p>Player yards extrapolate current pace after 10 minutes with an assumed uncertainty band. Negative yardage remains possible. Usage, substitutions, injuries, opponent strength, and overtime are not predicted. Percentages are unavailable in overtime until final stats arrive. These are experimental estimates, not validated recommendations.</p></details>
-    </aside></div></div>;
+    </aside></div>
+    {window.PlaySlip && <PlaySlip sportKey="nfl" eventId={gameInfo.eventId} suggestions={[]}
+      suggestionNote="NFL live estimates above cover regulation only, while DraftKings game lines include overtime — so they are not matched to DraftKings automatically. Add posted lines directly." />}
+  </div>;
 }
 window.NflLiveTab=NflLiveTab;

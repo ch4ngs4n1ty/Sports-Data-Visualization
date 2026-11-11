@@ -148,6 +148,33 @@ function LiveIndicatorBoard({ data, gameInfo, status, healthy, error, onRefresh,
         <details className="li-method"><summary>How these estimates work</summary><p>Game estimates use inning, runners, outs and pitcher/bullpen assumptions, with extra innings and game-ending rules. The current ball/strike count is displayed but not modeled. Walk-off home-run excess is omitted, so totals and run lines near the end are approximate.</p><p>Player hits use season hit rate and estimated remaining regulation opportunities. They do not adjust for batting order, current count, individual matchup or future extra innings. These estimates have not been calibrated against live betting results.</p><p>Free-feed updates are periodic, not instantaneous. Final results can be corrected; sportsbook rules can differ.</p></details>
       </aside>
     </div>
+    {window.PlaySlip && gameInfo?.eventId && <PlaySlip sportKey="mlb" eventId={gameInfo.eventId}
+      suggestions={mlbSlipSuggestions(data, following, ready)}
+      suggestionNote="From the PlayIQ live model (positive-edge moves first, then lines you follow). Player-hits picks are not matched: they use MLB player ids, which the DraftKings feed does not carry." />}
   </section>;
 }
-Object.assign(window, { LiveIndicatorBoard });
+
+/* PLAY SLIP adapter — model moves + followed lines → source-neutral suggestions.
+   Both are full-game markets (the model plays extra innings), matching
+   DraftKings' game lines. HITS picks are omitted (MLB ids ≠ ESPN athlete ids). */
+function mlbSlipSuggestions(data, following, ready) {
+  const out = [], seen = new Set();
+  const push = s => { const k = `${s.kind}|${s.side}|${s.line ?? ''}`; if (!seen.has(k)) { seen.add(k); out.push(s); } };
+  for (const m of data.moves || []) {
+    const kind = m.market === 'MONEYLINE' ? 'moneyline' : m.market === 'TOTAL' ? 'total' : null;
+    if (!kind) continue;
+    push({ kind, side: String(m.side).toLowerCase(), line: kind === 'total' ? m.line : undefined, label: m.label, why: m.why,
+      detail: { modelProb: m.modelProb, fairOdds: m.fairOdds, edgePts: m.edgePts, caveats: m.caveats } });
+  }
+  for (const p of following) {
+    const kind = p.market === 'MONEYLINE' ? 'moneyline' : p.market === 'RUNLINE' ? 'spread' : p.market === 'TOTAL' ? 'total' : null;
+    if (!kind) continue;
+    const r = ready ? liveIndicator(data, p) : null;
+    push({ kind, side: String(p.side).toLowerCase(), line: kind === 'moneyline' ? undefined : Number(p.line),
+      label: indicatorLabel(p, data.state, data.players),
+      why: r ? `You follow this line; the live model gives it ${(r.win * 100).toFixed(1)}% from the current inning, outs and runners.` : 'A line you follow (model estimate updating).',
+      detail: r ? { modelProb: r.win, fairOdds: r.fairOdds, notes: [r.progress].filter(Boolean) } : null });
+  }
+  return out;
+}
+Object.assign(window, { LiveIndicatorBoard, mlbSlipSuggestions });
